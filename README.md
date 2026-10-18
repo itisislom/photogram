@@ -4,7 +4,7 @@
 
 ---
 
-## 🌟 Executive Summary
+## Executive Summary
 
 **Photogram** is a full-stack, production-ready social media platform designed for ultra-low latency media sharing, discovery, and engagement. Unlike conventional single-page applications bogged down by massive client-side bundles, Photogram operates on a **zero-heavy-framework** philosophy:
 
@@ -15,7 +15,7 @@
 
 ---
 
-## 🚀 Key Highlights & Architecture
+## Key Highlights & Architecture
 
 ### 1. Instagram-Grade Personal Recommendation Engine
 Photogram incorporates an end-to-end personalization pipeline (`src/recommendations.ts`) that runs across Feed, Explore, Post View, and Profile surfaces:
@@ -70,10 +70,10 @@ Photogram incorporates an end-to-end personalization pipeline (`src/recommendati
 
 ### 5. Multi-Language Internationalization (i18n)
 - Native support for 4 localized languages:
-  - 🇷🇺 Russian (`ru`)
-  - 🇺🇸 English (`en`)
-  - 🇺🇿 Uzbek (`uz`)
-  - 🇰🇿 Kazakh (`kz`)
+  - Russian (`ru`)
+  - English (`en`)
+  - Uzbek (`uz`)
+  - Kazakh (`kz`)
 - Persistent selection synced across HttpOnly cookies and client storage with instant UI re-rendering.
 
 ---
@@ -88,7 +88,7 @@ Photogram incorporates an end-to-end personalization pipeline (`src/recommendati
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 | Layer | Technology | Purpose |
 |---|---|---|
@@ -103,7 +103,7 @@ Photogram incorporates an end-to-end personalization pipeline (`src/recommendati
 
 ---
 
-## 📂 Project Directory Map
+## Project Directory Map
 
 ```text
 Photogram/
@@ -150,7 +150,7 @@ Photogram/
 
 ---
 
-## ⚙️ Recommendation Engine Mechanics
+## Recommendation Engine Mechanics
 
 ```
                              [ User Browser Session ]
@@ -200,7 +200,7 @@ Photogram/
 
 ---
 
-## ⚡ Quickstart & Development
+## Quickstart & Development
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) (v18.0.0 or higher)
@@ -259,7 +259,7 @@ npm run deploy:pages
 
 ---
 
-## 🛡️ License
+## License
 
 This project is licensed under the **MIT License** with an explicit **Trademark & Branding Protection Notice**. See the [LICENSE](file:///d:/Projects/Programing/Apps/Photogram/LICENSE) file for complete details.
 
