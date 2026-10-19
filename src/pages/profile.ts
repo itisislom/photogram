@@ -696,6 +696,8 @@ ${renderCreatePostScript(t)}
 
   function openPost(btn) {
     if (!btn || !viewModal) return;
+    var scrollBody = viewModal.querySelector('.post-view-scroll-body');
+    if (scrollBody) scrollBody.scrollTop = 0;
     activePostId = btn.dataset.postId;
     viewImg.src = btn.dataset.img || '';
     viewCaption.innerHTML = formatCaptionHtml(btn.dataset.caption || '');
@@ -745,6 +747,8 @@ ${renderCreatePostScript(t)}
 
   function closePostView() {
     if (viewModal) viewModal.classList.remove('visible');
+    var scrollBody = viewModal ? viewModal.querySelector('.post-view-scroll-body') : null;
+    if (scrollBody) scrollBody.scrollTop = 0;
     document.body.style.overflow = '';
     activePostId = null;
   }

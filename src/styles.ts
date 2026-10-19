@@ -1235,7 +1235,8 @@ body {
 .post-view-image-wrap {
   position: relative;
   width: 100%;
-  max-height: min(50dvh, 480px);
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
   background: #000000;
   border-radius: 12px;
   overflow: hidden;
@@ -1247,11 +1248,9 @@ body {
 }
 
 .post-view-image {
-  max-width: 100%;
-  max-height: min(50dvh, 480px);
-  width: auto;
-  height: auto;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
 
@@ -1274,6 +1273,7 @@ body {
   align-items: center;
   gap: 12px;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 
 .post-like-btn {
@@ -1317,6 +1317,7 @@ body {
   flex-direction: column;
   gap: 4px;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 
 .post-view-caption {
@@ -2112,6 +2113,7 @@ body {
   border-top: 1px solid #EFEFEF;
   padding-top: 12px;
   margin-top: 6px;
+  flex-shrink: 0;
 }
 
 .post-comments-header {
@@ -2575,8 +2577,10 @@ body {
 
   #viewPostModal .post-view-image-wrap {
     border-radius: 0 !important;
-    max-height: min(50dvh, 480px) !important;
-    width: 100%;
+    width: 100% !important;
+    aspect-ratio: 1 / 1 !important;
+    max-height: none !important;
+    flex-shrink: 0 !important;
     background: #000000;
     display: flex !important;
     align-items: center !important;
@@ -2584,25 +2588,29 @@ body {
   }
 
   #viewPostModal .post-view-image {
-    max-height: min(50dvh, 480px) !important;
+    width: 100% !important;
+    height: 100% !important;
     max-width: 100% !important;
-    width: auto !important;
-    height: auto !important;
-    object-fit: contain !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    display: block !important;
   }
 
   #viewPostModal .post-view-actions {
     padding: 10px 14px 4px 14px;
+    flex-shrink: 0;
   }
 
   #viewPostModal .post-view-meta {
     padding: 0 14px 10px 14px;
+    flex-shrink: 0;
   }
 
   #viewPostModal .post-view-comments-section {
     padding: 12px 14px 0 14px;
     margin-top: 0;
     border-top: 1px solid #EFEFEF;
+    flex-shrink: 0;
   }
 
   #viewPostModal .post-comments-list {
@@ -2831,9 +2839,10 @@ body {
 }
 
 .post-view-related-section {
-  padding: 12px 14px;
+  padding: 12px 14px 20px 14px;
   border-top: 1px solid #EFEFEF;
   margin-top: 4px;
+  flex-shrink: 0;
 }
 
 .post-related-header {
