@@ -1,5 +1,5 @@
 import { ProfileData } from '../types';
-import { layout, escapeHtml } from './layout';
+import { layout, escapeHtml, renderVerifiedBadge } from './layout';
 import { renderBottomNav, renderCreatePostModal, renderCreatePostScript, CLOSE_ICON } from './nav';
 import { renderLangSwitcherHtml } from '../languages';
 import { Translations } from '../languages/types';
@@ -77,7 +77,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
     ? `
     <div class="profile-grid" id="profileGrid">
       ${postList.map(p => `
-        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-img="/media/${encodeURIComponent(p.image_key)}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
+        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-author-verified="${(p.is_verified ?? user.is_verified) ? '1' : '0'}" data-img="/media/${encodeURIComponent(p.image_key)}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
           <img src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
           <div class="profile-grid-overlay">
             <div class="profile-grid-stat">${HEART_ICON} <span class="grid-likes-val">${p.likes_count ?? 0}</span></div>
@@ -109,7 +109,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
 
       <div class="profile-header-main">
         <div class="profile-header-username">
-          ${usernameSafe}
+          ${usernameSafe}${user.is_verified ? renderVerifiedBadge(18) : ''}
           ${!is_owner && follows_you ? `<span class="follows-you-tag">${escapeHtml(t.profile.followsYou)}</span>` : ''}
         </div>
         <div class="profile-stats">
@@ -406,9 +406,12 @@ ${renderCreatePostScript(t)}
     return { x: x, y: y };
   }
 
-  function updateAuthorHeader(username, avatarKey) {
+  function updateAuthorHeader(username, avatarKey, isVerified) {
     if (viewAuthorLink) viewAuthorLink.href = '/u/' + encodeURIComponent(username);
-    if (viewAuthorName) viewAuthorName.textContent = username;
+    if (viewAuthorName) {
+      var badge = (Number(isVerified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(15) : '';
+      viewAuthorName.innerHTML = escapeHtmlClient(username) + badge;
+    }
     if (viewAuthorAvatar) {
       if (avatarKey) {
         viewAuthorAvatar.innerHTML = '<img src="/media/' + encodeURIComponent(avatarKey) + '" alt="' + escapeHtmlClient(username) + '">';
@@ -481,11 +484,12 @@ ${renderCreatePostScript(t)}
         ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
         : '';
 
+      var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
       html += '<div class="comment-item" id="commentItem_' + c.id + '">' +
         '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
         '<div class="comment-content-wrap">' +
           '<div>' +
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + '</a>' +
+            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
             '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
           '</div>' +
           '<div class="comment-meta">' +
@@ -667,6 +671,7 @@ ${renderCreatePostScript(t)}
             'data-author-id="' + p.user_id + '" ' +
             'data-author-username="' + escapeHtmlClient(p.username || '') + '" ' +
             'data-author-avatar="' + escapeHtmlClient(avKey) + '" ' +
+            'data-author-verified="' + (Number(p.is_verified) === 1 ? '1' : '0') + '" ' +
             'data-img="/media/' + encodeURIComponent(p.image_key) + '" ' +
             'data-caption="' + escapeHtmlClient(p.caption || '') + '" ' +
             'data-likes-count="' + (p.likes_count || 0) + '" ' +
@@ -708,10 +713,11 @@ ${renderCreatePostScript(t)}
             var av = u.avatar_key
               ? '<img src="/media/' + encodeURIComponent(u.avatar_key) + '" alt="' + escapeHtmlClient(u.username) + '">'
               : '<span>' + escapeHtmlClient(init) + '</span>';
+            var badge = (Number(u.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
             html += '<div class="feed-rec-user-card" data-user-id="' + u.id + '">' +
               '<a href="/u/' + encodeURIComponent(u.username) + '" class="feed-rec-avatar-link">' +
                 '<div class="feed-rec-avatar">' + av + '</div>' +
-                '<div class="feed-rec-name">' + escapeHtmlClient(u.display_name || u.username) + '</div>' +
+                '<div class="feed-rec-name">' + escapeHtmlClient(u.display_name || u.username) + badge + '</div>' +
                 '<div class="feed-rec-username">@' + escapeHtmlClient(u.username) + '</div>' +
               '</a>' +
               '<button type="button" class="feed-follow-btn" data-user-id="' + u.id + '" data-following="false">' + escapeHtmlClient(i18n.follow) + '</button>' +
@@ -764,8 +770,9 @@ ${renderCreatePostScript(t)}
     var postAuthorId = Number(btn.dataset.authorId || '${user.id}');
     var postAuthorUsername = btn.dataset.authorUsername || '${usernameSafe}';
     var postAuthorAvatar = btn.dataset.authorAvatar || '';
+    var postAuthorVerified = btn.dataset.authorVerified !== undefined ? btn.dataset.authorVerified : '${user.is_verified ? '1' : '0'}';
 
-    updateAuthorHeader(postAuthorUsername, postAuthorAvatar);
+    updateAuthorHeader(postAuthorUsername, postAuthorAvatar, postAuthorVerified);
 
     if (openDeleteBtn) {
       if (Number(postAuthorId) === Number(currentUserId) && Number(currentUserId) > 0) {
@@ -900,6 +907,7 @@ ${renderCreatePostScript(t)}
             ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
             : '<span>' + initial + '</span>';
 
+          var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
           var itemDiv = document.createElement('div');
           itemDiv.className = 'comment-item';
           itemDiv.id = 'commentItem_' + c.id;
@@ -907,7 +915,7 @@ ${renderCreatePostScript(t)}
             '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
             '<div class="comment-content-wrap">' +
               '<div>' +
-                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + '</a>' +
+                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
                 '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
               '</div>' +
               '<div class="comment-meta">' +

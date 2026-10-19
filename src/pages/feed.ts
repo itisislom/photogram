@@ -1,5 +1,5 @@
 import { FeedPost, User } from '../types';
-import { layout, escapeHtml } from './layout';
+import { layout, escapeHtml, renderVerifiedBadge } from './layout';
 import { renderBottomNav, renderCreatePostModal, renderCreatePostScript } from './nav';
 import { COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
@@ -62,7 +62,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
       <a href="/u/${encodeURIComponent(p.username)}" class="feed-card-author">
         <div class="feed-card-avatar">${avatarHtml}</div>
         <div class="feed-card-author-meta">
-          <span class="feed-card-username">${escapeHtml(p.username)}</span>
+          <span class="feed-card-username">${escapeHtml(p.username)}${p.is_verified ? renderVerifiedBadge(13) : ''}</span>
           <span class="feed-card-dot">•</span>
           <span class="feed-card-time">${formatFeedTime(p.created_at, t)}</span>
         </div>
@@ -95,7 +95,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
 
     ${p.caption ? `
     <div class="feed-card-caption">
-      <a href="/u/${encodeURIComponent(p.username)}" class="feed-caption-user">${escapeHtml(p.username)}</a>
+      <a href="/u/${encodeURIComponent(p.username)}" class="feed-caption-user">${escapeHtml(p.username)}${p.is_verified ? renderVerifiedBadge(12) : ''}</a>
       ${formatCaptionWithHashtags(p.caption)}
     </div>` : ''}
 
@@ -154,7 +154,7 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
           <div class="feed-rec-user-card" data-user-id="${u.id}">
             <a href="/u/${encodeURIComponent(u.username)}" class="feed-rec-avatar-link">
               <div class="feed-rec-avatar">${av}</div>
-              <div class="feed-rec-name">${escapeHtml(u.display_name || u.username)}</div>
+              <div class="feed-rec-name">${escapeHtml(u.display_name || u.username)}${u.is_verified ? renderVerifiedBadge(13) : ''}</div>
               <div class="feed-rec-username">@${escapeHtml(u.username)}</div>
             </a>
             <button type="button" class="feed-follow-btn" data-user-id="${u.id}" data-following="false">${escapeHtml(t.recommendations.follow)}</button>

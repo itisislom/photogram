@@ -1,5 +1,5 @@
 import { ExploreData, User } from '../types';
-import { layout, escapeHtml } from './layout';
+import { layout, escapeHtml, renderVerifiedBadge } from './layout';
 import { renderBottomNav, renderCreatePostModal, renderCreatePostScript, CLOSE_ICON } from './nav';
 import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
@@ -81,6 +81,7 @@ export function explorePage(
           <button class="explore-grid-item post-item-btn" type="button"
             data-post-id="${p.id}"
             data-author-id="${p.user_id}"
+            data-author-verified="${p.is_verified ? '1' : '0'}"
             data-index="${idx}"
             data-likes-count="${p.likes_count ?? 0}"
             data-comments-count="${p.comments_count ?? 0}"
@@ -119,7 +120,7 @@ export function explorePage(
       <div class="pics-bottom-info">
         <a href="/u/${encodeURIComponent(p.username)}" class="pics-author-row">
           <div class="pics-author-avatar">${avatarHtml}</div>
-          <span class="pics-author-name">${escapeHtml(p.username)}</span>
+          <span class="pics-author-name">${escapeHtml(p.username)}${p.is_verified ? renderVerifiedBadge(13) : ''}</span>
         </a>
         ${p.caption ? `<div class="pics-caption">${escapeHtml(p.caption)}</div>` : ''}
         <div class="pics-date">${escapeHtml(p.created_at ? formatPostDateTime(p.created_at, t) : '')}</div>
@@ -236,6 +237,9 @@ ${renderCommentsSheetScript(t)}
       var nameDiv = document.createElement('div');
       nameDiv.className = 'search-user-name';
       nameDiv.textContent = u.display_name || u.username;
+      if (Number(u.is_verified) === 1 && window.renderVerifiedBadge) {
+        nameDiv.insertAdjacentHTML('beforeend', window.renderVerifiedBadge(14));
+      }
 
       var userDiv = document.createElement('div');
       userDiv.className = 'search-user-username';

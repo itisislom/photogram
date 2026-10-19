@@ -115,11 +115,12 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
         ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
         : '';
 
+      var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
       html += '<div class="comment-item" id="sheetCommentItem_' + c.id + '">' +
         '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
         '<div class="comment-content-wrap">' +
           '<div>' +
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + '</a>' +
+            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
             '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
           '</div>' +
           '<div class="comment-meta">' +
@@ -254,6 +255,7 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
             ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
             : '<span>' + initial + '</span>';
 
+          var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
           var itemDiv = document.createElement('div');
           itemDiv.className = 'comment-item';
           itemDiv.id = 'sheetCommentItem_' + c.id;
@@ -261,7 +263,7 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
             '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
             '<div class="comment-content-wrap">' +
               '<div>' +
-                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + '</a>' +
+                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
                 '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
               '</div>' +
               '<div class="comment-meta">' +

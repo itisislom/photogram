@@ -2959,6 +2959,14 @@ body {
   color: #737373;
   margin-bottom: 8px;
 }
+
+.verified-badge {
+  margin-left: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  display: inline-flex;
+}
 `;
 }
+
 

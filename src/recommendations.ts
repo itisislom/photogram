@@ -120,7 +120,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
   try {
     const followedRows = await env.DB.prepare(
       `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-              u.username, u.display_name, u.avatar_key,
+              u.username, u.display_name, u.avatar_key, u.is_verified,
               (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
               (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
               EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked,
@@ -129,7 +129,8 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
               COALESCE(ui.opened, 0) AS user_opened,
               (
                 COALESCE(ua.affinity_score, 0) * 1.5 +
-                (CASE WHEN COALESCE(ui.impressions, 0) = 0 THEN 20.0 ELSE 0.0 END) -
+                (CASE WHEN COALESCE(ui.impressions, 0) = 0 THEN 20.0 ELSE 0.0 END) +
+                (CASE WHEN u.is_verified = 1 THEN 3.0 ELSE 0.0 END) -
                 ((julianday('now') - julianday(p.created_at)) * 24.0 * 0.8)
               ) AS sort_rank
        FROM posts p
@@ -159,7 +160,8 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
         likes_count: Number(p.likes_count) || 0,
         comments_count: Number(p.comments_count) || 0,
         is_liked: Boolean(p.is_liked),
-        is_followed_author: true
+        is_followed_author: true,
+        is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
     }
   } catch {}
@@ -171,7 +173,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
     const suggestedRows = await env.DB.prepare(
       `WITH post_base AS (
          SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-                u.username, u.display_name, u.avatar_key,
+                u.username, u.display_name, u.avatar_key, u.is_verified,
                 (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                 (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                 EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked,
@@ -204,7 +206,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
            AND (p.reports_count IS NULL OR p.reports_count < 5)
        )
        SELECT id, user_id, image_key, caption, created_at,
-              username, display_name, avatar_key,
+              username, display_name, avatar_key, is_verified,
               likes_count, comments_count, is_liked, is_followed_author,
               (
                 (
@@ -213,6 +215,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
                   (affinity_score * 2.0) +
                   (tag_score * 2.5) +
                   (CASE WHEN age_hours < 6.0 AND total_impressions < 15 THEN 12.0 ELSE 0.0 END) +
+                  (CASE WHEN is_verified = 1 THEN 3.0 ELSE 0.0 END) +
                   1.0
                 )
                 /
@@ -248,7 +251,8 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
         likes_count: Number(p.likes_count) || 0,
         comments_count: Number(p.comments_count) || 0,
         is_liked: Boolean(p.is_liked),
-        is_followed_author: false
+        is_followed_author: false,
+        is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
     }
   } catch {}
@@ -282,7 +286,7 @@ export async function getPersonalizedExplore(
     if (cleanFilter === 'recent') {
       query = `
         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-               u.username, u.display_name, u.avatar_key AS author_avatar_key,
+               u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked
@@ -297,7 +301,7 @@ export async function getPersonalizedExplore(
     } else if (cleanFilter === 'popular') {
       query = `
         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-               u.username, u.display_name, u.avatar_key AS author_avatar_key,
+               u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked
@@ -306,13 +310,13 @@ export async function getPersonalizedExplore(
         LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = p.id
         WHERE COALESCE(ui.is_hidden, 0) = 0
           AND (p.reports_count IS NULL OR p.reports_count < 5)
-        ORDER BY (likes_count * 2.0 + comments_count * 4.0) DESC, p.created_at DESC
+        ORDER BY ((likes_count * 2.0 + comments_count * 4.0) + (CASE WHEN u.is_verified = 1 THEN 3.0 ELSE 0.0 END)) DESC, p.created_at DESC
         LIMIT ?2`;
       bindings.push(limit);
     } else if (cleanFilter !== 'all') {
       query = `
         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-               u.username, u.display_name, u.avatar_key AS author_avatar_key,
+               u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked
@@ -329,7 +333,7 @@ export async function getPersonalizedExplore(
       query = `
         WITH post_base AS (
           SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-                 u.username, u.display_name, u.avatar_key AS author_avatar_key,
+                 u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                  (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                  (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                  EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked,
@@ -359,7 +363,7 @@ export async function getPersonalizedExplore(
             AND (p.reports_count IS NULL OR p.reports_count < 5)
         )
         SELECT id, user_id, image_key, caption, created_at,
-               username, display_name, author_avatar_key,
+               username, display_name, author_avatar_key, is_verified,
                likes_count, comments_count, is_liked,
                (
                  (
@@ -368,6 +372,7 @@ export async function getPersonalizedExplore(
                    (affinity_score * 2.0) +
                    (tag_score * 2.5) +
                    (CASE WHEN age_hours < 6.0 AND total_impressions < 15 THEN 12.0 ELSE 0.0 END) +
+                   (CASE WHEN is_verified = 1 THEN 3.0 ELSE 0.0 END) +
                    1.0
                  )
                  /
@@ -409,7 +414,8 @@ export async function getPersonalizedExplore(
         author_avatar_key: p.author_avatar_key,
         likes_count: Number(p.likes_count) || 0,
         comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked)
+        is_liked: Boolean(p.is_liked),
+        is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
     }
   } catch {}
@@ -440,12 +446,13 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
 
     const rows = await env.DB.prepare(
       `SELECT DISTINCT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-              u.username, u.display_name, u.avatar_key AS author_avatar_key,
+              u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
               (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
               (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
               EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?2) AS is_liked,
               (
                 (CASE WHEN p.user_id = ?3 THEN 5.0 ELSE 0.0 END) +
+                (CASE WHEN u.is_verified = 1 THEN 3.0 ELSE 0.0 END) +
                 (SELECT COUNT(*) * 3.0 FROM post_tags pt1 JOIN post_tags pt2 ON pt2.post_id = ?1 AND pt2.tag = pt1.tag WHERE pt1.post_id = p.id) +
                 (SELECT COUNT(DISTINCT l1.user_id) * 2.0 FROM likes l1 JOIN likes l2 ON l2.post_id = ?1 AND l2.user_id = l1.user_id WHERE l1.post_id = p.id)
               ) AS relation_score
@@ -469,7 +476,8 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
       author_avatar_key: p.author_avatar_key,
       likes_count: Number(p.likes_count) || 0,
       comments_count: Number(p.comments_count) || 0,
-      is_liked: Boolean(p.is_liked)
+      is_liked: Boolean(p.is_liked),
+      is_verified: Number(p.is_verified) === 1 ? 1 : 0
     }));
   } catch {
     return [];
@@ -480,7 +488,7 @@ export async function getRecommendedUsers(env: Env, viewerId: number, limit: num
   try {
     const rows = await env.DB.prepare(
       `WITH candidate_users AS (
-         SELECT u.id, u.username, u.display_name, u.avatar_key,
+         SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
                 (
                   (SELECT COUNT(*) * 8.0
                    FROM follows f1
@@ -488,21 +496,25 @@ export async function getRecommendedUsers(env: Env, viewerId: number, limit: num
                    WHERE f1.follower_id = ?1) +
                   (COALESCE(ua.affinity_score, 0) * 3.0) +
                   ((SELECT COUNT(*) FROM follows WHERE following_id = u.id) * 0.5) +
-                  ((SELECT COUNT(*) FROM posts WHERE user_id = u.id AND ((julianday('now') - julianday(created_at)) * 24.0) < 72.0) * 4.0)
+                  ((SELECT COUNT(*) FROM posts WHERE user_id = u.id AND ((julianday('now') - julianday(created_at)) * 24.0) < 72.0) * 4.0) +
+                  (CASE WHEN u.is_verified = 1 THEN 3.0 ELSE 0.0 END)
                 ) AS rec_score
          FROM users u
          LEFT JOIN user_affinity ua ON ua.user_id = ?1 AND ua.author_id = u.id
          WHERE u.id != ?1
            AND NOT EXISTS(SELECT 1 FROM follows WHERE follower_id = ?1 AND following_id = u.id)
        )
-       SELECT id, username, display_name, avatar_key
+       SELECT id, username, display_name, avatar_key, is_verified
        FROM candidate_users
        WHERE rec_score > 0
        ORDER BY rec_score DESC, id DESC
        LIMIT ?2`
     ).bind(viewerId, limit).all<ExploreUser>();
 
-    return rows.results || [];
+    return (rows.results || []).map(u => ({
+      ...u,
+      is_verified: Number(u.is_verified) === 1 ? 1 : 0
+    }));
   } catch {
     return [];
   }
@@ -512,7 +524,7 @@ export async function getSimilarAuthors(env: Env, targetAuthorId: number, viewer
   try {
     const rows = await env.DB.prepare(
       `WITH similar_candidates AS (
-         SELECT u.id, u.username, u.display_name, u.avatar_key,
+         SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
                 (
                   (SELECT COUNT(*) * 5.0
                    FROM follows f1
@@ -523,21 +535,25 @@ export async function getSimilarAuthors(env: Env, targetAuthorId: number, viewer
                    JOIN likes l1 ON l1.post_id = p1.id
                    JOIN posts p2 ON p2.user_id = u.id
                    JOIN likes l2 ON l2.post_id = p2.id AND l2.user_id = l1.user_id
-                   WHERE p1.user_id = ?1)
+                   WHERE p1.user_id = ?1) +
+                  (CASE WHEN u.is_verified = 1 THEN 3.0 ELSE 0.0 END)
                 ) AS sim_score
          FROM users u
          WHERE u.id != ?1
            AND u.id != ?2
            AND NOT EXISTS(SELECT 1 FROM follows WHERE follower_id = ?2 AND following_id = u.id)
        )
-       SELECT id, username, display_name, avatar_key
+       SELECT id, username, display_name, avatar_key, is_verified
        FROM similar_candidates
        WHERE sim_score > 0
        ORDER BY sim_score DESC, id DESC
        LIMIT ?3`
     ).bind(targetAuthorId, viewerId, limit).all<ExploreUser>();
 
-    return rows.results || [];
+    return (rows.results || []).map(u => ({
+      ...u,
+      is_verified: Number(u.is_verified) === 1 ? 1 : 0
+    }));
   } catch {
     return [];
   }

@@ -10,6 +10,7 @@ export interface User {
   display_name: string;
   bio: string;
   avatar_key: string;
+  is_verified?: number | boolean;
   created_at: string;
 }
 
@@ -25,6 +26,10 @@ export interface Post {
   likes_count?: number;
   comments_count?: number;
   is_liked?: boolean;
+  username?: string;
+  display_name?: string;
+  avatar_key?: string;
+  is_verified?: number | boolean;
 }
 
 export interface Comment {
@@ -37,6 +42,7 @@ export interface Comment {
   display_name: string;
   avatar_key: string;
   can_delete: boolean;
+  is_verified?: number | boolean;
 }
 
 export interface ProfileData {
@@ -58,6 +64,7 @@ export interface ExplorePost extends Post {
   display_name: string;
   avatar_key?: string;
   author_avatar_key?: string;
+  is_verified?: number | boolean;
 }
 
 export interface ExploreUser {
@@ -65,6 +72,7 @@ export interface ExploreUser {
   username: string;
   display_name: string;
   avatar_key: string;
+  is_verified?: number | boolean;
 }
 
 export interface ExploreData {
@@ -77,6 +85,7 @@ export interface FeedPost extends Post {
   display_name: string;
   avatar_key: string;
   is_followed_author?: boolean;
+  is_verified?: number | boolean;
 }
 
 

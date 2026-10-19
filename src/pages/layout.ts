@@ -12,6 +12,10 @@ export function esc(str: string): string {
 
 export const escapeHtml = esc;
 
+export function renderVerifiedBadge(size: number = 15): string {
+  return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 4px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><path fill="#0095F6" d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.67-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.67 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34z"/><path fill="#FFFFFF" d="M10.09 15.59L6.5 12l1.41-1.41 2.18 2.17 6.41-6.41L17.91 7.76l-7.82 7.83z"/></svg>`;
+}
+
 export function layout(title: string, body: string, script: string = '', t: Translations = ru): string {
   const langCode = t.code;
 
@@ -52,6 +56,10 @@ ${body}
 </div>
 
 <script>
+window.renderVerifiedBadge = function(size) {
+  var s = size || 15;
+  return '<svg class="verified-badge" viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" style="margin-left: 4px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><path fill="#0095F6" d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.67-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.67 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34z"/><path fill="#FFFFFF" d="M10.09 15.59L6.5 12l1.41-1.41 2.18 2.17 6.41-6.41L17.91 7.76l-7.82 7.83z"/></svg>';
+};
 window.showAppAlert = function(opts) {
   var modal = document.getElementById('appAlertModal');
   if (!modal) return;

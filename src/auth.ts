@@ -151,7 +151,7 @@ export async function getUserFromRequest(env: Env, request: Request): Promise<Us
 
   return (
     (await env.DB.prepare(
-      'SELECT id, username, email, display_name, bio, avatar_key, created_at FROM users WHERE id = ?',
+      'SELECT id, username, email, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE id = ?',
     )
       .bind(session.user_id)
       .first<User>()) ?? null

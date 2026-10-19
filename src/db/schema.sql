@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name  TEXT    NOT NULL DEFAULT '',
     bio           TEXT    NOT NULL DEFAULT '',
     avatar_key    TEXT    NOT NULL DEFAULT '',
+    is_verified   INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

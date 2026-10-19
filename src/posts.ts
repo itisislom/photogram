@@ -241,7 +241,7 @@ export async function getFeedPosts(env: Env, viewerId: number): Promise<FeedPost
   try {
     const rows = await env.DB.prepare(
       `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-              u.username, u.display_name, u.avatar_key,
+              u.username, u.display_name, u.avatar_key, u.is_verified,
               (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
               (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
               EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?1) AS is_liked,
@@ -293,7 +293,7 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
 
   const rows = await env.DB.prepare(
     `SELECT c.id, c.post_id, c.user_id, c.content, c.created_at,
-            u.username, u.display_name, u.avatar_key
+            u.username, u.display_name, u.avatar_key, u.is_verified
      FROM comments c
      JOIN users u ON c.user_id = u.id
      WHERE c.post_id = ?
@@ -309,6 +309,7 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
       username: string;
       display_name: string;
       avatar_key: string;
+      is_verified?: number | boolean;
     }>();
 
   const comments: Comment[] = (rows.results || []).map(c => ({
@@ -320,6 +321,7 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
     username: c.username,
     display_name: c.display_name,
     avatar_key: c.avatar_key,
+    is_verified: c.is_verified,
     can_delete: Boolean(currentUser && (currentUser.id === c.user_id || currentUser.id === post.user_id))
   }));
 
@@ -412,6 +414,7 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
     username: currentUser.username,
     display_name: currentUser.display_name,
     avatar_key: currentUser.avatar_key,
+    is_verified: currentUser.is_verified,
     can_delete: true
   };
 

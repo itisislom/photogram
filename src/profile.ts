@@ -57,7 +57,7 @@ export async function getProfileData(
   currentUserId?: number,
 ): Promise<ProfileData | null> {
   const user = await env.DB.prepare(
-    'SELECT id, username, email, display_name, bio, avatar_key, created_at FROM users WHERE username = ?',
+    'SELECT id, username, email, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE username = ?',
   )
     .bind(username)
     .first<User>();
@@ -358,7 +358,7 @@ export async function handleSearchUsers(request: Request, env: Env): Promise<Res
 
   try {
     const rows = await env.DB.prepare(
-      `SELECT id, username, display_name, avatar_key
+      `SELECT id, username, display_name, avatar_key, is_verified
        FROM users
        WHERE (username LIKE ?3 ESCAPE '\\' OR display_name LIKE ?3 ESCAPE '\\')
        ORDER BY CASE
@@ -366,7 +366,7 @@ export async function handleSearchUsers(request: Request, env: Env): Promise<Res
          WHEN LOWER(username) LIKE LOWER(?2) ESCAPE '\\' THEN 1
          WHEN LOWER(display_name) LIKE LOWER(?2) ESCAPE '\\' THEN 2
          ELSE 3
-       END, id DESC
+       END, is_verified DESC, id DESC
        LIMIT 20`
     )
       .bind(q, prefix, substr)
