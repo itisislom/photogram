@@ -4,6 +4,7 @@ import { renderBottomNav, renderCreatePostModal, renderCreatePostScript, CLOSE_I
 import { renderLangSwitcherHtml } from '../languages';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
+import { getLegalCardsHtml } from './useraccept';
 
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>`;
 const MENU_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
@@ -11,6 +12,10 @@ const TRASH_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" 
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="80" height="80" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 14px rgba(0,0,0,0.35));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
+const SETTINGS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+const EDIT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+const TERMS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
 
 function getDateLocale(code: string): string {
   if (code === 'kz') return 'kk-KZ';
@@ -253,13 +258,56 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
         <h3 class="modal-title">${escapeHtml(t.profile.menuTitle)}</h3>
         <button class="modal-close" id="closeMenuBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       </div>
-      <div style="padding: 4px 0 10px 0; border-bottom: 1px solid var(--border-color, #dbdbdb);">
+      <button class="menu-action-btn" id="openSettingsBtn" type="button">
+        ${SETTINGS_ICON}
+        <span>${escapeHtml(t.nav.settings)}</span>
+      </button>
+      <button class="menu-action-btn menu-action-danger" id="menuLogoutBtn" type="button">
+        ${LOGOUT_ICON}
+        <span>${escapeHtml(t.nav.logout)}</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-content" style="gap: 16px;">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.nav.settings)}</h3>
+        <button class="modal-close" id="closeSettingsBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div style="padding: 4px 0 12px 0; border-bottom: 1px solid var(--border-color, #dbdbdb);">
         <div style="font-size: 13px; font-weight: 600; color: #737373; margin-bottom: 8px;">${escapeHtml(t.common.selectLanguage)}</div>
         ${renderLangSwitcherHtml(t.code)}
       </div>
-      <button class="menu-action-btn menu-action-danger" id="menuLogoutBtn">
-        ${escapeHtml(t.nav.logout)}
-      </button>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="menu-action-btn" id="settingsEditProfileBtn" type="button">
+          ${EDIT_ICON}
+          <span>${escapeHtml(t.profile.editProfile)}</span>
+        </button>
+        <button class="menu-action-btn" id="settingsTermsBtn" type="button">
+          ${TERMS_ICON}
+          <span>${escapeHtml(t.auth.termsModalTitle)}</span>
+        </button>
+        <button class="menu-action-btn menu-action-danger" id="settingsLogoutBtn" type="button">
+          ${LOGOUT_ICON}
+          <span>${escapeHtml(t.nav.logout)}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="termsModal">
+    <div class="modal-content" style="max-width: 680px; max-height: 88vh; display: flex; flex-direction: column; padding: 20px;">
+      <div class="modal-header notranslate" translate="no" style="padding-bottom: 12px; border-bottom: 1px solid #EBEBEB;">
+        <h3 class="modal-title">${escapeHtml(t.auth.termsModalTitle)}</h3>
+        <button class="modal-close" id="closeTermsBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div class="terms-modal-body" style="overflow-y: auto; padding: 4px 4px 16px 4px; flex: 1;">
+        ${getLegalCardsHtml(t)}
+      </div>
+      <div class="notranslate" translate="no" style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 14px; border-top: 1px solid #EBEBEB;">
+        <button type="button" class="btn btn-secondary btn-sm" id="closeTermsSecondaryBtn">${escapeHtml(t.common.close)}</button>
+      </div>
     </div>
   </div>
 
@@ -315,6 +363,14 @@ ${renderCreatePostScript(t)}
   var i18n = ${clientI18n};
   var isOwner = ${is_owner ? 'true' : 'false'};
   var currentUserId = ${Number(data.current_user_id || (is_owner ? user.id : 0))};
+
+  function syncBodyOverflow() {
+    if (document.querySelector('.modal-backdrop.visible, .comments-sheet-backdrop.visible')) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+  }
 
   var viewModal = document.getElementById('viewPostModal');
   var closeViewBtn = document.getElementById('closeViewPostBtn');
@@ -741,16 +797,16 @@ ${renderCreatePostScript(t)}
       window.trackTelemetryEvent({ type: 'open_modal', post_id: parseInt(activePostId, 10), author_id: postAuthorId });
     }
 
-    document.body.style.overflow = 'hidden';
     viewModal.classList.add('visible');
+    syncBodyOverflow();
   }
 
   function closePostView() {
     if (viewModal) viewModal.classList.remove('visible');
     var scrollBody = viewModal ? viewModal.querySelector('.post-view-scroll-body') : null;
     if (scrollBody) scrollBody.scrollTop = 0;
-    document.body.style.overflow = '';
     activePostId = null;
+    syncBodyOverflow();
   }
 
   document.querySelectorAll('.post-item-btn').forEach(function(btn) {
@@ -939,6 +995,7 @@ ${renderCreatePostScript(t)}
 
   function hideDeleteModal() {
     if (deleteModal) deleteModal.classList.remove('visible');
+    syncBodyOverflow();
   }
 
   if (openDeleteBtn && deleteModal) {
@@ -952,6 +1009,7 @@ ${renderCreatePostScript(t)}
         confirmDeleteBtn.textContent = i18n.deleteBtn;
       }
       deleteModal.classList.add('visible');
+      syncBodyOverflow();
     });
   }
 
@@ -1039,6 +1097,7 @@ ${renderCreatePostScript(t)}
       saveBtn.disabled = !isChanged || !isValid;
     }
 
+
     if (editBtn) {
       editBtn.addEventListener('click', function() {
         if (modalError) modalError.classList.remove('visible');
@@ -1047,18 +1106,23 @@ ${renderCreatePostScript(t)}
         if (editBioInput) editBioInput.value = initialBio;
         if (saveBtn) saveBtn.disabled = true;
         editModal.classList.add('visible');
+        syncBodyOverflow();
       });
     }
 
     if (closeBtn) {
       closeBtn.addEventListener('click', function() {
         editModal.classList.remove('visible');
+        syncBodyOverflow();
       });
     }
 
     if (editModal) {
       editModal.addEventListener('click', function(e) {
-        if (e.target === editModal) editModal.classList.remove('visible');
+        if (e.target === editModal) {
+          editModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
       });
     }
 
@@ -1071,21 +1135,111 @@ ${renderCreatePostScript(t)}
     var closeMenuBtn = document.getElementById('closeMenuBtn');
     var menuLogoutBtn = document.getElementById('menuLogoutBtn');
 
+    var settingsModal = document.getElementById('settingsModal');
+    var openSettingsBtn = document.getElementById('openSettingsBtn');
+    var closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    var settingsEditProfileBtn = document.getElementById('settingsEditProfileBtn');
+    var settingsTermsBtn = document.getElementById('settingsTermsBtn');
+    var settingsLogoutBtn = document.getElementById('settingsLogoutBtn');
+
+    var termsModal = document.getElementById('termsModal');
+    var closeTermsBtn = document.getElementById('closeTermsBtn');
+    var closeTermsSecondaryBtn = document.getElementById('closeTermsSecondaryBtn');
+
     if (openMenuBtn && menuModal) {
       openMenuBtn.addEventListener('click', function() {
         menuModal.classList.add('visible');
+        syncBodyOverflow();
       });
     }
 
     if (closeMenuBtn && menuModal) {
       closeMenuBtn.addEventListener('click', function() {
         menuModal.classList.remove('visible');
+        syncBodyOverflow();
       });
     }
 
     if (menuModal) {
       menuModal.addEventListener('click', function(e) {
-        if (e.target === menuModal) menuModal.classList.remove('visible');
+        if (e.target === menuModal) {
+          menuModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
+      });
+    }
+
+    if (openSettingsBtn && settingsModal) {
+      openSettingsBtn.addEventListener('click', function() {
+        if (menuModal) menuModal.classList.remove('visible');
+        settingsModal.classList.add('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (closeSettingsBtn && settingsModal) {
+      closeSettingsBtn.addEventListener('click', function() {
+        settingsModal.classList.remove('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (settingsModal) {
+      settingsModal.addEventListener('click', function(e) {
+        if (e.target === settingsModal) {
+          settingsModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
+      });
+    }
+
+    if (settingsEditProfileBtn && editModal) {
+      settingsEditProfileBtn.addEventListener('click', function() {
+        if (settingsModal) settingsModal.classList.remove('visible');
+        if (modalError) modalError.classList.remove('visible');
+        if (editUsernameInput) editUsernameInput.value = initialUsername;
+        if (editDisplayNameInput) editDisplayNameInput.value = initialDisplayName;
+        if (editBioInput) editBioInput.value = initialBio;
+        if (saveBtn) saveBtn.disabled = true;
+        editModal.classList.add('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (settingsTermsBtn && termsModal) {
+      settingsTermsBtn.addEventListener('click', function() {
+        if (settingsModal) settingsModal.classList.remove('visible');
+        termsModal.classList.add('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (closeTermsBtn && termsModal) {
+      closeTermsBtn.addEventListener('click', function() {
+        termsModal.classList.remove('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (closeTermsSecondaryBtn && termsModal) {
+      closeTermsSecondaryBtn.addEventListener('click', function() {
+        termsModal.classList.remove('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (termsModal) {
+      termsModal.addEventListener('click', function(e) {
+        if (e.target === termsModal) {
+          termsModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && termsModal.classList.contains('visible')) {
+          termsModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
       });
     }
 
@@ -1098,24 +1252,38 @@ ${renderCreatePostScript(t)}
       menuLogoutBtn.addEventListener('click', function() {
         if (menuModal) menuModal.classList.remove('visible');
         logoutModal.classList.add('visible');
+        syncBodyOverflow();
+      });
+    }
+
+    if (settingsLogoutBtn && logoutModal) {
+      settingsLogoutBtn.addEventListener('click', function() {
+        if (settingsModal) settingsModal.classList.remove('visible');
+        logoutModal.classList.add('visible');
+        syncBodyOverflow();
       });
     }
 
     if (closeLogoutBtn) {
       closeLogoutBtn.addEventListener('click', function() {
         logoutModal.classList.remove('visible');
+        syncBodyOverflow();
       });
     }
 
     if (cancelLogoutBtn) {
       cancelLogoutBtn.addEventListener('click', function() {
         logoutModal.classList.remove('visible');
+        syncBodyOverflow();
       });
     }
 
     if (logoutModal) {
       logoutModal.addEventListener('click', function(e) {
-        if (e.target === logoutModal) logoutModal.classList.remove('visible');
+        if (e.target === logoutModal) {
+          logoutModal.classList.remove('visible');
+          syncBodyOverflow();
+        }
       });
     }
 
@@ -1167,6 +1335,7 @@ ${renderCreatePostScript(t)}
             saveBtn.disabled = true;
 
             editModal.classList.remove('visible');
+            syncBodyOverflow();
           } else {
             modalError.textContent = data.error || i18n.networkError;
             modalError.classList.add('visible');

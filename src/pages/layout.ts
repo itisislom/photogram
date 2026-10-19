@@ -19,7 +19,7 @@ export function layout(title: string, body: string, script: string = '', t: Tran
 <html lang="${langCode}">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#FFFFFF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -150,24 +150,37 @@ window.showAppConfirm = function(opts) {
   }
 
   document.addEventListener('contextmenu', function(e) {
-    var t = e.target;
-    if (t && (t.tagName === 'IMG' || (t.closest && t.closest('img, .feed-card-photo, .explore-item, .pics-slide, .post-view-image-wrap, .avatar-box, .avatar-circle')))) {
-      e.preventDefault();
-      return false;
-    }
+    e.preventDefault();
+    return false;
   }, { passive: false });
 
   document.addEventListener('dragstart', function(e) {
-    var t = e.target;
-    if (t && (t.tagName === 'IMG' || (t.closest && t.closest('img, .feed-card-photo, .explore-item, .pics-slide, .post-view-image-wrap, .avatar-box, .avatar-circle')))) {
-      e.preventDefault();
-      return false;
-    }
+    e.preventDefault();
+    return false;
   }, false);
+
+  document.addEventListener('gesturestart', function(e) {
+    if (e.target && e.target.closest && e.target.closest('#cropperContainer, .cropper-area, .crop-container, .post-crop-wrap, #cropViewport')) return;
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('gesturechange', function(e) {
+    if (e.target && e.target.closest && e.target.closest('#cropperContainer, .cropper-area, .crop-container, .post-crop-wrap, #cropViewport')) return;
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', function(e) {
+    if (e.touches && e.touches.length > 1) {
+      if (e.target && e.target.closest && e.target.closest('#cropperContainer, .cropper-area, .crop-container, .post-crop-wrap, #cropViewport')) return;
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   function disableImgDrag() {
     document.querySelectorAll('img').forEach(function(img) {
-      img.setAttribute('draggable', 'false');
+      if (img.id !== 'cropImage') {
+        img.setAttribute('draggable', 'false');
+      }
     });
   }
   if (document.readyState === 'loading') {

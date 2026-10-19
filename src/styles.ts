@@ -31,6 +31,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   overscroll-behavior: none;
+  touch-action: pan-x pan-y;
 }
 
 ::-webkit-scrollbar {
@@ -39,7 +40,7 @@ body {
   height: 0;
 }
 
-img,
+img:not(#cropImage),
 .feed-card-photo,
 .feed-card-img,
 .explore-item,
@@ -48,9 +49,16 @@ img,
 .post-view-image,
 .avatar-box,
 .avatar-circle {
+  pointer-events: none !important;
   -webkit-touch-callout: none !important;
   -webkit-user-drag: none !important;
   user-drag: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+#cropImage {
+  pointer-events: auto !important;
   -webkit-user-select: none !important;
   user-select: none !important;
 }
@@ -88,6 +96,7 @@ a {
   padding: 24px 16px;
   padding-top: max(24px, env(safe-area-inset-top));
   padding-bottom: max(24px, env(safe-area-inset-bottom));
+  animation: pageFadeIn 0.2s ease forwards;
 }
 
 .auth-card {
@@ -542,6 +551,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  animation: pageFadeIn 0.2s ease forwards;
 }
 
 .profile-header {
@@ -719,6 +729,7 @@ body {
   align-items: center;
   justify-content: flex-start;
   padding: 0 16px;
+  gap: 12px;
   background: #FAFAFA;
   border: 1px solid #EEEEEE;
   border-radius: 12px;
@@ -726,6 +737,13 @@ body {
   font-weight: 600;
   cursor: pointer;
   text-align: left;
+  color: #262626;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.menu-action-btn svg {
+  flex-shrink: 0;
 }
 
 .menu-action-btn:active {
@@ -775,6 +793,11 @@ body {
   border: none;
   cursor: pointer;
   padding: 0;
+  transition: opacity 0.15s ease;
+}
+
+.bottom-nav-item:active {
+  opacity: 0.6;
 }
 
 .bottom-nav-item.active {
@@ -1070,6 +1093,7 @@ body {
   gap: 12px;
   max-height: min(90dvh, 760px);
   overflow: hidden;
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .post-view-header {
@@ -1160,6 +1184,24 @@ body {
 }
 
 
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1171,10 +1213,14 @@ body {
   padding-top: max(16px, env(safe-area-inset-top));
   padding-bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 10050;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
 .modal-backdrop.visible {
   display: flex;
+  opacity: 1;
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .modal-content {
@@ -1188,6 +1234,7 @@ body {
   gap: 14px;
   max-height: min(90dvh, 760px);
   overflow-y: auto;
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .modal-header {
@@ -1482,6 +1529,7 @@ body {
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
+  animation: pageFadeIn 0.2s ease forwards;
 }
 
 .explore-section {
@@ -1865,6 +1913,7 @@ body {
   margin: 0 auto;
   width: 100%;
   padding: 12px 0 40px;
+  animation: pageFadeIn 0.2s ease forwards;
 }
 
 .feed-card {
@@ -2308,12 +2357,7 @@ body {
   padding: 24px;
   border-radius: 20px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-  animation: appAlertPop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-
-@keyframes appAlertPop {
-  0% { transform: scale(0.92); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .app-alert-icon-box {
@@ -2391,12 +2435,13 @@ body {
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.25s ease;
+  transition: opacity 0.2s ease;
 }
 
 .comments-sheet-backdrop.visible {
   opacity: 1;
   pointer-events: auto;
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .comments-sheet-panel {
@@ -2408,15 +2453,14 @@ body {
   border-radius: 20px 20px 0 0;
   display: flex;
   flex-direction: column;
-  transform: translateY(100%);
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.25);
   overflow: hidden;
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: modalFadeIn 0.2s ease forwards;
 }
 
 .comments-sheet-backdrop.visible .comments-sheet-panel {
-  transform: translateY(0);
+  opacity: 1;
 }
 
 .comments-sheet-header {
@@ -2542,6 +2586,20 @@ body {
 }
 
 @media (max-width: 640px) {
+  input,
+  textarea,
+  select,
+  .input-field input,
+  .comment-input,
+  .search-input,
+  .post-caption-textarea,
+  .crop-caption-input,
+  #postCaptionInput,
+  #viewPostCommentInput,
+  #searchInput {
+    font-size: 16px !important;
+  }
+
   #viewPostModal {
     padding: 0 !important;
     background: #000000;
@@ -2744,7 +2802,7 @@ body {
 
 .feed-rec-username {
   font-size: 12px;
-  color: #737373;
+  color: #686868ff;
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
