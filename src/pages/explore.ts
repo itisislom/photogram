@@ -354,10 +354,29 @@ ${renderCommentsSheetScript(t)}
 
   var isLiking = false;
 
-  function showBurst(slide) {
+  function getEventCoords(e, container) {
+    var touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+    var clientX = touch ? touch.clientX : e.clientX;
+    var clientY = touch ? touch.clientY : e.clientY;
+    var rect = container.getBoundingClientRect();
+    var rawX = (clientX != null ? clientX : (rect.left + rect.width / 2)) - rect.left;
+    var rawY = (clientY != null ? clientY : (rect.top + rect.height / 2)) - rect.top;
+    var x = Math.max(20, Math.min(rect.width - 20, rawX));
+    var y = Math.max(20, Math.min(rect.height - 20, rawY));
+    return { x: x, y: y };
+  }
+
+  function showBurst(slide, x, y) {
     if (!slide) return;
     var burst = slide.querySelector('.post-like-burst');
     if (!burst) return;
+    if (typeof x === 'number' && typeof y === 'number') {
+      burst.style.left = x + 'px';
+      burst.style.top = y + 'px';
+    } else {
+      burst.style.left = '50%';
+      burst.style.top = '50%';
+    }
     burst.classList.remove('active');
     void burst.offsetWidth;
     burst.classList.add('active');
@@ -376,7 +395,7 @@ ${renderCommentsSheetScript(t)}
     }, 200);
   }
 
-  async function toggleSlideLike(slide, forceLikeOnly) {
+  async function toggleSlideLike(slide, forceLikeOnly, x, y) {
     if (!slide || isLiking) return;
     var pid = slide.dataset.postId;
     var likeBtn = slide.querySelector('.pics-like-btn');
@@ -387,7 +406,7 @@ ${renderCommentsSheetScript(t)}
     var prevCount = parseInt(countEl ? countEl.textContent : '0', 10) || 0;
 
     if (forceLikeOnly && wasLiked) {
-      showBurst(slide);
+      showBurst(slide, x, y);
       return;
     }
 
@@ -401,7 +420,7 @@ ${renderCommentsSheetScript(t)}
       animateBtn(likeBtn);
     }
     if (countEl) countEl.textContent = newCount;
-    if (newLiked) showBurst(slide);
+    if (newLiked) showBurst(slide, x, y);
 
     if (gridBtn) {
       gridBtn.dataset.isLiked = newLiked ? '1' : '0';
@@ -513,7 +532,8 @@ ${renderCommentsSheetScript(t)}
       if (imageWrap) {
         imageWrap.ondblclick = function(e) {
           e.preventDefault();
-          toggleSlideLike(slide, true);
+          var coords = getEventCoords(e, this);
+          toggleSlideLike(slide, true, coords.x, coords.y);
         };
 
         var lastTap = 0;
@@ -522,7 +542,8 @@ ${renderCommentsSheetScript(t)}
           var diff = now - lastTap;
           if (diff > 0 && diff < 350) {
             e.preventDefault();
-            toggleSlideLike(slide, true);
+            var coords = getEventCoords(e, this);
+            toggleSlideLike(slide, true, coords.x, coords.y);
           }
           lastTap = now;
         };

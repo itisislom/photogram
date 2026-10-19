@@ -465,6 +465,7 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
       created_at: p.created_at,
       username: p.username,
       display_name: p.display_name,
+      avatar_key: p.author_avatar_key,
       author_avatar_key: p.author_avatar_key,
       likes_count: Number(p.likes_count) || 0,
       comments_count: Number(p.comments_count) || 0,
@@ -624,26 +625,5 @@ export async function handleTelemetryBatch(env: Env, userId: number, events: Tel
 
   for (const [postId, delta] of tagUpdates.entries()) {
     await adjustTagAffinity(env, userId, postId, delta);
-  }
-}
-
-export async function handleHidePost(env: Env, userId: number, postId: number): Promise<boolean> {
-  if (!userId || !postId) return false;
-  try {
-    await env.DB.prepare(
-      `INSERT INTO user_interactions (user_id, post_id, is_hidden, last_seen_at)
-       VALUES (?1, ?2, 1, datetime('now'))
-       ON CONFLICT (user_id, post_id) DO UPDATE SET
-         is_hidden = 1,
-         last_seen_at = datetime('now')`
-    ).bind(userId, postId).run();
-
-    const post = await env.DB.prepare('SELECT user_id FROM posts WHERE id = ?').bind(postId).first<{ user_id: number }>();
-    if (post && post.user_id && post.user_id !== userId) {
-      await adjustAffinity(env, userId, post.user_id, -5.0);
-    }
-    return true;
-  } catch {
-    return false;
   }
 }

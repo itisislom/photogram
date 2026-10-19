@@ -240,10 +240,29 @@ ${renderCommentsSheetScript(t)}
     return 'Посмотреть все комментарии (' + count + ')';
   }
 
-  function showBurst(wrap) {
+  function getEventCoords(e, container) {
+    var touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+    var clientX = touch ? touch.clientX : e.clientX;
+    var clientY = touch ? touch.clientY : e.clientY;
+    var rect = container.getBoundingClientRect();
+    var rawX = (clientX != null ? clientX : (rect.left + rect.width / 2)) - rect.left;
+    var rawY = (clientY != null ? clientY : (rect.top + rect.height / 2)) - rect.top;
+    var x = Math.max(20, Math.min(rect.width - 20, rawX));
+    var y = Math.max(20, Math.min(rect.height - 20, rawY));
+    return { x: x, y: y };
+  }
+
+  function showBurst(wrap, x, y) {
     if (!wrap) return;
     var burst = wrap.querySelector('.post-like-burst');
     if (!burst) return;
+    if (typeof x === 'number' && typeof y === 'number') {
+      burst.style.left = x + 'px';
+      burst.style.top = y + 'px';
+    } else {
+      burst.style.left = '50%';
+      burst.style.top = '50%';
+    }
     burst.classList.remove('active');
     void burst.offsetWidth;
     burst.classList.add('active');
@@ -264,7 +283,7 @@ ${renderCommentsSheetScript(t)}
 
   var isLiking = false;
 
-  async function toggleLike(postId, forceLikeOnly) {
+  async function toggleLike(postId, forceLikeOnly, x, y) {
     if (!postId || isLiking) return;
 
     var card = document.querySelector('.feed-card[data-post-id="' + postId + '"]');
@@ -277,7 +296,7 @@ ${renderCommentsSheetScript(t)}
     var wasLiked = likeBtn ? likeBtn.classList.contains('liked') : false;
 
     if (forceLikeOnly && wasLiked) {
-      showBurst(imageWrap);
+      showBurst(imageWrap, x, y);
       return;
     }
 
@@ -297,7 +316,7 @@ ${renderCommentsSheetScript(t)}
       likesCountEl.textContent = formatLikes(newCount);
     }
     if (newLiked) {
-      showBurst(imageWrap);
+      showBurst(imageWrap, x, y);
     }
 
     try {
@@ -378,7 +397,8 @@ ${renderCommentsSheetScript(t)}
     wrap.addEventListener('dblclick', function(e) {
       e.preventDefault();
       var pid = this.dataset.postId;
-      toggleLike(pid, true);
+      var coords = getEventCoords(e, this);
+      toggleLike(pid, true, coords.x, coords.y);
     });
 
     var lastTap = 0;
@@ -388,7 +408,8 @@ ${renderCommentsSheetScript(t)}
       if (diff > 0 && diff < 350) {
         e.preventDefault();
         var pid = this.dataset.postId;
-        toggleLike(pid, true);
+        var coords = getEventCoords(e, this);
+        toggleLike(pid, true, coords.x, coords.y);
       }
       lastTap = now;
     });

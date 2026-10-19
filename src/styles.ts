@@ -1102,6 +1102,36 @@ body {
   color: #000000;
 }
 
+.post-view-author-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.post-view-header-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #EFEFEF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: #262626;
+  flex-shrink: 0;
+}
+
+.post-view-header-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .post-view-header-author {
   font-weight: 700;
   font-size: 15px;
@@ -1205,25 +1235,28 @@ body {
 .post-view-image-wrap {
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  max-height: min(50dvh, 480px);
   background: #000000;
   border-radius: 12px;
   overflow: hidden;
   user-select: none;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .post-view-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: min(50dvh, 480px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
   display: block;
 }
 
 .post-like-burst {
   position: absolute;
-  top: 50%;
-  left: 50%;
   transform: translate(-50%, -50%) scale(0);
   opacity: 0;
   pointer-events: none;
@@ -1298,7 +1331,7 @@ body {
   color: #8E8E8E;
 }
 
-/* Explore & Search */
+
 .explore-search-wrap {
   position: sticky;
   top: 0;
@@ -1573,7 +1606,7 @@ body {
   flex-direction: column;
 }
 
-/* Fullscreen Pics Swipe Viewer */
+
 .pics-modal {
   position: fixed;
   inset: 0;
@@ -1822,7 +1855,7 @@ body {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-/* Feed Layout & Cards */
+
 .feed-container {
   display: flex;
   flex-direction: column;
@@ -2033,7 +2066,7 @@ body {
 }
 
 
-/* Grid Hover & Overlay */
+
 .profile-grid-item {
   position: relative;
 }
@@ -2071,7 +2104,7 @@ body {
   stroke: #FFFFFF;
 }
 
-/* Comments section inside View Post Modal */
+
 .post-view-comments-section {
   display: flex;
   flex-direction: column;
@@ -2258,7 +2291,7 @@ body {
   cursor: pointer;
 }
 
-/* App Alert & Confirm Modal */
+
 .app-alert-backdrop {
   z-index: 20000;
   backdrop-filter: blur(4px);
@@ -2343,7 +2376,7 @@ body {
   justify-content: center;
 }
 
-/* Universal Comments Sheet / Drawer */
+
 .comments-sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -2475,7 +2508,7 @@ body {
   }
 }
 
-/* Feed Comment Buttons */
+
 .feed-comment-btn {
   background: transparent;
   border: none;
@@ -2542,9 +2575,20 @@ body {
 
   #viewPostModal .post-view-image-wrap {
     border-radius: 0 !important;
-    aspect-ratio: 1 / 1;
+    max-height: min(50dvh, 480px) !important;
     width: 100%;
     background: #000000;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  #viewPostModal .post-view-image {
+    max-height: min(50dvh, 480px) !important;
+    max-width: 100% !important;
+    width: auto !important;
+    height: auto !important;
+    object-fit: contain !important;
   }
 
   #viewPostModal .post-view-actions {
@@ -2786,45 +2830,37 @@ body {
   border-color: #262626;
 }
 
-.post-view-hide-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: #737373;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 6px;
-}
-
-.post-view-hide-btn:hover {
-  background: #F5F5F5;
-  color: #ED4956;
-}
-
 .post-view-related-section {
-  padding: 16px 0;
+  padding: 12px 14px;
   border-top: 1px solid #EFEFEF;
-  margin-top: 16px;
+  margin-top: 4px;
 }
 
 .post-related-header {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #737373;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .post-related-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 4px;
+}
+
+.post-related-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .post-related-item {
+  flex: 0 0 100px;
+  width: 100px;
+  height: 100px;
   aspect-ratio: 1 / 1;
   position: relative;
   border: none;
@@ -2833,7 +2869,8 @@ body {
   overflow: hidden;
   background: #EFEFEF;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: 8px;
+  scroll-snap-align: start;
 }
 
 .post-related-item img {

@@ -49,12 +49,14 @@ export interface ProfileData {
   follows_you?: boolean;
   username_changes_left?: number;
   username_unlock_days?: number;
+  current_user_id?: number;
   posts: Post[];
 }
 
 export interface ExplorePost extends Post {
   username: string;
   display_name: string;
+  avatar_key?: string;
   author_avatar_key?: string;
 }
 

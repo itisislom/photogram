@@ -72,7 +72,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
     ? `
     <div class="profile-grid" id="profileGrid">
       ${postList.map(p => `
-        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-img="/media/${encodeURIComponent(p.image_key)}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
+        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-img="/media/${encodeURIComponent(p.image_key)}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
           <img src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
           <div class="profile-grid-overlay">
             <div class="profile-grid-stat">${HEART_ICON} <span class="grid-likes-val">${p.likes_count ?? 0}</span></div>
@@ -154,19 +154,12 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
         <button class="post-view-back-btn" id="closeViewPostBtn" type="button" aria-label="${escapeHtml(t.common.close)}">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
         </button>
-        <span class="post-view-header-author">${usernameSafe}</span>
+        <a id="viewPostAuthorLink" href="/u/${usernameSafe}" class="post-view-author-link">
+          <div class="post-view-header-avatar" id="viewPostAuthorAvatar">${avatarHtml}</div>
+          <span class="post-view-header-author" id="viewPostAuthorName">${usernameSafe}</span>
+        </a>
         <div class="post-view-header-actions">
-          ${
-            is_owner
-              ? `<button class="modal-icon-btn modal-icon-danger" id="openDeletePostModalBtn" type="button" aria-label="${escapeHtml(t.post.deletePost)}" title="${escapeHtml(t.post.deletePost)}">${TRASH_ICON}</button>`
-              : `<button class="post-view-hide-btn" id="hidePostBtn" type="button" aria-label="${escapeHtml(t.recommendations.notInterested)}" title="${escapeHtml(t.recommendations.notInterested)}">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-                  </svg>
-                  <span>${escapeHtml(t.recommendations.notInterested)}</span>
-                </button>`
-          }
+          <button class="modal-icon-btn modal-icon-danger" id="openDeletePostModalBtn" type="button" style="display:none;" aria-label="${escapeHtml(t.post.deletePost)}" title="${escapeHtml(t.post.deletePost)}">${TRASH_ICON}</button>
         </div>
       </div>
       <div class="post-view-scroll-body">
@@ -210,9 +203,6 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
     </div>
   </div>
 
-  ${
-    is_owner
-      ? `
   <div class="modal-backdrop" id="deletePostModal">
     <div class="modal-content">
       <div class="modal-header">
@@ -226,9 +216,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
         <button class="btn btn-danger btn-sm" id="confirmDeletePostBtn" style="flex:1;">${escapeHtml(t.common.delete)}</button>
       </div>
     </div>
-  </div>`
-      : ''
-  }
+  </div>
 
   ${
     is_owner
@@ -326,6 +314,7 @@ ${renderCreatePostScript(t)}
 (function() {
   var i18n = ${clientI18n};
   var isOwner = ${is_owner ? 'true' : 'false'};
+  var currentUserId = ${Number(data.current_user_id || (is_owner ? user.id : 0))};
 
   var viewModal = document.getElementById('viewPostModal');
   var closeViewBtn = document.getElementById('closeViewPostBtn');
@@ -341,8 +330,38 @@ ${renderCreatePostScript(t)}
   var viewCommentForm = document.getElementById('viewPostCommentForm');
   var viewCommentInput = document.getElementById('viewPostCommentInput');
   var viewCommentSubmitBtn = document.getElementById('viewPostCommentSubmitBtn');
+  var viewAuthorLink = document.getElementById('viewPostAuthorLink');
+  var viewAuthorAvatar = document.getElementById('viewPostAuthorAvatar');
+  var viewAuthorName = document.getElementById('viewPostAuthorName');
+  var openDeleteBtn = document.getElementById('openDeletePostModalBtn');
   var activePostId = null;
   var isLiking = false;
+  var likeBurstTimer = null;
+
+  function getEventCoords(e, container) {
+    var touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+    var clientX = touch ? touch.clientX : e.clientX;
+    var clientY = touch ? touch.clientY : e.clientY;
+    var rect = container.getBoundingClientRect();
+    var rawX = (clientX != null ? clientX : (rect.left + rect.width / 2)) - rect.left;
+    var rawY = (clientY != null ? clientY : (rect.top + rect.height / 2)) - rect.top;
+    var x = Math.max(20, Math.min(rect.width - 20, rawX));
+    var y = Math.max(20, Math.min(rect.height - 20, rawY));
+    return { x: x, y: y };
+  }
+
+  function updateAuthorHeader(username, avatarKey) {
+    if (viewAuthorLink) viewAuthorLink.href = '/u/' + encodeURIComponent(username);
+    if (viewAuthorName) viewAuthorName.textContent = username;
+    if (viewAuthorAvatar) {
+      if (avatarKey) {
+        viewAuthorAvatar.innerHTML = '<img src="/media/' + encodeURIComponent(avatarKey) + '" alt="' + escapeHtmlClient(username) + '">';
+      } else {
+        var init = (username || '?').charAt(0).toUpperCase();
+        viewAuthorAvatar.innerHTML = '<span>' + escapeHtmlClient(init) + '</span>';
+      }
+    }
+  }
 
   function escapeHtmlClient(str) {
     if (!str) return '';
@@ -481,12 +500,20 @@ ${renderCreatePostScript(t)}
     }
   }
 
-  function showLikeBurst() {
+  function showLikeBurst(x, y) {
     if (!likeBurst) return;
+    if (typeof x === 'number' && typeof y === 'number') {
+      likeBurst.style.left = x + 'px';
+      likeBurst.style.top = y + 'px';
+    } else {
+      likeBurst.style.left = '50%';
+      likeBurst.style.top = '50%';
+    }
     likeBurst.classList.remove('active');
     void likeBurst.offsetWidth;
     likeBurst.classList.add('active');
-    setTimeout(function() {
+    clearTimeout(likeBurstTimer);
+    likeBurstTimer = setTimeout(function() {
       if (likeBurst) likeBurst.classList.remove('active');
     }, 600);
   }
@@ -501,7 +528,7 @@ ${renderCreatePostScript(t)}
     }, 200);
   }
 
-  async function toggleLike(forceLikeOnly) {
+  async function toggleLike(forceLikeOnly, x, y) {
     if (!activePostId || isLiking) return;
 
     var gridBtn = document.querySelector('.post-item-btn[data-post-id="' + activePostId + '"]');
@@ -511,7 +538,7 @@ ${renderCreatePostScript(t)}
     var prevCount = parseInt(gridBtn.dataset.likesCount, 10) || 0;
 
     if (forceLikeOnly && wasLiked) {
-      showLikeBurst();
+      showLikeBurst(x, y);
       return;
     }
 
@@ -524,7 +551,7 @@ ${renderCreatePostScript(t)}
     updateLikeUI(newLiked, newCount);
     animateLikeButton();
     if (newLiked) {
-      showLikeBurst();
+      showLikeBurst(x, y);
     }
 
     try {
@@ -578,7 +605,18 @@ ${renderCreatePostScript(t)}
       if (res.ok && data.posts && data.posts.length > 0) {
         var html = '';
         data.posts.forEach(function(p) {
-          html += '<button type="button" class="post-related-item post-item-btn" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-img="/media/' + encodeURIComponent(p.image_key) + '" data-caption="' + escapeHtmlClient(p.caption || '') + '" data-likes-count="' + (p.likes_count || 0) + '" data-comments-count="' + (p.comments_count || 0) + '" data-is-liked="' + (p.is_liked ? '1' : '0') + '" data-date="' + escapeHtmlClient(p.created_at || '') + '">';
+          var avKey = p.author_avatar_key || p.avatar_key || '';
+          html += '<button type="button" class="post-related-item post-item-btn" ' +
+            'data-post-id="' + p.id + '" ' +
+            'data-author-id="' + p.user_id + '" ' +
+            'data-author-username="' + escapeHtmlClient(p.username || '') + '" ' +
+            'data-author-avatar="' + escapeHtmlClient(avKey) + '" ' +
+            'data-img="/media/' + encodeURIComponent(p.image_key) + '" ' +
+            'data-caption="' + escapeHtmlClient(p.caption || '') + '" ' +
+            'data-likes-count="' + (p.likes_count || 0) + '" ' +
+            'data-comments-count="' + (p.comments_count || 0) + '" ' +
+            'data-is-liked="' + (p.is_liked ? '1' : '0') + '" ' +
+            'data-date="' + escapeHtmlClient(p.created_at || '') + '">';
           html += '<img src="/media/' + encodeURIComponent(p.image_key) + '" loading="lazy" alt="Related">';
           html += '</button>';
         });
@@ -594,38 +632,6 @@ ${renderCreatePostScript(t)}
         });
       }
     } catch (err) {}
-  }
-
-  var hidePostBtn = document.getElementById('hidePostBtn');
-  if (hidePostBtn) {
-    hidePostBtn.onclick = async function() {
-      if (!activePostId) return;
-      hidePostBtn.disabled = true;
-      try {
-        var res = await fetch('/api/posts/hide', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ post_id: parseInt(activePostId, 10) })
-        });
-        var data = await res.json();
-        if (res.ok && data.success) {
-          var hiddenId = activePostId;
-          closePostView();
-          var el = document.querySelector('.post-item-btn[data-post-id="' + hiddenId + '"]');
-          if (el) {
-            el.style.transition = 'all 0.3s ease';
-            el.style.opacity = '0';
-            el.style.transform = 'scale(0.8)';
-            setTimeout(function() { el.remove(); }, 300);
-          }
-          if (window.showAppAlert) {
-            window.showAppAlert({ title: i18n.attention, message: i18n.postHidden, type: 'success' });
-          }
-        }
-      } catch (err) {} finally {
-        hidePostBtn.disabled = false;
-      }
-    };
   }
 
   if (!isOwner) {
@@ -696,6 +702,21 @@ ${renderCreatePostScript(t)}
     var likesCount = parseInt(btn.dataset.likesCount, 10) || 0;
     var isLiked = btn.dataset.isLiked === '1';
     updateLikeUI(isLiked, likesCount);
+
+    var postAuthorId = Number(btn.dataset.authorId || '${user.id}');
+    var postAuthorUsername = btn.dataset.authorUsername || '${usernameSafe}';
+    var postAuthorAvatar = btn.dataset.authorAvatar || '';
+
+    updateAuthorHeader(postAuthorUsername, postAuthorAvatar);
+
+    if (openDeleteBtn) {
+      if (Number(postAuthorId) === Number(currentUserId) && Number(currentUserId) > 0) {
+        openDeleteBtn.style.display = 'flex';
+      } else {
+        openDeleteBtn.style.display = 'none';
+      }
+    }
+
     if (btn.dataset.date) {
       try {
         var d = new Date(btn.dataset.date.replace(' ', 'T') + 'Z');
@@ -715,7 +736,7 @@ ${renderCreatePostScript(t)}
     loadRelatedPosts(activePostId);
 
     if (window.trackTelemetryEvent) {
-      window.trackTelemetryEvent({ type: 'open_modal', post_id: parseInt(activePostId, 10), author_id: ${user.id} });
+      window.trackTelemetryEvent({ type: 'open_modal', post_id: parseInt(activePostId, 10), author_id: postAuthorId });
     }
 
     document.body.style.overflow = 'hidden';
@@ -744,7 +765,8 @@ ${renderCreatePostScript(t)}
   if (viewImageWrap) {
     viewImageWrap.addEventListener('dblclick', function(e) {
       e.preventDefault();
-      toggleLike(true);
+      var coords = getEventCoords(e, this);
+      toggleLike(true, coords.x, coords.y);
     });
 
     var lastTap = 0;
@@ -753,7 +775,8 @@ ${renderCreatePostScript(t)}
       var diff = now - lastTap;
       if (diff > 0 && diff < 350) {
         e.preventDefault();
-        toggleLike(true);
+        var coords = getEventCoords(e, this);
+        toggleLike(true, coords.x, coords.y);
       }
       lastTap = now;
     });

@@ -165,6 +165,7 @@ export async function getProfileData(
     follows_you: followsYou,
     username_changes_left: usernameChangesLeft,
     username_unlock_days: usernameUnlockDays,
+    current_user_id: currentUserId || 0,
     posts: userPosts,
   };
 }

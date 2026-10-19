@@ -17,8 +17,7 @@ import {
   getRelatedPosts,
   getRecommendedUsers,
   getSimilarAuthors,
-  handleTelemetryBatch,
-  handleHidePost
+  handleTelemetryBatch
 } from './recommendations';
 
 export default {
@@ -219,34 +218,6 @@ export default {
           await handleTelemetryBatch(env, user.id, body.events);
         }
         return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      } catch {
-        return new Response(JSON.stringify({ error: 'Bad request' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-
-    if (pathname === '/api/posts/hide' && method === 'POST') {
-      const user = await getUserFromRequest(env, request);
-      if (!user) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      try {
-        const body = (await request.json()) as { post_id?: number };
-        if (body && typeof body.post_id === 'number') {
-          const ok = await handleHidePost(env, user.id, body.post_id);
-          return new Response(JSON.stringify({ success: ok }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(JSON.stringify({ error: 'Invalid post_id' }), {
-          status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       } catch {
