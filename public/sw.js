@@ -1,4 +1,4 @@
-const CACHE_NAME = 'photogram-v2';
+const CACHE_NAME = 'photogram-v5';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
@@ -57,6 +57,8 @@ self.addEventListener('fetch', function(event) {
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).catch(function() {
+        return fetch(req.url, { credentials: 'include' });
+      }).catch(function() {
         return caches.match(OFFLINE_URL).then(function(cached) {
           return cached || new Response('Offline', {
             status: 503,
@@ -68,7 +70,24 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg' || url.pathname === '/manifest.webmanifest') {
+  if (url.pathname === '/manifest.webmanifest' || url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(req).then(function(res) {
+        if (res.ok) {
+          var clone = res.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(req, clone);
+          });
+        }
+        return res;
+      }).catch(function() {
+        return caches.match(req);
+      })
+    );
+    return;
+  }
+
+  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg') {
     event.respondWith(
       caches.match(req).then(function(cached) {
         return cached || fetch(req).then(function(res) {

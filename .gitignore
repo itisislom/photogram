@@ -5,6 +5,7 @@ dist/
 scratch/
 *.env
 *.env.*
+.dev.vars
 *.local
 *.sqlite
 *.sqlite3
@@ -13,3 +14,12 @@ scratch/
 .DS_Store
 wrangler.toml
 Thumbs.db
+.neon
+.env
+.env.*
+*.bat
+scripts/
+skills-lock.json
+*.pem
+*.key
+

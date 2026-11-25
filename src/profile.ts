@@ -1,6 +1,8 @@
-import { Env, ProfileData, User, Post, ExploreData, ExploreUser, ExplorePost } from './types';
+import { Env, ProfileData, User, Post, ExploreData, ExploreUser, ExplorePost, FollowerUser } from './types';
 import { getUserFromRequest } from './auth';
 import { adjustAffinity, getPersonalizedExplore } from './recommendations';
+import { isBlockedUsername } from './blockedUsernames';
+import { detectLanguage, getTranslations } from './languages';
 
 const MAX_DISPLAY_NAME_LEN = 50;
 const MAX_BIO_LEN = 150;
@@ -197,6 +199,10 @@ export async function handleUpdateProfile(request: Request, env: Env): Promise<R
 
   let usernameChanged = false;
   if (targetUsername !== currentUser.username) {
+    if (isBlockedUsername(targetUsername)) {
+      const t = getTranslations(detectLanguage(request));
+      return jsonError(t.auth.errUsernameForbidden, 400);
+    }
     const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')
       .bind(targetUsername, currentUser.id)
       .first();
@@ -388,6 +394,41 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
+  const now = Math.floor(Date.now() / 1000);
+  const followRateKey = `follow:${currentUser.id}`;
+
+  const rateRow = await env.DB.prepare(
+    'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?'
+  )
+    .bind(followRateKey)
+    .first<{ attempts: number; locked_until: number; updated_at: number }>();
+
+  if (rateRow && rateRow.locked_until > now) {
+    return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+  }
+
+  let attempts = 1;
+  if (rateRow) {
+    if (now - rateRow.updated_at > 5) {
+      attempts = 1;
+    } else {
+      attempts = rateRow.attempts + 1;
+    }
+  }
+
+  const isLocked = attempts > 10;
+  const lockUntil = isLocked ? now + 10 : 0;
+
+  await env.DB.prepare(
+    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?'
+  )
+    .bind(followRateKey, attempts, lockUntil, now, attempts, lockUntil, now)
+    .run();
+
+  if (isLocked) {
+    return jsonError('Слишком много запросов. Действие временно заблокировано на 10 секунд', 429);
+  }
+
   let targetId: number | null = null;
   try {
     const body = await request.json() as { following_id?: number; target_id?: number; username?: string };
@@ -462,5 +503,91 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
     }, 200);
   } catch (err) {
     return jsonError('Ошибка обновления подписки', 500);
+  }
+}
+
+
+export async function getFollowersList(
+  env: Env,
+  targetUserId: number,
+  currentUserId?: number
+): Promise<FollowerUser[]> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
+              EXISTS(
+                SELECT 1 FROM follows f2
+                WHERE f2.follower_id = ?1 AND f2.following_id = u.id
+              ) as is_following
+       FROM follows f
+       JOIN users u ON u.id = f.follower_id
+       WHERE f.following_id = ?2
+       ORDER BY f.created_at DESC`
+    )
+      .bind(currentUserId || 0, targetUserId)
+      .all<{
+        id: number;
+        username: string;
+        display_name: string;
+        avatar_key: string;
+        is_verified?: number;
+        is_following?: number;
+      }>();
+
+    const results = rows.results || [];
+    return results.map(r => ({
+      id: r.id,
+      username: r.username,
+      display_name: r.display_name || r.username,
+      avatar_key: r.avatar_key || '',
+      is_verified: Boolean(r.is_verified),
+      is_following: Boolean(r.is_following),
+      is_self: currentUserId ? r.id === currentUserId : false
+    }));
+  } catch {
+    return [];
+  }
+}
+
+
+export async function getFollowingList(
+  env: Env,
+  targetUserId: number,
+  currentUserId?: number
+): Promise<FollowerUser[]> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
+              EXISTS(
+                SELECT 1 FROM follows f2
+                WHERE f2.follower_id = ?1 AND f2.following_id = u.id
+              ) as is_following
+       FROM follows f
+       JOIN users u ON u.id = f.following_id
+       WHERE f.follower_id = ?2
+       ORDER BY f.created_at DESC`
+    )
+      .bind(currentUserId || 0, targetUserId)
+      .all<{
+        id: number;
+        username: string;
+        display_name: string;
+        avatar_key: string;
+        is_verified?: number;
+        is_following?: number;
+      }>();
+
+    const results = rows.results || [];
+    return results.map(r => ({
+      id: r.id,
+      username: r.username,
+      display_name: r.display_name || r.username,
+      avatar_key: r.avatar_key || '',
+      is_verified: Boolean(r.is_verified),
+      is_following: Boolean(r.is_following),
+      is_self: currentUserId ? r.id === currentUserId : false
+    }));
+  } catch {
+    return [];
   }
 }

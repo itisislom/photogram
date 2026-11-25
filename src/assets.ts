@@ -24,39 +24,45 @@ export function getIconJpgBytes(): Uint8Array {
   return bytes;
 }
 
-export const MANIFEST_JSON = JSON.stringify({
-  name: "Photogram",
-  short_name: "Photogram",
-  description: "Photogram social platform",
-  start_url: "/",
-  scope: "/",
-  display: "standalone",
-  orientation: "portrait",
-  background_color: "#FFFFFF",
-  theme_color: "#FFFFFF",
-  icons: [
-    {
-      src: "/icon.svg",
-      sizes: "any",
-      type: "image/svg+xml",
-      purpose: "any"
-    },
-    {
-      src: "/icon.jpg",
-      sizes: "192x192",
-      type: "image/jpeg",
-      purpose: "any maskable"
-    },
-    {
-      src: "/icon.jpg",
-      sizes: "512x512",
-      type: "image/jpeg",
-      purpose: "any maskable"
-    }
-  ]
-}, null, 2);
+export function getManifestJson(theme?: string): string {
+  const bg = theme === 'light' ? '#FFFFFF' : '#000000';
+  return JSON.stringify({
+    name: "Photogram",
+    short_name: "Photogram",
+    description: "Photogram social platform",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    display_override: ["standalone"],
+    orientation: "portrait",
+    background_color: bg,
+    theme_color: bg,
+    icons: [
+      {
+        src: "/icon.svg",
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "any"
+      },
+      {
+        src: "/icon.jpg",
+        sizes: "192x192",
+        type: "image/jpeg",
+        purpose: "any maskable"
+      },
+      {
+        src: "/icon.jpg",
+        sizes: "512x512",
+        type: "image/jpeg",
+        purpose: "any maskable"
+      }
+    ]
+  }, null, 2);
+}
 
-export const SW_JS = `const CACHE_NAME = 'photogram-v2';
+export const MANIFEST_JSON = getManifestJson('dark');
+
+export const SW_JS = `const CACHE_NAME = 'photogram-v5';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
@@ -115,6 +121,8 @@ self.addEventListener('fetch', function(event) {
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).catch(function() {
+        return fetch(req.url, { credentials: 'include' });
+      }).catch(function() {
         return caches.match(OFFLINE_URL).then(function(cached) {
           return cached || new Response('Offline', {
             status: 503,
@@ -126,7 +134,24 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg' || url.pathname === '/manifest.webmanifest') {
+  if (url.pathname === '/manifest.webmanifest' || url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(req).then(function(res) {
+        if (res.ok) {
+          var clone = res.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(req, clone);
+          });
+        }
+        return res;
+      }).catch(function() {
+        return caches.match(req);
+      })
+    );
+    return;
+  }
+
+  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg') {
     event.respondWith(
       caches.match(req).then(function(cached) {
         return cached || fetch(req).then(function(res) {

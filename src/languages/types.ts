@@ -36,6 +36,9 @@ export interface Translations {
     followersCount: (n: number) => string;
     followingCount: (n: number) => string;
     selectLanguage: string;
+    theme: string;
+    themeLight: string;
+    themeDark: string;
   };
 
   nav: {
@@ -54,6 +57,8 @@ export interface Translations {
     username: string;
     displayName: string;
     password: string;
+    showPassword: string;
+    hidePassword: string;
     loginBtn: string;
     registerBtn: string;
     noAccount: string;
@@ -63,9 +68,37 @@ export interface Translations {
     termsModalTitle: string;
     accept18Plus: string;
     errUsernameFormat: string;
+    errUsernameForbidden: string;
     errDisplayNameRequired: string;
     errPasswordMin: string;
     errTermsRequired: string;
+    errTooManyRegAttempts: (mins: number) => string;
+    errUsernameTaken: string;
+    errAccountCreate: string;
+    errTooManyIpAttempts: (mins: number) => string;
+    errLoginRequired: string;
+    errAccountLocked: (mins: number) => string;
+    errLoginLocked15m: string;
+    errInvalidCredentials: string;
+    changePasswordTitle: string;
+    currentPassword: string;
+    newPassword: string;
+    confirmNewPassword: string;
+    changePasswordSuccess: string;
+    errCurrentPasswordRequired: string;
+    errCurrentPasswordWrong: string;
+    errPasswordsMismatch: string;
+    errPasswordSame: string;
+    errTooManyPwChangeAttempts: (mins: number) => string;
+    accountsTitle: string;
+    activeAccount: string;
+    addAccount: string;
+    accountsLimitHint: (count: number, max: number) => string;
+    errAccountsLimitReached: string;
+    removeAccountTitle: string;
+    removeAccountConfirm: (username: string) => string;
+    removeAccountBtn: string;
+    backToAccounts: string;
   };
 
   feed: {
@@ -89,6 +122,9 @@ export interface Translations {
     following: string;
     followBack: string;
     followsYou: string;
+    unfollowTitle: string;
+    unfollowConfirm: (username: string) => string;
+    unfollowBtn: string;
     bio: string;
     changePhoto: string;
     uploadPhoto: string;
@@ -109,13 +145,20 @@ export interface Translations {
   post: {
     newPostTitle: string;
     selectPhotoDropzone: string;
+    selectPhotoBtn: string;
     changePhoto: string;
+    replacePhoto: string;
+    back: string;
     captionLabel: string;
     captionPlaceholder: string;
     publishBtn: string;
     publishing: string;
     nsfwBlocked: string;
     deletePost: string;
+    moreOptions: string;
+    downloadPhoto: string;
+    downloadSuccess: string;
+    downloadError: string;
   };
 
   error: {
@@ -133,6 +176,15 @@ export interface Translations {
     send: string;
     deleteTitle: string;
     deleteConfirm: string;
+  };
+
+  sublist: {
+    title: string;
+    searchPlaceholder: string;
+    noFollowers: string;
+    noResults: string;
+    followingTitle: string;
+    noFollowing: string;
   };
 
   recommendations: {

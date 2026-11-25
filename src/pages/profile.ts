@@ -1,10 +1,16 @@
+export function formatBioHtml(bio?: string | null): string {
+  if (!bio) return '';
+  const safe = escapeHtml(bio);
+  return safe.replace(/@([a-zA-Z0-9._]{1,30})/g, '<a href="/u/$1" class="mention-link bio-mention">@$1</a>');
+}
+
 import { ProfileData } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
-import { renderBottomNav, renderCreatePostModal, renderCreatePostScript, CLOSE_ICON } from './nav';
-import { renderLangSwitcherHtml } from '../languages';
+import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { renderBottomNav, CLOSE_ICON } from './nav';
+import { SEND_COMMENT_ICON } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { getLegalCardsHtml } from './useraccept';
+import { getClientDateFormat } from '../languages';
 
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>`;
 const MENU_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
@@ -13,22 +19,12 @@ const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" h
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="80" height="80" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 14px rgba(0,0,0,0.35));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
 const SETTINGS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
-const EDIT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-const TERMS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
-const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
 
-function getDateLocale(code: string): string {
-  if (code === 'kz') return 'kk-KZ';
-  if (code === 'uz') return 'uz-UZ';
-  if (code === 'en') return 'en-US';
-  return 'ru-RU';
-}
-
-export function profilePage(data: ProfileData, t: Translations = ru): string {
+export function profilePage(data: ProfileData, t: Translations = ru, theme?: string): string {
   const { user, posts_count, followers_count, following_count, is_owner, is_following, follows_you, posts } = data;
   const usernameSafe = escapeHtml(user.username);
   const displayNameSafe = escapeHtml(user.display_name || user.username);
-  const bioSafe = escapeHtml(user.bio);
+  const bioSafe = escapeHtml(user.bio || '');
   const initial = (user.display_name || user.username).charAt(0).toUpperCase();
 
   const avatarHtml = user.avatar_key
@@ -60,8 +56,8 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
     : (follows_you ? t.profile.followBack : t.profile.follow);
 
   const actionsHtml = is_owner
-    ? `<button class="btn btn-secondary btn-sm" id="editProfileBtn">${escapeHtml(t.profile.editProfile)}</button>`
-    : `<button class="btn ${is_following ? 'btn-secondary' : 'btn-primary'} btn-sm" id="followBtn" data-target-id="${user.id}" data-is-following="${is_following ? '1' : '0'}" data-follows-you="${follows_you ? '1' : '0'}">
+    ? `<a href="/u/${encodeURIComponent(user.username)}/editprofile" class="btn btn-secondary btn-sm" id="editProfileBtn">${escapeHtml(t.profile.editProfile)}</a>`
+    : `<button class="btn ${is_following ? 'btn-secondary' : 'btn-primary'} btn-sm" id="followBtn" data-target-id="${user.id}" data-username="${usernameSafe}" data-is-following="${is_following ? '1' : '0'}" data-follows-you="${follows_you ? '1' : '0'}">
          ${escapeHtml(followText)}
        </button>`;
 
@@ -95,7 +91,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
 <div class="app-layout">
   <header class="top-bar">
     <div class="top-bar-title">Photogram</div>
-    ${is_owner ? `<button class="top-bar-action" id="openMenuBtn" aria-label="${escapeHtml(t.nav.menu)}" title="${escapeHtml(t.nav.menu)}">${MENU_ICON}</button>` : ''}
+    ${is_owner ? `<button class="top-bar-action" id="openMenuBtn" type="button" aria-label="${escapeHtml(t.profile.menuTitle)}">${MENU_ICON}</button>` : ''}
   </header>
 
   <main class="profile-container">
@@ -109,7 +105,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
 
       <div class="profile-header-main">
         <div class="profile-header-username">
-          ${usernameSafe}${user.is_verified ? renderVerifiedBadge(18) : ''}
+          ${usernameSafe}${user.is_verified ? renderVerifiedBadge(15) : ''}
           ${!is_owner && follows_you ? `<span class="follows-you-tag">${escapeHtml(t.profile.followsYou)}</span>` : ''}
         </div>
         <div class="profile-stats">
@@ -117,21 +113,21 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
             <span class="stat-number">${posts_count}</span>
             <span class="stat-label">${escapeHtml(statLabels.posts)}</span>
           </div>
-          <div class="stat-item">
+          <a href="/u/${encodeURIComponent(user.username)}/sublist" class="stat-item stat-item-link" id="followersStatLink" aria-label="${escapeHtml(statLabels.followers)}">
             <span class="stat-number" id="followersCount">${followers_count}</span>
             <span class="stat-label">${escapeHtml(statLabels.followers)}</span>
-          </div>
-          <div class="stat-item">
+          </a>
+          <a href="/u/${encodeURIComponent(user.username)}/subslist" class="stat-item stat-item-link" id="followingStatLink" aria-label="${escapeHtml(statLabels.following)}">
             <span class="stat-number">${following_count}</span>
             <span class="stat-label">${escapeHtml(statLabels.following)}</span>
-          </div>
+          </a>
         </div>
       </div>
     </section>
 
     <section class="profile-info">
       <div class="profile-display-name" id="viewDisplayName">${displayNameSafe}</div>
-      <div class="profile-bio" id="viewBio">${bioSafe}</div>
+      <div class="profile-bio" id="viewBio">${formatBioHtml(user.bio)}</div>
     </section>
 
     <div class="profile-actions">
@@ -151,7 +147,6 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
   </main>
 
   ${renderBottomNav(is_owner ? 'profile' : 'feed', t)}
-  ${renderCreatePostModal(t)}
 
   <div class="modal-backdrop" id="viewPostModal">
     <div class="modal-content post-view-modal-content">
@@ -165,6 +160,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
         </a>
         <div class="post-view-header-actions">
           <button class="modal-icon-btn modal-icon-danger" id="openDeletePostModalBtn" type="button" style="display:none;" aria-label="${escapeHtml(t.post.deletePost)}" title="${escapeHtml(t.post.deletePost)}">${TRASH_ICON}</button>
+          <button class="post-more-btn" id="viewPostMoreBtn" type="button" data-post-more-img="" data-post-more-id="" data-post-more-user="" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
         </div>
       </div>
       <div class="post-view-scroll-body">
@@ -201,9 +197,9 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
           <div class="post-related-grid" id="viewPostRelatedGrid"></div>
         </div>
       </div>
-      <form class="comment-input-form" id="viewPostCommentForm">
-        <input type="text" class="comment-input" id="viewPostCommentInput" placeholder="${escapeHtml(t.comments.inputPlaceholder)}" maxlength="500" autocomplete="off">
-        <button type="submit" class="comment-submit-btn" id="viewPostCommentSubmitBtn">${escapeHtml(t.comments.send)}</button>
+      <form class="comment-input-form" id="viewPostCommentForm" autocomplete="off">
+        <input type="text" class="comment-input" id="viewPostCommentInput" placeholder="${escapeHtml(t.comments.inputPlaceholder)}" maxlength="500" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+        <button type="submit" class="comment-submit-btn" id="viewPostCommentSubmitBtn" aria-label="${escapeHtml(t.comments.send)}" title="${escapeHtml(t.comments.send)}">${SEND_COMMENT_ICON}</button>
       </form>
     </div>
   </div>
@@ -226,102 +222,16 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
   ${
     is_owner
       ? `
-  <div class="modal-backdrop" id="editModal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 class="modal-title">${escapeHtml(t.profile.editProfile)}</h3>
-        <button class="modal-close" id="closeModalBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
-      </div>
-      <div class="auth-error" id="modalError"></div>
-      <form class="auth-form" id="editProfileForm">
-        <div class="input-field">
-          <input type="text" id="editUsername" name="username" maxlength="24" value="${usernameSafe}" required autocomplete="username" autocapitalize="none" spellcheck="false" placeholder=" ">
-          <label for="editUsername">${escapeHtml(t.auth.username)}</label>
-        </div>
-        <div class="field-hint ${hintIsWarning ? 'warning' : ''}" id="usernameHint">${escapeHtml(hintText)}</div>
-        <div class="input-field">
-          <input type="text" id="editDisplayName" name="display_name" maxlength="50" value="${displayNameSafe}" placeholder=" ">
-          <label for="editDisplayName">${escapeHtml(t.auth.displayName)}</label>
-        </div>
-        <div class="input-field">
-          <input type="text" id="editBio" name="bio" maxlength="150" value="${bioSafe}" placeholder=" ">
-          <label for="editBio">${escapeHtml(t.profile.bio)}</label>
-        </div>
-        <button type="submit" class="btn btn-primary" id="saveProfileBtn" disabled>${escapeHtml(t.common.save)}</button>
-      </form>
-    </div>
-  </div>
-
   <div class="modal-backdrop" id="menuModal">
     <div class="modal-content" style="gap: 12px;">
       <div class="modal-header">
         <h3 class="modal-title">${escapeHtml(t.profile.menuTitle)}</h3>
         <button class="modal-close" id="closeMenuBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       </div>
-      <button class="menu-action-btn" id="openSettingsBtn" type="button">
+      <a href="/settings" class="menu-action-btn" id="openSettingsBtn">
         ${SETTINGS_ICON}
         <span>${escapeHtml(t.nav.settings)}</span>
-      </button>
-      <button class="menu-action-btn menu-action-danger" id="menuLogoutBtn" type="button">
-        ${LOGOUT_ICON}
-        <span>${escapeHtml(t.nav.logout)}</span>
-      </button>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="settingsModal">
-    <div class="modal-content" style="gap: 16px;">
-      <div class="modal-header">
-        <h3 class="modal-title">${escapeHtml(t.nav.settings)}</h3>
-        <button class="modal-close" id="closeSettingsBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
-      </div>
-      <div style="padding: 4px 0 12px 0; border-bottom: 1px solid var(--border-color, #dbdbdb);">
-        <div style="font-size: 13px; font-weight: 600; color: #737373; margin-bottom: 8px;">${escapeHtml(t.common.selectLanguage)}</div>
-        ${renderLangSwitcherHtml(t.code)}
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        <button class="menu-action-btn" id="settingsEditProfileBtn" type="button">
-          ${EDIT_ICON}
-          <span>${escapeHtml(t.profile.editProfile)}</span>
-        </button>
-        <button class="menu-action-btn" id="settingsTermsBtn" type="button">
-          ${TERMS_ICON}
-          <span>${escapeHtml(t.auth.termsModalTitle)}</span>
-        </button>
-        <button class="menu-action-btn menu-action-danger" id="settingsLogoutBtn" type="button">
-          ${LOGOUT_ICON}
-          <span>${escapeHtml(t.nav.logout)}</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="termsModal">
-    <div class="modal-content" style="max-width: 680px; max-height: 88vh; display: flex; flex-direction: column; padding: 20px;">
-      <div class="modal-header notranslate" translate="no" style="padding-bottom: 12px; border-bottom: 1px solid #EBEBEB;">
-        <h3 class="modal-title">${escapeHtml(t.auth.termsModalTitle)}</h3>
-        <button class="modal-close" id="closeTermsBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
-      </div>
-      <div class="terms-modal-body" style="overflow-y: auto; padding: 4px 4px 16px 4px; flex: 1;">
-        ${getLegalCardsHtml(t)}
-      </div>
-      <div class="notranslate" translate="no" style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 14px; border-top: 1px solid #EBEBEB;">
-        <button type="button" class="btn btn-secondary btn-sm" id="closeTermsSecondaryBtn">${escapeHtml(t.common.close)}</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="logoutModal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 class="modal-title">${escapeHtml(t.profile.logoutConfirmTitle)}</h3>
-        <button class="modal-close" id="closeLogoutModalBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
-      </div>
-      <p style="font-size: 14px; color: #757575;">${escapeHtml(t.profile.logoutConfirmDesc)}</p>
-      <div style="display: flex; gap: 8px; margin-top: 8px;">
-        <button class="btn btn-secondary btn-sm" id="cancelLogoutBtn" style="flex:1;">${escapeHtml(t.common.cancel)}</button>
-        <button class="btn btn-danger btn-sm" id="confirmLogoutBtn" style="flex:1;">${escapeHtml(t.nav.logout)}</button>
-      </div>
+      </a>
     </div>
   </div>`
       : ''
@@ -330,7 +240,7 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
 
   const clientI18n = JSON.stringify({
     lang: t.code,
-    dateLocale: getDateLocale(t.code),
+    dateFmt: getClientDateFormat(t.code),
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
     hoursShort: t.common.hoursShort,
@@ -353,12 +263,13 @@ export function profilePage(data: ProfileData, t: Translations = ru): string {
     postHidden: t.recommendations.postHidden,
     attention: t.common.attention,
     follow: t.recommendations.follow,
-    following: t.recommendations.following
+    following: t.recommendations.following,
+    unfollowTitle: t.profile.unfollowTitle,
+    unfollowConfirmTpl: t.profile.unfollowConfirm('{username}'),
+    unfollowBtn: t.profile.unfollowBtn
   });
 
   const script = `
-${renderCreatePostScript(t)}
-
 (function() {
   var i18n = ${clientI18n};
   var isOwner = ${is_owner ? 'true' : 'false'};
@@ -390,6 +301,7 @@ ${renderCreatePostScript(t)}
   var viewAuthorAvatar = document.getElementById('viewPostAuthorAvatar');
   var viewAuthorName = document.getElementById('viewPostAuthorName');
   var openDeleteBtn = document.getElementById('openDeletePostModalBtn');
+  var viewPostMoreBtn = document.getElementById('viewPostMoreBtn');
   var activePostId = null;
   var isLiking = false;
   var likeBurstTimer = null;
@@ -409,7 +321,7 @@ ${renderCreatePostScript(t)}
   function updateAuthorHeader(username, avatarKey, isVerified) {
     if (viewAuthorLink) viewAuthorLink.href = '/u/' + encodeURIComponent(username);
     if (viewAuthorName) {
-      var badge = (Number(isVerified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(15) : '';
+      var badge = (Number(isVerified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13.5) : '';
       viewAuthorName.innerHTML = escapeHtmlClient(username) + badge;
     }
     if (viewAuthorAvatar) {
@@ -437,9 +349,35 @@ ${renderCreatePostScript(t)}
     return safe.replace(/@([a-z0-9._]{3,24})/gi, '<a href="/u/$1" class="mention-link">@$1</a>');
   }
 
+  function parseDateClient(dateStr) {
+    if (!dateStr) return new Date();
+    var s = String(dateStr).trim();
+    if (s.indexOf('T') !== -1) {
+      return new Date(s.indexOf('Z') !== -1 ? s : s + 'Z');
+    }
+    return new Date(s.replace(' ', 'T') + 'Z');
+  }
+
+  function formatShortDateClient(d) {
+    var fmt = i18n.dateFmt;
+    var day = d.getDate();
+    var month = (fmt && fmt.monthsShort && fmt.monthsShort[d.getMonth()]) || '';
+    if (fmt && fmt.fullPattern === 'mdy') return month + ' ' + day;
+    return day + ' ' + month;
+  }
+
+  function formatFullDateClient(d) {
+    var fmt = i18n.dateFmt;
+    var day = d.getDate();
+    var month = (fmt && fmt.monthsLong && fmt.monthsLong[d.getMonth()]) || '';
+    var year = d.getFullYear();
+    if (fmt && fmt.fullPattern === 'mdy') return month + ' ' + day + ', ' + year;
+    return day + ' ' + month + ' ' + year + ((fmt && fmt.yearSuffix) || '');
+  }
+
   function formatCommentTime(dateStr) {
     try {
-      var d = new Date(dateStr.replace(' ', 'T') + 'Z');
+      var d = parseDateClient(dateStr);
       if (isNaN(d.getTime())) return dateStr;
       var now = Date.now();
       var diff = Math.floor((now - d.getTime()) / 1000);
@@ -447,7 +385,7 @@ ${renderCreatePostScript(t)}
       if (diff < 3600) return Math.floor(diff / 60) + ' ' + i18n.minShort;
       if (diff < 86400) return Math.floor(diff / 3600) + ' ' + i18n.hoursShort;
       if (diff < 7 * 86400) return Math.floor(diff / 86400) + ' ' + i18n.daysShort;
-      return d.toLocaleDateString(i18n.dateLocale, { day: 'numeric', month: 'short' });
+      return formatShortDateClient(d);
     } catch (e) {
       return dateStr;
     }
@@ -720,34 +658,55 @@ ${renderCreatePostScript(t)}
                 '<div class="feed-rec-name">' + escapeHtmlClient(u.display_name || u.username) + badge + '</div>' +
                 '<div class="feed-rec-username">@' + escapeHtmlClient(u.username) + '</div>' +
               '</a>' +
-              '<button type="button" class="feed-follow-btn" data-user-id="' + u.id + '" data-following="false">' + escapeHtmlClient(i18n.follow) + '</button>' +
+              '<button type="button" class="feed-follow-btn" data-user-id="' + u.id + '" data-username="' + escapeHtmlClient(u.username) + '" data-following="false">' + escapeHtmlClient(i18n.follow) + '</button>' +
             '</div>';
           });
           car.innerHTML = html;
           sec.style.display = 'block';
 
           car.querySelectorAll('.feed-follow-btn').forEach(function(b) {
-            b.onclick = async function(e) {
+            b.onclick = function(e) {
               e.stopPropagation();
-              var uid = parseInt(this.dataset.userId, 10);
-              if (!uid) return;
-              this.disabled = true;
-              try {
-                var r = await fetch('/api/users/follow', {
+              var btnRef = this;
+              var uid = parseInt(btnRef.dataset.userId, 10);
+              if (!uid || btnRef.disabled) return;
+              var isF = btnRef.dataset.following === 'true';
+              var targetUname = btnRef.dataset.username || '';
+
+              function doFollowCall() {
+                btnRef.disabled = true;
+                fetch('/api/users/follow', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ following_id: uid })
+                }).then(function(r) { return r.json(); }).then(function(d) {
+                  if (d && d.success) {
+                    var nowF = Boolean(d.is_following);
+                    btnRef.dataset.following = nowF ? 'true' : 'false';
+                    btnRef.textContent = nowF ? i18n.following : i18n.follow;
+                    if (nowF) btnRef.classList.add('following');
+                    else btnRef.classList.remove('following');
+                  }
+                }).catch(function() {}).finally(function() {
+                  btnRef.disabled = false;
                 });
-                var d = await r.json();
-                if (r.ok && d.success) {
-                  var nowF = Boolean(d.is_following);
-                  this.dataset.following = nowF ? 'true' : 'false';
-                  this.textContent = nowF ? i18n.following : i18n.follow;
-                  if (nowF) this.classList.add('following');
-                  else this.classList.remove('following');
+              }
+
+              if (isF) {
+                if (window.showAppConfirm) {
+                  var confirmMsg = (i18n.unfollowConfirmTpl || 'Вы действительно хотите отписаться от @{username}?').replace('{username}', targetUname);
+                  window.showAppConfirm({
+                    type: 'unfollow',
+                    title: i18n.unfollowTitle || 'Отписаться?',
+                    message: confirmMsg,
+                    okText: i18n.unfollowBtn || 'Отписаться',
+                    onOk: doFollowCall
+                  });
+                } else {
+                  doFollowCall();
                 }
-              } catch (err) {} finally {
-                this.disabled = false;
+              } else {
+                doFollowCall();
               }
             };
           });
@@ -781,11 +740,16 @@ ${renderCreatePostScript(t)}
         openDeleteBtn.style.display = 'none';
       }
     }
+    if (viewPostMoreBtn) {
+      viewPostMoreBtn.setAttribute('data-post-more-img', btn.dataset.img || '');
+      viewPostMoreBtn.setAttribute('data-post-more-id', activePostId || '');
+      viewPostMoreBtn.setAttribute('data-post-more-user', postAuthorUsername || '');
+    }
 
     if (btn.dataset.date) {
       try {
-        var d = new Date(btn.dataset.date.replace(' ', 'T') + 'Z');
-        viewDate.textContent = isNaN(d.getTime()) ? btn.dataset.date : d.toLocaleDateString(i18n.dateLocale, { day: 'numeric', month: 'long', year: 'numeric' });
+        var d = parseDateClient(btn.dataset.date);
+        viewDate.textContent = isNaN(d.getTime()) ? btn.dataset.date : formatFullDateClient(d);
       } catch(e) {
         viewDate.textContent = btn.dataset.date;
       }
@@ -800,8 +764,18 @@ ${renderCreatePostScript(t)}
     loadComments(activePostId);
     loadRelatedPosts(activePostId);
 
+    if (window.markPostEngaged) {
+      window.markPostEngaged(activePostId);
+    }
     if (window.trackTelemetryEvent) {
-      window.trackTelemetryEvent({ type: 'open_modal', post_id: parseInt(activePostId, 10), author_id: postAuthorId });
+      window.trackTelemetryEvent({ type: 'post_open', post_id: parseInt(activePostId, 10), author_id: postAuthorId });
+    }
+    if (window.startModalDwell) {
+      window.startModalDwell(activePostId, postAuthorId);
+    }
+    if (viewCommentInput) {
+      viewCommentInput.dataset.commentOpenTracked = '';
+      viewCommentInput.dataset.activeAuthorId = String(postAuthorId);
     }
 
     viewModal.classList.add('visible');
@@ -809,6 +783,7 @@ ${renderCreatePostScript(t)}
   }
 
   function closePostView() {
+    if (window.endModalDwell) window.endModalDwell();
     if (viewModal) viewModal.classList.remove('visible');
     var scrollBody = viewModal ? viewModal.querySelector('.post-view-scroll-body') : null;
     if (scrollBody) scrollBody.scrollTop = 0;
@@ -863,11 +838,23 @@ ${renderCreatePostScript(t)}
 
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' && viewModal && viewModal.classList.contains('visible')) {
+      var postMenu = document.getElementById('appPostMenuModal');
+      if (postMenu && postMenu.classList.contains('visible')) return;
       closePostView();
     }
   });
 
   if (viewCommentInput) {
+    viewCommentInput.addEventListener('focus', function() {
+      if (activePostId && this.dataset.commentOpenTracked !== String(activePostId)) {
+        this.dataset.commentOpenTracked = String(activePostId);
+        var aid = parseInt(this.dataset.activeAuthorId, 10) || undefined;
+        if (window.markPostEngaged) window.markPostEngaged(activePostId);
+        if (window.trackTelemetryEvent) {
+          window.trackTelemetryEvent({ type: 'comment_open', post_id: parseInt(activePostId, 10), author_id: aid });
+        }
+      }
+    });
     viewCommentInput.addEventListener('input', function() {
       if (this.value.trim().length > 0) {
         viewCommentSubmitBtn.classList.add('active');
@@ -885,7 +872,7 @@ ${renderCreatePostScript(t)}
       if (!text) return;
 
       viewCommentSubmitBtn.disabled = true;
-      viewCommentSubmitBtn.textContent = '...';
+      viewCommentSubmitBtn.classList.add('sending');
 
       try {
         var res = await fetch('/api/posts/comment', {
@@ -938,7 +925,7 @@ ${renderCreatePostScript(t)}
         if (window.showAppAlert) window.showAppAlert({ message: escapeHtmlClient(i18n.networkError) });
       } finally {
         viewCommentSubmitBtn.disabled = false;
-        viewCommentSubmitBtn.textContent = i18n.sendBtn;
+        viewCommentSubmitBtn.classList.remove('sending');
         if ((viewCommentInput.value || '').trim()) {
           viewCommentSubmitBtn.classList.add('active');
         }
@@ -1033,6 +1020,7 @@ ${renderCreatePostScript(t)}
   if (confirmDeleteBtn) {
     confirmDeleteBtn.addEventListener('click', async function() {
       if (!activePostId) return;
+      var deletedPostId = String(activePostId);
 
       confirmDeleteBtn.disabled = true;
       confirmDeleteBtn.textContent = '...';
@@ -1042,14 +1030,15 @@ ${renderCreatePostScript(t)}
         var res = await fetch('/api/posts/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ post_id: parseInt(activePostId, 10) })
+          body: JSON.stringify({ post_id: parseInt(deletedPostId, 10) })
         });
         var data = await res.json();
         if (res.ok) {
           hideDeleteModal();
           closePostView();
-          var item = document.querySelector('[data-post-id="' + activePostId + '"]');
-          if (item) item.remove();
+          document.querySelectorAll('.post-item-btn[data-post-id="' + deletedPostId + '"]').forEach(function(item) {
+            item.remove();
+          });
           var countEl = document.querySelector('.profile-stats .stat-item:first-child .stat-number');
           if (countEl) {
             var cur = parseInt(countEl.textContent, 10) || 1;
@@ -1079,80 +1068,11 @@ ${renderCreatePostScript(t)}
   }
 
   if (isOwner) {
-    var editModal = document.getElementById('editModal');
-    var editBtn = document.getElementById('editProfileBtn');
-    var closeBtn = document.getElementById('closeModalBtn');
-    var editForm = document.getElementById('editProfileForm');
-    var modalError = document.getElementById('modalError');
-    var saveBtn = document.getElementById('saveProfileBtn');
     var avatarInput = document.getElementById('avatarFileInput');
-
-    var editUsernameInput = document.getElementById('editUsername');
-    var editDisplayNameInput = document.getElementById('editDisplayName');
-    var editBioInput = document.getElementById('editBio');
-
-    var initialUsername = editUsernameInput ? editUsernameInput.value.trim() : '';
-    var initialDisplayName = editDisplayNameInput ? editDisplayNameInput.value.trim() : '';
-    var initialBio = editBioInput ? editBioInput.value.trim() : '';
-
-    function checkFormChanges() {
-      if (!saveBtn || !editUsernameInput || !editDisplayNameInput || !editBioInput) return;
-      var curUser = editUsernameInput.value.trim().toLowerCase();
-      var curName = editDisplayNameInput.value.trim();
-      var curBio = editBioInput.value.trim();
-      var isChanged = (curUser !== initialUsername.toLowerCase()) || (curName !== initialDisplayName) || (curBio !== initialBio);
-      var isValid = curUser.length >= 3;
-      saveBtn.disabled = !isChanged || !isValid;
-    }
-
-
-    if (editBtn) {
-      editBtn.addEventListener('click', function() {
-        if (modalError) modalError.classList.remove('visible');
-        if (editUsernameInput) editUsernameInput.value = initialUsername;
-        if (editDisplayNameInput) editDisplayNameInput.value = initialDisplayName;
-        if (editBioInput) editBioInput.value = initialBio;
-        if (saveBtn) saveBtn.disabled = true;
-        editModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (closeBtn) {
-      closeBtn.addEventListener('click', function() {
-        editModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (editModal) {
-      editModal.addEventListener('click', function(e) {
-        if (e.target === editModal) {
-          editModal.classList.remove('visible');
-          syncBodyOverflow();
-        }
-      });
-    }
-
-    if (editForm) {
-      editForm.addEventListener('input', checkFormChanges);
-    }
 
     var menuModal = document.getElementById('menuModal');
     var openMenuBtn = document.getElementById('openMenuBtn');
     var closeMenuBtn = document.getElementById('closeMenuBtn');
-    var menuLogoutBtn = document.getElementById('menuLogoutBtn');
-
-    var settingsModal = document.getElementById('settingsModal');
-    var openSettingsBtn = document.getElementById('openSettingsBtn');
-    var closeSettingsBtn = document.getElementById('closeSettingsBtn');
-    var settingsEditProfileBtn = document.getElementById('settingsEditProfileBtn');
-    var settingsTermsBtn = document.getElementById('settingsTermsBtn');
-    var settingsLogoutBtn = document.getElementById('settingsLogoutBtn');
-
-    var termsModal = document.getElementById('termsModal');
-    var closeTermsBtn = document.getElementById('closeTermsBtn');
-    var closeTermsSecondaryBtn = document.getElementById('closeTermsSecondaryBtn');
 
     if (openMenuBtn && menuModal) {
       openMenuBtn.addEventListener('click', function() {
@@ -1175,187 +1095,17 @@ ${renderCreatePostScript(t)}
           syncBodyOverflow();
         }
       });
-    }
-
-    if (openSettingsBtn && settingsModal) {
-      openSettingsBtn.addEventListener('click', function() {
-        if (menuModal) menuModal.classList.remove('visible');
-        settingsModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (closeSettingsBtn && settingsModal) {
-      closeSettingsBtn.addEventListener('click', function() {
-        settingsModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (settingsModal) {
-      settingsModal.addEventListener('click', function(e) {
-        if (e.target === settingsModal) {
-          settingsModal.classList.remove('visible');
-          syncBodyOverflow();
-        }
-      });
-    }
-
-    if (settingsEditProfileBtn && editModal) {
-      settingsEditProfileBtn.addEventListener('click', function() {
-        if (settingsModal) settingsModal.classList.remove('visible');
-        if (modalError) modalError.classList.remove('visible');
-        if (editUsernameInput) editUsernameInput.value = initialUsername;
-        if (editDisplayNameInput) editDisplayNameInput.value = initialDisplayName;
-        if (editBioInput) editBioInput.value = initialBio;
-        if (saveBtn) saveBtn.disabled = true;
-        editModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (settingsTermsBtn && termsModal) {
-      settingsTermsBtn.addEventListener('click', function() {
-        if (settingsModal) settingsModal.classList.remove('visible');
-        termsModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (closeTermsBtn && termsModal) {
-      closeTermsBtn.addEventListener('click', function() {
-        termsModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (closeTermsSecondaryBtn && termsModal) {
-      closeTermsSecondaryBtn.addEventListener('click', function() {
-        termsModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (termsModal) {
-      termsModal.addEventListener('click', function(e) {
-        if (e.target === termsModal) {
-          termsModal.classList.remove('visible');
-          syncBodyOverflow();
-        }
-      });
       document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && termsModal.classList.contains('visible')) {
-          termsModal.classList.remove('visible');
+        if (e.key === 'Escape' && menuModal.classList.contains('visible')) {
+          menuModal.classList.remove('visible');
           syncBodyOverflow();
         }
       });
     }
 
-    var logoutModal = document.getElementById('logoutModal');
-    var closeLogoutBtn = document.getElementById('closeLogoutModalBtn');
-    var cancelLogoutBtn = document.getElementById('cancelLogoutBtn');
-    var confirmLogoutBtn = document.getElementById('confirmLogoutBtn');
 
-    if (menuLogoutBtn && logoutModal) {
-      menuLogoutBtn.addEventListener('click', function() {
-        if (menuModal) menuModal.classList.remove('visible');
-        logoutModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
 
-    if (settingsLogoutBtn && logoutModal) {
-      settingsLogoutBtn.addEventListener('click', function() {
-        if (settingsModal) settingsModal.classList.remove('visible');
-        logoutModal.classList.add('visible');
-        syncBodyOverflow();
-      });
-    }
 
-    if (closeLogoutBtn) {
-      closeLogoutBtn.addEventListener('click', function() {
-        logoutModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (cancelLogoutBtn) {
-      cancelLogoutBtn.addEventListener('click', function() {
-        logoutModal.classList.remove('visible');
-        syncBodyOverflow();
-      });
-    }
-
-    if (logoutModal) {
-      logoutModal.addEventListener('click', function(e) {
-        if (e.target === logoutModal) {
-          logoutModal.classList.remove('visible');
-          syncBodyOverflow();
-        }
-      });
-    }
-
-    if (confirmLogoutBtn) {
-      confirmLogoutBtn.addEventListener('click', async function() {
-        confirmLogoutBtn.disabled = true;
-        confirmLogoutBtn.textContent = '...';
-        await fetch('/api/auth/logout', { method: 'POST' });
-        window.location.href = '/login';
-      });
-    }
-
-    if (editForm) {
-      editForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        saveBtn.disabled = true;
-        modalError.classList.remove('visible');
-        try {
-          var res = await fetch('/api/profile/update', {
-            method: 'POST',
-            body: new FormData(this)
-          });
-          var data = await res.json();
-          if (res.ok) {
-            var newUsername = data.username || document.getElementById('editUsername').value.trim().toLowerCase();
-            var usernameEl = document.querySelector('.profile-header-username');
-            if (usernameEl) usernameEl.textContent = newUsername;
-            document.getElementById('viewDisplayName').textContent = document.getElementById('editDisplayName').value || newUsername;
-            document.getElementById('viewBio').textContent = document.getElementById('editBio').value;
-            history.replaceState(null, '', '/u/' + encodeURIComponent(newUsername));
-
-            var hintEl = document.getElementById('usernameHint');
-            if (hintEl && typeof data.changes_left === 'number') {
-              if (data.changes_left <= 0) {
-                hintEl.textContent = i18n.limitWarningTpl;
-                hintEl.classList.add('warning');
-              } else if (data.changes_left < 3) {
-                hintEl.textContent = '3 / ' + data.changes_left;
-                hintEl.classList.remove('warning');
-              } else {
-                hintEl.textContent = i18n.limitNormal;
-                hintEl.classList.remove('warning');
-              }
-            }
-
-            initialUsername = newUsername;
-            initialDisplayName = (document.getElementById('editDisplayName').value || '').trim();
-            initialBio = (document.getElementById('editBio').value || '').trim();
-            saveBtn.disabled = true;
-
-            editModal.classList.remove('visible');
-            syncBodyOverflow();
-          } else {
-            modalError.textContent = data.error || i18n.networkError;
-            modalError.classList.add('visible');
-            saveBtn.disabled = false;
-          }
-        } catch (err) {
-          modalError.textContent = i18n.networkError;
-          modalError.classList.add('visible');
-          saveBtn.disabled = false;
-        }
-      });
-    }
 
     if (avatarInput) {
       avatarInput.addEventListener('change', function(e) {
@@ -1424,66 +1174,100 @@ ${renderCreatePostScript(t)}
   var isFollowingRequest = false;
 
   if (followBtn) {
-    followBtn.addEventListener('click', async function() {
+    followBtn.addEventListener('click', function() {
       if (isFollowingRequest) return;
-      var targetId = parseInt(followBtn.dataset.targetId, 10);
       var wasFollowing = followBtn.dataset.isFollowing === '1';
-      var followsYou = followBtn.dataset.followsYou === '1';
-      var notFollowingText = followsYou ? i18n.followBackText : i18n.followText;
-      var newFollowing = !wasFollowing;
+      var targetUsername = followBtn.dataset.username || '${usernameSafe}';
 
-      isFollowingRequest = true;
-      followBtn.dataset.isFollowing = newFollowing ? '1' : '0';
-      followBtn.className = 'btn ' + (newFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
-      followBtn.textContent = newFollowing ? i18n.followingText : notFollowingText;
+      function executeFollowChange() {
+        if (isFollowingRequest) return;
+        var targetId = parseInt(followBtn.dataset.targetId, 10);
+        var curWasFollowing = followBtn.dataset.isFollowing === '1';
+        var followsYou = followBtn.dataset.followsYou === '1';
+        var notFollowingText = followsYou ? i18n.followBackText : i18n.followText;
+        var newFollowing = !curWasFollowing;
 
-      if (followersCountEl) {
-        var curCount = parseInt(followersCountEl.textContent, 10) || 0;
-        var nextCount = newFollowing ? (curCount + 1) : Math.max(0, curCount - 1);
-        followersCountEl.textContent = nextCount;
-      }
+        isFollowingRequest = true;
+        followBtn.dataset.isFollowing = newFollowing ? '1' : '0';
+        followBtn.className = 'btn ' + (newFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
+        followBtn.textContent = newFollowing ? i18n.followingText : notFollowingText;
 
-      try {
-        var res = await fetch('/api/profile/follow', {
+        if (followersCountEl) {
+          var curCount = parseInt(followersCountEl.textContent, 10) || 0;
+          var nextCount = newFollowing ? (curCount + 1) : Math.max(0, curCount - 1);
+          followersCountEl.textContent = nextCount;
+        }
+
+        fetch('/api/profile/follow', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ following_id: targetId })
+        }).then(function(res) {
+          return res.json().then(function(data) {
+            if (res.ok && data.success) {
+              var serverFollowing = Boolean(data.is_following);
+              followBtn.dataset.isFollowing = serverFollowing ? '1' : '0';
+              followBtn.className = 'btn ' + (serverFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
+              followBtn.textContent = serverFollowing ? i18n.followingText : notFollowingText;
+              if (followersCountEl && typeof data.followers_count === 'number') {
+                followersCountEl.textContent = data.followers_count;
+              }
+            } else {
+              followBtn.dataset.isFollowing = curWasFollowing ? '1' : '0';
+              followBtn.className = 'btn ' + (curWasFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
+              followBtn.textContent = curWasFollowing ? i18n.followingText : notFollowingText;
+              if (followersCountEl) {
+                var rollCount = parseInt(followersCountEl.textContent, 10) || 0;
+                followersCountEl.textContent = curWasFollowing ? (rollCount + 1) : Math.max(0, rollCount - 1);
+              }
+              if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
+                if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
+              } else if (data && data.error) {
+                if (window.showAppAlert) window.showAppAlert({ message: data.error });
+              }
+            }
+          });
+        }).catch(function() {
+          followBtn.dataset.isFollowing = curWasFollowing ? '1' : '0';
+          followBtn.className = 'btn ' + (curWasFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
+          followBtn.textContent = curWasFollowing ? i18n.followingText : notFollowingText;
+          if (window.showAppAlert) window.showAppAlert({ message: i18n.networkError });
+        }).finally(function() {
+          isFollowingRequest = false;
         });
-        var data = await res.json();
-        if (res.ok && data.success) {
-          var serverFollowing = Boolean(data.is_following);
-          followBtn.dataset.isFollowing = serverFollowing ? '1' : '0';
-          followBtn.className = 'btn ' + (serverFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
-          followBtn.textContent = serverFollowing ? i18n.followingText : notFollowingText;
-          if (followersCountEl && typeof data.followers_count === 'number') {
-            followersCountEl.textContent = data.followers_count;
-          }
+      }
+
+      if (wasFollowing) {
+        if (window.showAppConfirm) {
+          var confirmMsg = (i18n.unfollowConfirmTpl || 'Вы действительно хотите отписаться от @{username}?').replace('{username}', targetUsername);
+          window.showAppConfirm({
+            type: 'unfollow',
+            title: i18n.unfollowTitle || 'Отписаться?',
+            message: confirmMsg,
+            okText: i18n.unfollowBtn || 'Отписаться',
+            onOk: executeFollowChange
+          });
         } else {
-          followBtn.dataset.isFollowing = wasFollowing ? '1' : '0';
-          followBtn.className = 'btn ' + (wasFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
-          followBtn.textContent = wasFollowing ? i18n.followingText : notFollowingText;
-          if (followersCountEl) {
-            var rollCount = parseInt(followersCountEl.textContent, 10) || 0;
-            followersCountEl.textContent = wasFollowing ? (rollCount + 1) : Math.max(0, rollCount - 1);
-          }
-          if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
-            if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
-          } else if (data && data.error) {
-            if (window.showAppAlert) window.showAppAlert({ message: data.error });
-          }
+          executeFollowChange();
         }
-      } catch (err) {
-        followBtn.dataset.isFollowing = wasFollowing ? '1' : '0';
-        followBtn.className = 'btn ' + (wasFollowing ? 'btn-secondary' : 'btn-primary') + ' btn-sm';
-        followBtn.textContent = wasFollowing ? i18n.followingText : notFollowingText;
-        if (window.showAppAlert) window.showAppAlert({ message: i18n.networkError });
-      } finally {
-        isFollowingRequest = false;
+      } else {
+        executeFollowChange();
       }
     });
   }
+
 })();
 `;
 
-  return layout(`${t.common.appName} — ${usernameSafe}`, body, script, t);
+  return layout(`${t.common.appName} — ${usernameSafe}`, body, script, t, theme);
 }
+
+export function userNotFoundPage(t: Translations = ru, theme?: string): string {
+  const body = `
+<div class="not-found-page">
+  <div class="not-found-text">${escapeHtml(t.explore.noResults)}</div>
+</div>`;
+
+  return layout(t.explore.noResults, body, '', t, theme);
+}
+

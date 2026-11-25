@@ -53,14 +53,17 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const recentPost = await env.DB.prepare(
-    `SELECT 1 FROM posts WHERE user_id = ? AND ((julianday('now') - julianday(created_at)) * 86400.0) < 10.0 LIMIT 1`
+  const lastPost = await env.DB.prepare(
+    'SELECT created_at FROM posts WHERE user_id = ? ORDER BY id DESC LIMIT 1'
   )
     .bind(currentUser.id)
-    .first();
+    .first<{ created_at: string }>();
 
-  if (recentPost) {
-    return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
+  if (lastPost && lastPost.created_at) {
+    const postTime = new Date(lastPost.created_at.includes('T') ? lastPost.created_at : lastPost.created_at.replace(' ', 'T') + 'Z').getTime();
+    if (!isNaN(postTime) && (Date.now() - postTime) < 10000) {
+      return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
+    }
   }
 
   const form = await request.formData();
@@ -162,6 +165,7 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
   await env.DB.prepare('DELETE FROM likes WHERE post_id = ?').bind(postId).run();
   await env.DB.prepare('DELETE FROM comments WHERE post_id = ?').bind(postId).run();
   await env.DB.prepare('DELETE FROM post_tags WHERE post_id = ?').bind(postId).run();
+  await env.DB.prepare('DELETE FROM post_reports WHERE post_id = ?').bind(postId).run();
   await env.DB.prepare('DELETE FROM user_interactions WHERE post_id = ?').bind(postId).run();
   await env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
 
@@ -175,6 +179,41 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
 export async function handleToggleLike(request: Request, env: Env): Promise<Response> {
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
+
+  const now = Math.floor(Date.now() / 1000);
+  const likeRateKey = `like:${currentUser.id}`;
+
+  const rateRow = await env.DB.prepare(
+    'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?'
+  )
+    .bind(likeRateKey)
+    .first<{ attempts: number; locked_until: number; updated_at: number }>();
+
+  if (rateRow && rateRow.locked_until > now) {
+    return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+  }
+
+  let attempts = 1;
+  if (rateRow) {
+    if (now - rateRow.updated_at > 5) {
+      attempts = 1;
+    } else {
+      attempts = rateRow.attempts + 1;
+    }
+  }
+
+  const isLocked = attempts > 15;
+  const lockUntil = isLocked ? now + 10 : 0;
+
+  await env.DB.prepare(
+    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?'
+  )
+    .bind(likeRateKey, attempts, lockUntil, now, attempts, lockUntil, now)
+    .run();
+
+  if (isLocked) {
+    return jsonError('Слишком много запросов. Действие временно заблокировано на 10 секунд', 429);
+  }
 
   let postId: number | null = null;
   const contentType = request.headers.get('content-type') || '';
@@ -213,15 +252,15 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
       .bind(postId, currentUser.id)
       .run();
     liked = false;
-    await adjustAffinity(env, currentUser.id, post.user_id, -4.0);
-    await adjustTagAffinity(env, currentUser.id, postId, -1.0);
+    await adjustAffinity(env, currentUser.id, post.user_id, -3.5);
+    await adjustTagAffinity(env, currentUser.id, postId, -2.0);
   } else {
     await env.DB.prepare('INSERT OR IGNORE INTO likes (post_id, user_id) VALUES (?, ?)')
       .bind(postId, currentUser.id)
       .run();
     liked = true;
-    await adjustAffinity(env, currentUser.id, post.user_id, 4.0);
-    await adjustTagAffinity(env, currentUser.id, postId, 1.0);
+    await adjustAffinity(env, currentUser.id, post.user_id, 3.5);
+    await adjustTagAffinity(env, currentUser.id, postId, 2.0);
   }
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM likes WHERE post_id = ?')
@@ -377,16 +416,17 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
     return jsonError('Публикация не найдена', 404);
   }
 
-  const recentComment = await env.DB.prepare(
-    `SELECT 1 FROM comments
-     WHERE user_id = ? AND ((julianday('now') - julianday(created_at)) * 86400.0) < 3.0
-     ORDER BY id DESC LIMIT 1`
+  const lastComment = await env.DB.prepare(
+    'SELECT created_at FROM comments WHERE user_id = ? ORDER BY id DESC LIMIT 1'
   )
     .bind(currentUser.id)
-    .first();
+    .first<{ created_at: string }>();
 
-  if (recentComment) {
-    return jsonError('Слишком часто, подождите пару секунд', 429);
+  if (lastComment && lastComment.created_at) {
+    const commentTime = new Date(lastComment.created_at.includes('T') ? lastComment.created_at : lastComment.created_at.replace(' ', 'T') + 'Z').getTime();
+    if (!isNaN(commentTime) && (Date.now() - commentTime) < 3000) {
+      return jsonError('Слишком часто, подождите пару секунд', 429);
+    }
   }
 
   const insertResult = await env.DB.prepare(
@@ -395,10 +435,10 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
     .bind(postId, currentUser.id, content)
     .run();
 
-  const commentId = insertResult.meta.last_row_id;
+  const commentId = Number(insertResult.meta.last_row_id) || 0;
 
-  await adjustAffinity(env, currentUser.id, post.user_id, 7.0);
-  await adjustTagAffinity(env, currentUser.id, postId, 2.0);
+  await adjustAffinity(env, currentUser.id, post.user_id, 5.0);
+  await adjustTagAffinity(env, currentUser.id, postId, 2.5);
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(postId)

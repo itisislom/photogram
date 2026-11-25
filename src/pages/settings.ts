@@ -1,0 +1,505 @@
+import { User } from '../types';
+import { layout, escapeHtml, renderVerifiedBadge, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
+import { renderBottomNav, CLOSE_ICON } from './nav';
+import { renderLangSwitcherHtml } from '../languages';
+import { Translations } from '../languages/types';
+import { ru } from '../languages/ru';
+import { getLegalCardsHtml } from './useraccept';
+
+const BACK_ARROW_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>`;
+const CHEVRON_RIGHT_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+const LOCK_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const TERMS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+const PALETTE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`;
+const GLOBE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+
+export function settingsPage(currentUser: User, t: Translations = ru, theme?: string): string {
+  const usernameSafe = escapeHtml(currentUser.username);
+  const displayNameSafe = escapeHtml(currentUser.display_name || currentUser.username);
+  const initial = (currentUser.display_name || currentUser.username).charAt(0).toUpperCase();
+
+  const avatarHtml = currentUser.avatar_key
+    ? `<img src="/media/${encodeURIComponent(currentUser.avatar_key)}" alt="${usernameSafe}">`
+    : `<span>${escapeHtml(initial)}</span>`;
+
+  const body = `
+<div class="app-layout">
+  <header class="settings-top-bar">
+    <a href="/profile" class="settings-back-btn" aria-label="${escapeHtml(t.common.close)}">
+      ${BACK_ARROW_ICON}
+    </a>
+    <h1 class="settings-title">${escapeHtml(t.nav.settings)}</h1>
+    <div class="settings-top-spacer"></div>
+  </header>
+
+  <main class="settings-container">
+    <div class="settings-content">
+    <a href="/accountlist" class="settings-account-card">
+      <div class="settings-account-avatar">
+        ${avatarHtml}
+      </div>
+      <div class="settings-account-info">
+        <div class="settings-account-username">
+          ${usernameSafe}${currentUser.is_verified ? renderVerifiedBadge(15) : ''}
+        </div>
+        <div class="settings-account-display">${displayNameSafe}</div>
+      </div>
+      <div class="settings-account-arrow">
+        ${CHEVRON_RIGHT_ICON}
+      </div>
+    </a>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.common.theme)}</div>
+      <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="settings-row-icon">${PALETTE_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.common.theme)}</span>
+          </div>
+        </div>
+        <div class="theme-switcher" id="themeSwitcher" style="width: 100%;">
+          <button type="button" class="theme-switch-btn${theme === 'dark' ? '' : ' active'}" data-set-theme="light" aria-label="${escapeHtml(t.common.themeLight)}">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <span>${escapeHtml(t.common.themeLight)}</span>
+          </button>
+          <button type="button" class="theme-switch-btn${theme === 'dark' ? ' active' : ''}" data-set-theme="dark" aria-label="${escapeHtml(t.common.themeDark)}">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <span>${escapeHtml(t.common.themeDark)}</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.common.selectLanguage)}</div>
+      <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="settings-row-icon">${GLOBE_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.common.selectLanguage)}</span>
+          </div>
+        </div>
+        ${renderLangSwitcherHtml(t.code)}
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.nav.menu)}</div>
+      <button type="button" class="settings-row settings-row-interactive" id="settingsChangePasswordBtn">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${LOCK_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.auth.changePasswordTitle)}</span>
+          </div>
+        </div>
+        <div class="settings-account-arrow">${CHEVRON_RIGHT_ICON}</div>
+      </button>
+
+      <button type="button" class="settings-row settings-row-interactive" id="settingsTermsBtn">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${TERMS_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.auth.termsModalTitle)}</span>
+          </div>
+        </div>
+        <div class="settings-account-arrow">${CHEVRON_RIGHT_ICON}</div>
+      </button>
+
+      <button type="button" class="settings-row settings-row-interactive settings-row-danger" id="settingsLogoutBtn">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${LOGOUT_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.nav.logout)}</span>
+          </div>
+        </div>
+        <div class="settings-account-arrow">${CHEVRON_RIGHT_ICON}</div>
+      </button>
+    </section>
+    </div>
+  </main>
+
+  ${renderBottomNav('profile', t)}
+
+  <div class="modal-backdrop" id="termsModal">
+    <div class="modal-content" style="max-width: 680px; max-height: 88vh; display: flex; flex-direction: column; padding: 20px;">
+      <div class="modal-header notranslate" translate="no" style="padding-bottom: 12px; border-bottom: 1px solid var(--border-color);">
+        <h3 class="modal-title">${escapeHtml(t.auth.termsModalTitle)}</h3>
+        <button class="modal-close" id="closeTermsBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div class="terms-modal-body" style="overflow-y: auto; padding: 4px 4px 16px 4px; flex: 1;">
+        ${getLegalCardsHtml(t)}
+      </div>
+      <div class="notranslate" translate="no" style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 14px; border-top: 1px solid var(--border-color);">
+        <button type="button" class="btn btn-secondary btn-sm" id="closeTermsSecondaryBtn">${escapeHtml(t.common.close)}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="changePasswordModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.auth.changePasswordTitle)}</h3>
+        <button class="modal-close" id="closeChangePasswordBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div class="auth-error" id="changePasswordError"></div>
+      <form class="auth-form" id="changePasswordForm" autocomplete="off">
+        <div class="input-field">
+          <input type="text" id="currentPasswordInput" class="pw-masked" placeholder=" " required autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other">
+          <label for="currentPasswordInput">${escapeHtml(t.auth.currentPassword)}</label>
+          <button type="button" class="password-toggle-btn" data-toggle-pw="currentPasswordInput" aria-label="${escapeHtml(t.auth.showPassword)}" title="${escapeHtml(t.auth.showPassword)}">
+            ${EYE_OPEN_ICON}
+            ${EYE_CLOSED_ICON}
+          </button>
+        </div>
+        <div class="input-field">
+          <input type="text" id="newPasswordInput" class="pw-masked" placeholder=" " required autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" minlength="8" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other">
+          <label for="newPasswordInput">${escapeHtml(t.auth.newPassword)}</label>
+          <button type="button" class="password-toggle-btn" data-toggle-pw="newPasswordInput" aria-label="${escapeHtml(t.auth.showPassword)}" title="${escapeHtml(t.auth.showPassword)}">
+            ${EYE_OPEN_ICON}
+            ${EYE_CLOSED_ICON}
+          </button>
+        </div>
+        <div class="input-field">
+          <input type="text" id="confirmPasswordInput" class="pw-masked" placeholder=" " required autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" minlength="8" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other">
+          <label for="confirmPasswordInput">${escapeHtml(t.auth.confirmNewPassword)}</label>
+          <button type="button" class="password-toggle-btn" data-toggle-pw="confirmPasswordInput" aria-label="${escapeHtml(t.auth.showPassword)}" title="${escapeHtml(t.auth.showPassword)}">
+            ${EYE_OPEN_ICON}
+            ${EYE_CLOSED_ICON}
+          </button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 4px;">
+          <button type="button" class="btn btn-secondary btn-sm" id="cancelChangePasswordBtn" style="flex:1;">${escapeHtml(t.common.cancel)}</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="submitChangePasswordBtn" style="flex:1;">${escapeHtml(t.common.save)}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="logoutModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.profile.logoutConfirmTitle)}</h3>
+        <button class="modal-close" id="closeLogoutModalBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <p style="font-size: 14px; color: var(--text-secondary);">${escapeHtml(t.profile.logoutConfirmDesc)}</p>
+      <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <button class="btn btn-secondary btn-sm" id="cancelLogoutBtn" style="flex:1;">${escapeHtml(t.common.cancel)}</button>
+        <button class="btn btn-danger btn-sm" id="confirmLogoutBtn" style="flex:1;">${escapeHtml(t.nav.logout)}</button>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+  const script = `
+(function() {
+  function syncBodyOverflow() {
+    var hasOpen = document.querySelector('.modal-backdrop.visible');
+    document.body.style.overflow = hasOpen ? 'hidden' : '';
+  }
+
+  var termsModal = document.getElementById('termsModal');
+  var openTermsBtn = document.getElementById('settingsTermsBtn');
+  var closeTermsBtn = document.getElementById('closeTermsBtn');
+  var closeTermsSecondaryBtn = document.getElementById('closeTermsSecondaryBtn');
+
+  if (openTermsBtn && termsModal) {
+    openTermsBtn.addEventListener('click', function() {
+      termsModal.classList.add('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (closeTermsBtn && termsModal) {
+    closeTermsBtn.addEventListener('click', function() {
+      termsModal.classList.remove('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (closeTermsSecondaryBtn && termsModal) {
+    closeTermsSecondaryBtn.addEventListener('click', function() {
+      termsModal.classList.remove('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (termsModal) {
+    termsModal.addEventListener('click', function(e) {
+      if (e.target === termsModal) {
+        termsModal.classList.remove('visible');
+        syncBodyOverflow();
+      }
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && termsModal.classList.contains('visible')) {
+        termsModal.classList.remove('visible');
+        syncBodyOverflow();
+      }
+    });
+  }
+
+  var changePwModal = document.getElementById('changePasswordModal');
+  var openChangePwBtn = document.getElementById('settingsChangePasswordBtn');
+  var closeChangePwBtn = document.getElementById('closeChangePasswordBtn');
+  var cancelChangePwBtn = document.getElementById('cancelChangePasswordBtn');
+  var changePwForm = document.getElementById('changePasswordForm');
+  var changePwError = document.getElementById('changePasswordError');
+  var submitChangePwBtn = document.getElementById('submitChangePasswordBtn');
+  var curPwInput = document.getElementById('currentPasswordInput');
+  var newPwInput = document.getElementById('newPasswordInput');
+  var confPwInput = document.getElementById('confirmPasswordInput');
+  var pwI18n = ${JSON.stringify({
+    showPassword: t.auth.showPassword,
+    hidePassword: t.auth.hidePassword,
+    save: t.common.save,
+    saving: t.common.saving,
+    networkError: t.common.networkError,
+    success: t.auth.changePasswordSuccess,
+    errCurrentRequired: t.auth.errCurrentPasswordRequired,
+    errMin: t.auth.errPasswordMin,
+    errMismatch: t.auth.errPasswordsMismatch,
+    errSame: t.auth.errPasswordSame
+  })};
+
+  function syncChangePwLabels() {
+    if (!changePwForm) return;
+    changePwForm.querySelectorAll('.input-field input').forEach(function(el) {
+      var parent = el.closest('.input-field');
+      if (!parent) return;
+      if (el.value) parent.classList.add('has-value');
+      else parent.classList.remove('has-value');
+    });
+  }
+
+  var supportsTextSecurity = Boolean(window.CSS && typeof window.CSS.supports === 'function' && window.CSS.supports('-webkit-text-security', 'disc'));
+  if (changePwForm && !supportsTextSecurity) {
+    changePwForm.querySelectorAll('.pw-masked').forEach(function(el) {
+      el.classList.remove('pw-masked');
+      el.type = 'password';
+    });
+  }
+
+  function resetChangePwForm() {
+    if (changePwForm) changePwForm.reset();
+    if (changePwError) {
+      changePwError.textContent = '';
+      changePwError.classList.remove('visible');
+    }
+    if (changePwForm) {
+      changePwForm.querySelectorAll('.input-field input').forEach(function(el) {
+        if (supportsTextSecurity) {
+          el.classList.remove('pw-revealed');
+          el.type = 'text';
+        } else {
+          el.type = 'password';
+        }
+      });
+      changePwForm.querySelectorAll('.password-toggle-btn').forEach(function(b) {
+        b.classList.remove('is-revealed');
+        b.setAttribute('aria-label', pwI18n.showPassword);
+        b.setAttribute('title', pwI18n.showPassword);
+      });
+    }
+    syncChangePwLabels();
+  }
+
+  function closeChangePwModal() {
+    if (!changePwModal) return;
+    changePwModal.classList.remove('visible');
+    resetChangePwForm();
+    syncBodyOverflow();
+  }
+
+  if (changePwForm) {
+    changePwForm.querySelectorAll('.input-field input').forEach(function(el) {
+      el.addEventListener('input', syncChangePwLabels);
+      el.addEventListener('change', syncChangePwLabels);
+      el.addEventListener('focus', syncChangePwLabels);
+      el.addEventListener('blur', syncChangePwLabels);
+    });
+    changePwForm.querySelectorAll('[data-toggle-pw]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var targetId = this.getAttribute('data-toggle-pw');
+        var input = targetId ? document.getElementById(targetId) : null;
+        if (!input) return;
+        var shouldReveal = supportsTextSecurity
+          ? !input.classList.contains('pw-revealed')
+          : input.type === 'password';
+        if (supportsTextSecurity) {
+          if (shouldReveal) input.classList.add('pw-revealed');
+          else input.classList.remove('pw-revealed');
+        } else {
+          input.type = shouldReveal ? 'text' : 'password';
+        }
+        if (shouldReveal) {
+          this.classList.add('is-revealed');
+          this.setAttribute('aria-label', pwI18n.hidePassword);
+          this.setAttribute('title', pwI18n.hidePassword);
+        } else {
+          this.classList.remove('is-revealed');
+          this.setAttribute('aria-label', pwI18n.showPassword);
+          this.setAttribute('title', pwI18n.showPassword);
+        }
+        input.focus();
+      });
+    });
+  }
+
+  if (openChangePwBtn && changePwModal) {
+    openChangePwBtn.addEventListener('click', function() {
+      resetChangePwForm();
+      changePwModal.classList.add('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (closeChangePwBtn) closeChangePwBtn.addEventListener('click', closeChangePwModal);
+  if (cancelChangePwBtn) cancelChangePwBtn.addEventListener('click', closeChangePwModal);
+
+  if (changePwModal) {
+    changePwModal.addEventListener('click', function(e) {
+      if (e.target === changePwModal) closeChangePwModal();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && changePwModal.classList.contains('visible')) {
+        closeChangePwModal();
+      }
+    });
+  }
+
+  if (changePwForm) {
+    changePwForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      if (!changePwError || !submitChangePwBtn) return;
+      changePwError.classList.remove('visible');
+      changePwError.textContent = '';
+
+      var cur = curPwInput ? curPwInput.value : '';
+      var next = newPwInput ? newPwInput.value : '';
+      var conf = confPwInput ? confPwInput.value : '';
+
+      if (!cur) {
+        changePwError.textContent = pwI18n.errCurrentRequired;
+        changePwError.classList.add('visible');
+        return;
+      }
+      if (next.length < 8) {
+        changePwError.textContent = pwI18n.errMin;
+        changePwError.classList.add('visible');
+        return;
+      }
+      if (next !== conf) {
+        changePwError.textContent = pwI18n.errMismatch;
+        changePwError.classList.add('visible');
+        return;
+      }
+      if (next === cur) {
+        changePwError.textContent = pwI18n.errSame;
+        changePwError.classList.add('visible');
+        return;
+      }
+
+      submitChangePwBtn.disabled = true;
+      submitChangePwBtn.textContent = pwI18n.saving;
+      try {
+        var res = await fetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            current_password: cur,
+            new_password: next,
+            confirm_password: conf
+          })
+        });
+        var data = await res.json();
+        if (res.ok && data && data.success) {
+          closeChangePwModal();
+          if (window.showAppToast) window.showAppToast(pwI18n.success);
+        } else {
+          changePwError.textContent = (data && data.error) || pwI18n.networkError;
+          changePwError.classList.add('visible');
+        }
+      } catch (err) {
+        changePwError.textContent = pwI18n.networkError;
+        changePwError.classList.add('visible');
+      } finally {
+        submitChangePwBtn.disabled = false;
+        submitChangePwBtn.textContent = pwI18n.save;
+      }
+    });
+  }
+
+  var logoutModal = document.getElementById('logoutModal');
+  var openLogoutBtn = document.getElementById('settingsLogoutBtn');
+  var closeLogoutBtn = document.getElementById('closeLogoutModalBtn');
+  var cancelLogoutBtn = document.getElementById('cancelLogoutBtn');
+  var confirmLogoutBtn = document.getElementById('confirmLogoutBtn');
+
+  if (openLogoutBtn && logoutModal) {
+    openLogoutBtn.addEventListener('click', function() {
+      logoutModal.classList.add('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (closeLogoutBtn && logoutModal) {
+    closeLogoutBtn.addEventListener('click', function() {
+      logoutModal.classList.remove('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (cancelLogoutBtn && logoutModal) {
+    cancelLogoutBtn.addEventListener('click', function() {
+      logoutModal.classList.remove('visible');
+      syncBodyOverflow();
+    });
+  }
+
+  if (logoutModal) {
+    logoutModal.addEventListener('click', function(e) {
+      if (e.target === logoutModal) {
+        logoutModal.classList.remove('visible');
+        syncBodyOverflow();
+      }
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && logoutModal.classList.contains('visible')) {
+        logoutModal.classList.remove('visible');
+        syncBodyOverflow();
+      }
+    });
+  }
+
+  if (confirmLogoutBtn) {
+    confirmLogoutBtn.addEventListener('click', async function() {
+      confirmLogoutBtn.disabled = true;
+      confirmLogoutBtn.textContent = '...';
+      var nextUrl = '/login';
+      try {
+        var r = await fetch('/api/auth/logout', { method: 'POST' });
+        var d = await r.json();
+        if (d && d.redirect) nextUrl = d.redirect;
+      } catch(e) {}
+      window.location.href = nextUrl;
+    });
+  }
+})();
+`;
+
+  return layout(t.nav.settings, body, script, t, theme);
+}

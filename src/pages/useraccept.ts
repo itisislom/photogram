@@ -108,7 +108,7 @@ ${lazy ? '' : 'window.initGoogleTranslate();'}
 `;
 }
 
-export function userAcceptPage(t: Translations = ru): string {
+export function userAcceptPage(t: Translations = ru, theme?: string): string {
   const body = `
 <div class="legal-container">
   <div class="legal-top-bar notranslate" translate="no">
@@ -124,5 +124,5 @@ export function userAcceptPage(t: Translations = ru): string {
   ${getLegalCardsHtml(t)}
 </div>`;
 
-  return layout(t.legal.title, body, getTranslateScript(false), t);
+  return layout(t.legal.title, body, getTranslateScript(false), t, theme);
 }

@@ -1,28 +1,31 @@
 import { ExploreData, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
-import { renderBottomNav, renderCreatePostModal, renderCreatePostScript, CLOSE_ICON } from './nav';
+import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { renderBottomNav, CLOSE_ICON } from './nav';
 import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
+import { formatLocalizedFullDate, formatLocalizedTime, getClientDateFormat } from '../languages';
 
 const SEARCH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const MINI_HEART_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="88" height="88" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 16px rgba(0,0,0,0.5));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 
-function getDateLocale(code: string): string {
-  if (code === 'kz') return 'kk-KZ';
-  if (code === 'uz') return 'uz-UZ';
-  if (code === 'en') return 'en-US';
-  return 'ru-RU';
+function parseDateSafe(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const s = String(dateStr).trim();
+  if (s.includes('T')) {
+    return new Date(s.endsWith('Z') ? s : s + 'Z');
+  }
+  return new Date(s.replace(' ', 'T') + 'Z');
 }
 
 function formatPostDateTime(dateStr: string, t: Translations): string {
   try {
-    const d = new Date(dateStr.replace(' ', 'T') + 'Z');
+    const d = parseDateSafe(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    const dateFormatted = d.toLocaleDateString(getDateLocale(t.code), { day: 'numeric', month: 'long', year: 'numeric' });
-    const timeFormatted = d.toLocaleTimeString(getDateLocale(t.code), { hour: '2-digit', minute: '2-digit' });
+    const dateFormatted = formatLocalizedFullDate(d, t.code);
+    const timeFormatted = formatLocalizedTime(d);
 
     const now = Date.now();
     const diff = Math.floor((now - d.getTime()) / 1000);
@@ -49,28 +52,31 @@ function formatPostDateTime(dateStr: string, t: Translations): string {
 export function explorePage(
   data: { posts: any[]; tags?: string[]; activeTag?: string } | ExploreData,
   currentUser: User,
-  t: Translations = ru
+  t: Translations = ru,
+  theme?: string
 ): string {
   const postList = data.posts || [];
   const tagsList = (data as any).tags || [];
   const activeTag = ((data as any).activeTag || 'all').toLowerCase().trim();
 
   const tagsPillsHtml = `
-  <div class="explore-tags-bar" id="exploreTagsBar">
-    <button type="button" class="explore-tag-pill ${activeTag === 'all' ? 'active' : ''}" data-tag="all">
-      ${escapeHtml(t.recommendations.tagForYou)}
-    </button>
-    <button type="button" class="explore-tag-pill ${activeTag === 'popular' ? 'active' : ''}" data-tag="popular">
-      ${escapeHtml(t.recommendations.tagPopular)}
-    </button>
-    <button type="button" class="explore-tag-pill ${activeTag === 'recent' ? 'active' : ''}" data-tag="recent">
-      ${escapeHtml(t.recommendations.tagRecent)}
-    </button>
-    ${tagsList.map((tag: string) => `
-      <button type="button" class="explore-tag-pill ${activeTag === tag.toLowerCase() ? 'active' : ''}" data-tag="${escapeHtml(tag.toLowerCase())}">
-        #${escapeHtml(tag)}
+  <div class="explore-tags-wrap" id="exploreTagsBar">
+    <div class="explore-tags-bar">
+      <button type="button" class="explore-tag-pill ${activeTag === 'all' ? 'active' : ''}" data-tag="all">
+        ${escapeHtml(t.recommendations.tagForYou)}
       </button>
-    `).join('')}
+      <button type="button" class="explore-tag-pill ${activeTag === 'popular' ? 'active' : ''}" data-tag="popular">
+        ${escapeHtml(t.recommendations.tagPopular)}
+      </button>
+      <button type="button" class="explore-tag-pill ${activeTag === 'recent' ? 'active' : ''}" data-tag="recent">
+        ${escapeHtml(t.recommendations.tagRecent)}
+      </button>
+      ${tagsList.map((tag: string) => `
+        <button type="button" class="explore-tag-pill ${activeTag === tag.toLowerCase() ? 'active' : ''}" data-tag="${escapeHtml(tag.toLowerCase())}">
+          #${escapeHtml(tag)}
+        </button>
+      `).join('')}
+    </div>
   </div>`;
 
   const postsGridHtml = postList.length > 0
@@ -109,7 +115,7 @@ export function explorePage(
       : `<span>${escapeHtml(authorInit)}</span>`;
 
     return `
-    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-index="${idx}">
+    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-post-img="/media/${encodeURIComponent(p.image_key)}" data-post-username="${escapeHtml(p.username)}" data-index="${idx}">
       <div class="pics-image-wrap">
         <img class="pics-image" src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 3 ? 'eager' : 'lazy'}">
         <div class="post-like-burst">
@@ -143,7 +149,7 @@ export function explorePage(
   <div class="explore-search-wrap">
     <div class="search-input-box">
       <span class="search-icon">${SEARCH_ICON}</span>
-      <input type="text" id="searchInput" class="search-input" placeholder="${escapeHtml(t.explore.searchPlaceholder)}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" maxlength="50">
+      <input type="search" id="searchInput" class="search-input" placeholder="${escapeHtml(t.explore.searchPlaceholder)}" inputmode="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" maxlength="50" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
       <button type="button" id="clearSearchBtn" class="search-clear-btn" style="display:none;" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
   </div>
@@ -157,13 +163,13 @@ export function explorePage(
   </main>
 
   ${renderBottomNav('explore', t)}
-  ${renderCreatePostModal(t)}
   ${renderCommentsSheetHtml(t)}
 
   <div class="pics-modal" id="picsModal">
     <div class="pics-top-bar">
       <button type="button" class="pics-close-btn" id="closePicsBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       <div class="pics-title">Pics</div>
+      <button type="button" class="pics-more-btn" id="picsMoreBtn" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
     </div>
     <div class="pics-feed" id="picsFeed">
       ${picsSlidesHtml}
@@ -174,11 +180,15 @@ export function explorePage(
   const clientI18n = JSON.stringify({
     noResults: t.explore.noResults,
     networkError: t.common.networkError,
-    noPosts: t.profile.noPosts
+    noPosts: t.profile.noPosts,
+    justNow: t.common.justNow,
+    minShort: t.common.minutesShort,
+    hoursShort: t.common.hoursShort,
+    daysShort: t.common.daysShort,
+    dateFmt: getClientDateFormat(t.code)
   });
 
   const script = `
-${renderCreatePostScript(t)}
 ${renderCommentsSheetScript(t)}
 
 (function() {
@@ -326,14 +336,20 @@ ${renderCommentsSheetScript(t)}
     if (targetSlide) {
       targetSlide.scrollIntoView({ behavior: 'instant', block: 'start' });
       var authorId = parseInt(targetSlide.dataset.authorId, 10) || undefined;
+      var pidNum = parseInt(postId, 10);
+      if (window.markPostEngaged) window.markPostEngaged(pidNum);
       if (window.trackTelemetryEvent) {
-        window.trackTelemetryEvent({ type: 'open_modal', post_id: parseInt(postId, 10), author_id: authorId });
+        window.trackTelemetryEvent({ type: 'post_open', post_id: pidNum, author_id: authorId });
       }
+    }
+    if (window.initTelemetryObserver) {
+      window.initTelemetryObserver();
     }
   }
 
   function closePics() {
     if (!picsModal) return;
+    if (window.flushActivePostDwell) window.flushActivePostDwell();
     picsModal.classList.remove('visible');
     document.body.style.overflow = '';
   }
@@ -342,8 +358,40 @@ ${renderCommentsSheetScript(t)}
     closePicsBtn.addEventListener('click', closePics);
   }
 
+  var picsMoreBtn = document.getElementById('picsMoreBtn');
+  if (picsMoreBtn && picsFeed) {
+    picsMoreBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var slides = picsFeed.querySelectorAll('.pics-slide');
+      if (!slides.length) return;
+      var feedRect = picsFeed.getBoundingClientRect();
+      var activeSlide = slides[0];
+      var bestDist = Infinity;
+      slides.forEach(function(s) {
+        var r = s.getBoundingClientRect();
+        var dist = Math.abs(r.top - feedRect.top);
+        if (dist < bestDist) {
+          bestDist = dist;
+          activeSlide = s;
+        }
+      });
+      if (!activeSlide) return;
+      var imgEl = activeSlide.querySelector('.pics-image');
+      var imgUrl = activeSlide.dataset.postImg || (imgEl ? imgEl.getAttribute('src') : '');
+      if (window.openPostOptionsMenu && imgUrl) {
+        window.openPostOptionsMenu({
+          img: imgUrl,
+          postId: activeSlide.dataset.postId || '',
+          username: activeSlide.dataset.postUsername || ''
+        });
+      }
+    });
+  }
+
   document.addEventListener('keydown', function(e) {
     if (picsModal && picsModal.classList.contains('visible')) {
+      var postMenu = document.getElementById('appPostMenuModal');
+      if (postMenu && postMenu.classList.contains('visible')) return;
       if (e.key === 'Escape') {
         closePics();
       } else if (e.key === 'ArrowDown') {
@@ -355,6 +403,126 @@ ${renderCommentsSheetScript(t)}
       }
     }
   });
+
+  if (picsFeed) {
+    var isFeedDown = false;
+    var isFeedDragging = false;
+    var feedStartY = 0;
+    var feedLastY = 0;
+    var feedStartTime = 0;
+    var feedStartScrollTop = 0;
+    var hasFeedDragged = false;
+    var wheelCooldown = false;
+
+    picsFeed.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar, .comments-sheet-panel')) return;
+
+      isFeedDown = true;
+      isFeedDragging = false;
+      hasFeedDragged = false;
+      feedStartY = e.clientY;
+      feedLastY = e.clientY;
+      feedStartTime = performance.now();
+      feedStartScrollTop = picsFeed.scrollTop;
+    });
+
+    window.addEventListener('mousemove', function(e) {
+      if (!isFeedDown) return;
+
+      var dy = e.clientY - feedStartY;
+      if (!isFeedDragging) {
+        if (Math.abs(dy) > 6) {
+          isFeedDragging = true;
+          hasFeedDragged = true;
+          picsFeed.style.scrollSnapType = 'none';
+          document.body.classList.add('is-mouse-dragging');
+        } else {
+          return;
+        }
+      }
+
+      if (e.cancelable) e.preventDefault();
+      feedLastY = e.clientY;
+      picsFeed.scrollTop = feedStartScrollTop - dy;
+    }, { passive: false });
+
+    function endFeedDrag() {
+      if (!isFeedDown) return;
+      isFeedDown = false;
+
+      if (isFeedDragging) {
+        document.body.classList.remove('is-mouse-dragging');
+        picsFeed.style.scrollSnapType = '';
+
+        var dy = feedLastY - feedStartY;
+        var dt = performance.now() - feedStartTime;
+        var v = dt > 10 ? dy / dt : 0;
+        var slideH = picsFeed.clientHeight || window.innerHeight;
+        var currentSlide = Math.round(feedStartScrollTop / slideH);
+        var totalSlides = picsFeed.querySelectorAll('.pics-slide').length;
+        var targetIndex = currentSlide;
+
+        if (dy < -60 || (dy < -20 && v < -0.35)) {
+          targetIndex = Math.min(totalSlides - 1, currentSlide + 1);
+        } else if (dy > 60 || (dy > 20 && v > 0.35)) {
+          targetIndex = Math.max(0, currentSlide - 1);
+        }
+
+        picsFeed.scrollTo({
+          top: targetIndex * slideH,
+          behavior: 'smooth'
+        });
+
+        setTimeout(function() {
+          hasFeedDragged = false;
+        }, 50);
+      }
+    }
+
+    window.addEventListener('mouseup', endFeedDrag);
+
+    picsFeed.addEventListener('click', function(e) {
+      if (hasFeedDragged) {
+        e.preventDefault();
+        e.stopPropagation();
+        hasFeedDragged = false;
+      }
+    }, true);
+
+    picsFeed.addEventListener('wheel', function(e) {
+      if (wheelCooldown) {
+        e.preventDefault();
+        return;
+      }
+
+      var delta = e.deltaY;
+      if (Math.abs(delta) < 15) return;
+
+      e.preventDefault();
+      wheelCooldown = true;
+
+      var slideH = picsFeed.clientHeight || window.innerHeight;
+      var currentSlide = Math.round(picsFeed.scrollTop / slideH);
+      var totalSlides = picsFeed.querySelectorAll('.pics-slide').length;
+      var targetIndex = currentSlide;
+
+      if (delta > 0) {
+        targetIndex = Math.min(totalSlides - 1, currentSlide + 1);
+      } else {
+        targetIndex = Math.max(0, currentSlide - 1);
+      }
+
+      picsFeed.scrollTo({
+        top: targetIndex * slideH,
+        behavior: 'smooth'
+      });
+
+      setTimeout(function() {
+        wheelCooldown = false;
+      }, 400);
+    }, { passive: false });
+  }
 
   var isLiking = false;
 
@@ -403,7 +571,7 @@ ${renderCommentsSheetScript(t)}
     if (!slide || isLiking) return;
     var pid = slide.dataset.postId;
     var likeBtn = slide.querySelector('.pics-like-btn');
-    var countEl = slide.querySelector('.pics-action-count');
+    var countEl = likeBtn ? likeBtn.querySelector('.pics-action-count') : null;
     var gridBtn = document.querySelector('#exploreGrid .post-item-btn[data-post-id="' + pid + '"]');
 
     var wasLiked = likeBtn ? likeBtn.classList.contains('liked') : false;
@@ -503,7 +671,20 @@ ${renderCommentsSheetScript(t)}
       if (likeBtn) {
         likeBtn.onclick = function(e) {
           e.stopPropagation();
+          if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
           toggleSlideLike(slide, false);
+        };
+      }
+
+      var authorLink = slide.querySelector('.pics-author-row');
+      if (authorLink) {
+        authorLink.onclick = function() {
+          var pid = parseInt(slide.dataset.postId, 10);
+          var aid = parseInt(slide.dataset.authorId, 10) || undefined;
+          if (window.markPostEngaged) window.markPostEngaged(pid);
+          if (window.trackTelemetryEvent && pid) {
+            window.trackTelemetryEvent({ type: 'profile_visit', post_id: pid, author_id: aid });
+          }
         };
       }
 
@@ -512,6 +693,11 @@ ${renderCommentsSheetScript(t)}
         commentBtn.onclick = function(e) {
           e.stopPropagation();
           var pid = slide.dataset.postId;
+          var aid = parseInt(slide.dataset.authorId, 10) || undefined;
+          if (window.markPostEngaged) window.markPostEngaged(pid);
+          if (window.trackTelemetryEvent && pid) {
+            window.trackTelemetryEvent({ type: 'comment_open', post_id: parseInt(pid, 10), author_id: aid });
+          }
           var countEl = commentBtn.querySelector('.pics-comment-count');
           var currentCount = parseInt(commentBtn.dataset.commentsCount, 10) || 0;
           var gridBtn = document.querySelector('#exploreGrid .post-item-btn[data-post-id="' + pid + '"]');
@@ -533,25 +719,38 @@ ${renderCommentsSheetScript(t)}
         };
       }
 
-      if (imageWrap) {
-        imageWrap.ondblclick = function(e) {
+      var touchMoved = false;
+      var lastTap = 0;
+      slide.ontouchstart = function(e) {
+        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
+        touchMoved = false;
+      };
+      slide.ontouchmove = function() {
+        touchMoved = true;
+      };
+      slide.ontouchend = function(e) {
+        if (touchMoved) return;
+        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
+        var now = new Date().getTime();
+        var diff = now - lastTap;
+        if (diff > 0 && diff < 350) {
           e.preventDefault();
-          var coords = getEventCoords(e, this);
+          var coords = getEventCoords(e, imageWrap || this);
+          if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
           toggleSlideLike(slide, true, coords.x, coords.y);
-        };
+          lastTap = 0;
+          return;
+        }
+        lastTap = now;
+      };
 
-        var lastTap = 0;
-        imageWrap.ontouchend = function(e) {
-          var now = new Date().getTime();
-          var diff = now - lastTap;
-          if (diff > 0 && diff < 350) {
-            e.preventDefault();
-            var coords = getEventCoords(e, this);
-            toggleSlideLike(slide, true, coords.x, coords.y);
-          }
-          lastTap = now;
-        };
-      }
+      slide.ondblclick = function(e) {
+        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
+        e.preventDefault();
+        var coords = getEventCoords(e, imageWrap || this);
+        if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
+        toggleSlideLike(slide, true, coords.x, coords.y);
+      };
     });
 
     if (window.initTelemetryObserver) {
@@ -560,6 +759,32 @@ ${renderCommentsSheetScript(t)}
   }
 
   window.initExploreGridInteractions = bindExploreInteractions;
+
+  function formatExploreDateClient(dateStr) {
+    if (!dateStr) return '';
+    try {
+      var s = String(dateStr).trim();
+      var d = s.indexOf('T') !== -1 ? new Date(s.indexOf('Z') !== -1 ? s : s + 'Z') : new Date(s.replace(' ', 'T') + 'Z');
+      if (isNaN(d.getTime())) return dateStr;
+      var fmt = i18n.dateFmt;
+      var day = d.getDate();
+      var month = (fmt && fmt.monthsLong && fmt.monthsLong[d.getMonth()]) || '';
+      var year = d.getFullYear();
+      var dateFormatted = (fmt && fmt.fullPattern === 'mdy') ? (month + ' ' + day + ', ' + year) : (day + ' ' + month + ' ' + year + ((fmt && fmt.yearSuffix) || ''));
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      var timeFormatted = hh + ':' + mm;
+      var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      var relative = '';
+      if (diff < 60) relative = i18n.justNow;
+      else if (diff < 3600) relative = Math.floor(diff / 60) + ' ' + i18n.minShort;
+      else if (diff < 86400) relative = Math.floor(diff / 3600) + ' ' + i18n.hoursShort;
+      else if (diff < 7 * 86400) relative = Math.floor(diff / 86400) + ' ' + i18n.daysShort;
+      return relative ? (dateFormatted + ', ' + timeFormatted + ' • ' + relative) : (dateFormatted + ', ' + timeFormatted);
+    } catch (e) {
+      return dateStr;
+    }
+  }
 
   function renderExplorePosts(posts) {
     var gridEl = document.getElementById('exploreGrid');
@@ -592,7 +817,7 @@ ${renderCommentsSheetScript(t)}
         '</div>' +
       '</button>';
 
-      slidesHtml += '<div class="pics-slide" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-index="' + idx + '">' +
+      slidesHtml += '<div class="pics-slide" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-post-img="/media/' + encodeURIComponent(p.image_key) + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-index="' + idx + '">' +
         '<div class="pics-image-wrap">' +
           '<img class="pics-image" src="/media/' + encodeURIComponent(p.image_key) + '" alt="Explore" loading="' + (idx < 3 ? 'eager' : 'lazy') + '">' +
           '<div class="post-like-burst">' + ${JSON.stringify(HEART_BURST_ICON)} + '</div>' +
@@ -604,7 +829,7 @@ ${renderCommentsSheetScript(t)}
             '<span class="pics-author-name">' + escapeHtmlClient(p.username) + '</span>' +
           '</a>' +
           (p.caption ? '<div class="pics-caption">' + escapeHtmlClient(p.caption) + '</div>' : '') +
-          '<div class="pics-date">' + escapeHtmlClient(p.created_at || '') + '</div>' +
+          '<div class="pics-date">' + escapeHtmlClient(formatExploreDateClient(p.created_at || '')) + '</div>' +
         '</div>' +
         '<div class="pics-side-bar">' +
           '<button class="pics-action-btn pics-like-btn ' + (p.is_liked ? 'liked' : '') + '" type="button">' +
@@ -666,5 +891,5 @@ ${renderCommentsSheetScript(t)}
 })();
 `;
 
-  return layout(`${t.common.appName} — ${t.nav.explore}`, body, script, t);
+  return layout(`${t.common.appName} — ${t.nav.explore}`, body, script, t, theme);
 }

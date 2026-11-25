@@ -17,13 +17,16 @@ const REFRESH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
 </svg>`;
 
-export function errorPage(t: Translations = ru): string {
+export function errorPage(t: Translations = ru, theme?: string): string {
+  const themeAttr = theme === 'dark' || theme === 'light' ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : '';
+  const metaThemeColor = theme === 'dark' ? '#000000' : '#FFFFFF';
+
   return `<!DOCTYPE html>
-<html lang="${t.code}">
+<html lang="${t.code}"${themeAttr}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#FFFFFF">
+<meta name="theme-color" content="${metaThemeColor}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -31,7 +34,60 @@ export function errorPage(t: Translations = ru): string {
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.jpg">
 <link rel="manifest" href="/manifest.webmanifest">
+<script>
+(function() {
+  var t;
+  try {
+    t = localStorage.getItem('theme');
+  } catch(e) {}
+  if (!t) {
+    var m = (document.cookie || '').match(/(?:^|;\\s*)theme=(dark|light)/);
+    if (m && m[1]) {
+      t = m[1];
+    }
+  }
+  if (!t) {
+    try {
+      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      localStorage.setItem('theme', t);
+    } catch(e) {
+      t = 'light';
+    }
+    var s = window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = 'theme=' + t + '; Path=/; Max-Age=31536000; SameSite=Lax' + s;
+  }
+  document.documentElement.setAttribute('data-theme', t);
+  document.documentElement.style.colorScheme = t;
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.setAttribute('content', t === 'dark' ? '#000000' : '#FFFFFF');
+  }
+})();
+</script>
 <style>
+:root,
+html[data-theme="light"] {
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-elevated: #FFFFFF;
+  --text-primary: #111111;
+  --text-secondary: #737373;
+  --border-color: #EFEFEF;
+  --input-bg: #F5F5F5;
+  --icon-box-bg: #E3F2FD;
+}
+
+html[data-theme="dark"] {
+  --bg-primary: #000000;
+  --bg-secondary: #121212;
+  --bg-elevated: #1C1C1E;
+  --text-primary: #F5F5F5;
+  --text-secondary: #A8A8A8;
+  --border-color: #262626;
+  --input-bg: #262626;
+  --icon-box-bg: #1E293B;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -40,8 +96,8 @@ export function errorPage(t: Translations = ru): string {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background: #FAFAFA;
-  color: #111111;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   min-height: 100dvh;
   display: flex;
   align-items: center;
@@ -49,25 +105,35 @@ body {
   padding: 24px;
 }
 
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .offline-card {
   width: 100%;
   max-width: 440px;
-  background: #FFFFFF;
+  background: var(--bg-elevated);
   border-radius: 24px;
-  border: 1px solid #EFEFEF;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   padding: 40px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
+  animation: pageFadeIn 0.2s ease forwards;
 }
 
 .offline-icon-box {
   width: 96px;
   height: 96px;
   border-radius: 50%;
-  background: #E3F2FD;
+  background: var(--icon-box-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -77,14 +143,14 @@ body {
 .offline-title {
   font-size: 20px;
   font-weight: 700;
-  color: #1A1A1A;
+  color: var(--text-primary);
   margin-bottom: 10px;
   line-height: 1.3;
 }
 
 .offline-desc {
   font-size: 14px;
-  color: #737373;
+  color: var(--text-secondary);
   line-height: 1.5;
   margin-bottom: 28px;
   max-width: 320px;
@@ -120,7 +186,8 @@ body {
   align-items: center;
   gap: 6px;
   padding: 4px;
-  background: #F5F5F5;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
   border-radius: 20px;
 }
 
@@ -131,15 +198,15 @@ body {
   border-radius: 14px;
   font-size: 12px;
   font-weight: 600;
-  color: #737373;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .offline-lang-btn.active {
-  background: #FFFFFF;
-  color: #111111;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 </style>
 </head>
@@ -150,7 +217,7 @@ body {
     </div>
     <h1 class="offline-title" id="offlineTitle">${esc(t.error.offlineTitle)}</h1>
     <p class="offline-desc" id="offlineDesc">${esc(t.error.offlineDesc)}</p>
-    <button type="button" class="offline-reload-btn" id="offlineReloadBtn" onclick="window.location.reload()">
+    <button type="button" class="offline-reload-btn" id="offlineReloadBtn" onclick="window.location.href='/feed'">
       ${REFRESH_ICON}
       <span id="offlineReloadText">${esc(t.error.reloadBtn)}</span>
     </button>
@@ -240,7 +307,7 @@ body {
     });
 
     window.addEventListener('online', function() {
-      window.location.reload();
+      window.location.href = '/feed';
     });
   })();
   </script>

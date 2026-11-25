@@ -1,15 +1,21 @@
-import { Env } from './types';
-import { handleLogin, handleRegister, handleLogout, getUserFromRequest } from './auth';
-import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleToggleFollow } from './profile';
+import { Env, User } from './types';
+import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
+import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
 import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment } from './posts';
 import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
-import { profilePage } from './pages/profile';
+import { profilePage, userNotFoundPage } from './pages/profile';
+import { settingsPage } from './pages/settings';
+import { accountListPage } from './pages/accountlist';
+import { sublistPage } from './pages/sublist';
+import { editProfilePage } from './pages/editprofile';
+import { publishPostPage } from './pages/publishpost';
+import { subslistPage } from './pages/subslist';
 import { feedPage } from './pages/feed';
 import { explorePage } from './pages/explore';
 import { userAcceptPage } from './pages/useraccept';
 import { errorPage } from './pages/error';
-import { ICON_SVG, getIconJpgBytes, MANIFEST_JSON, SW_JS } from './assets';
+import { ICON_SVG, getIconJpgBytes, getManifestJson, SW_JS } from './assets';
 import { detectLanguage, getTranslations, normalizeLang } from './languages';
 import {
   getPersonalizedFeed,
@@ -19,18 +25,39 @@ import {
   getSimilarAuthors,
   handleTelemetryBatch
 } from './recommendations';
+import { createPostgresClient } from './db/client';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const activeEnv = env.DATABASE_URL
+      ? { ...env, DB: createPostgresClient(env.DATABASE_URL) }
+      : env;
     const url = new URL(request.url);
-    const pathname = url.pathname;
-    const method = request.method;
+    const isMedia = url.pathname.startsWith('/media/');
+    try {
+      const response = await handleRequest(request, activeEnv, url);
+      return withSecurityHeaders(response, isMedia);
+    } catch (err: any) {
+      console.error(err);
+      return withSecurityHeaders(new Response('Internal Server Error', {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      }), isMedia);
+    }
+  },
+};
 
-    const cookieHeader = request.headers.get('Cookie') || '';
-    const hasLangCookie = /(?:^|;\s*)lang=([a-zA-Z-]+)/.test(cookieHeader);
-    const userLang = detectLanguage(request);
-    const setLangCookie = !hasLangCookie ? userLang : undefined;
-    const t = getTranslations(userLang);
+async function handleRequest(request: Request, env: Env, url: URL): Promise<Response> {
+  const pathname = url.pathname;
+  const method = request.method;
+  const isHttps = url.protocol === 'https:' || !['localhost', '127.0.0.1'].includes(url.hostname);
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const hasLangCookie = /(?:^|;\s*)lang=([a-zA-Z-]+)/.test(cookieHeader);
+  const userLang = detectLanguage(request);
+  const setLangCookie = !hasLangCookie ? userLang : undefined;
+  const t = getTranslations(userLang);
+  const userTheme = /(?:^|;\s*)theme=(dark|light)/.exec(cookieHeader)?.[1];
 
     if (method === 'POST') {
       const origin = request.headers.get('Origin');
@@ -69,10 +96,10 @@ export default {
     }
 
     if (pathname === '/manifest.webmanifest' || pathname === '/manifest.json') {
-      return new Response(MANIFEST_JSON, {
+      return new Response(getManifestJson(userTheme), {
         headers: {
           'Content-Type': 'application/manifest+json; charset=utf-8',
-          'Cache-Control': 'public, max-age=86400',
+          'Cache-Control': 'no-cache, must-revalidate',
         },
       });
     }
@@ -87,7 +114,7 @@ export default {
     }
 
     if (pathname === '/offline') {
-      return html(errorPage(t), setLangCookie);
+      return html(errorPage(t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/') {
@@ -96,26 +123,28 @@ export default {
     }
 
     if (pathname === '/login' && method === 'GET') {
+      const addMode = url.searchParams.get('add') === '1';
       const user = await getUserFromRequest(env, request);
-      if (user) return redirect('/feed', request, setLangCookie);
-      return html(loginPage(t), setLangCookie);
+      if (user && !addMode) return redirect('/feed', request, setLangCookie);
+      return html(loginPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
     }
 
     if (pathname === '/register' && method === 'GET') {
+      const addMode = url.searchParams.get('add') === '1';
       const user = await getUserFromRequest(env, request);
-      if (user) return redirect('/feed', request, setLangCookie);
-      return html(registerPage(t), setLangCookie);
+      if (user && !addMode) return redirect('/feed', request, setLangCookie);
+      return html(registerPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
     }
 
     if ((pathname === '/useraccept' || pathname === '/terms' || pathname === '/useraccept.ts') && method === 'GET') {
-      return html(userAcceptPage(t), setLangCookie);
+      return html(userAcceptPage(t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/feed' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const feedData = await getPersonalizedFeed(env, user.id);
-      return html(feedPage(feedData, user, t), setLangCookie);
+      return html(feedPage(feedData, user, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/explore' && method === 'GET') {
@@ -123,7 +152,7 @@ export default {
       if (!user) return redirect('/login', request, setLangCookie);
       const tagParam = url.searchParams.get('tag') || 'all';
       const exploreData = await getPersonalizedExplore(env, user.id, tagParam);
-      return html(explorePage(exploreData, user, t), setLangCookie);
+      return html(explorePage(exploreData, user, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/profile' && method === 'GET') {
@@ -132,14 +161,78 @@ export default {
       return redirect(`/u/${encodeURIComponent(user.username)}`, request, setLangCookie);
     }
 
+    if (pathname === '/settings' && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      return html(settingsPage(user, t, userTheme), setLangCookie, isHttps);
+    }
+
+    if ((pathname === '/accountlist' || pathname === '/accountlist.ts') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      const { accounts, syncCookie } = await getSavedAccountsForPage(env, request, user);
+      return html(accountListPage(accounts, t, userTheme), setLangCookie, isHttps, 200, syncCookie);
+    }
+
+    if ((pathname === '/publishpost' || pathname === '/publishpost.ts') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      return html(publishPostPage(user, t, userTheme), setLangCookie, isHttps);
+    }
+
     if (pathname.startsWith('/u/') && method === 'GET') {
-      const targetUsername = decodeURIComponent(pathname.slice(3)).toLowerCase().trim();
+      const rest = pathname.slice(3);
+      const sublistMatch = /^([^\/]+)\/sublist(?:\.ts)?$/i.exec(rest);
+      if (sublistMatch) {
+        const sublistUsername = decodeURIComponent(sublistMatch[1]).toLowerCase().trim();
+        const currentUser = await getUserFromRequest(env, request);
+        const targetUser = await env.DB.prepare('SELECT * FROM users WHERE username = ?')
+          .bind(sublistUsername)
+          .first<User>();
+        if (!targetUser) {
+          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+        }
+        const followers = await getFollowersList(env, targetUser.id, currentUser?.id);
+        return html(sublistPage(targetUser, followers, currentUser, t, userTheme), setLangCookie, isHttps);
+      }
+      const subslistMatch = /^([^\/]+)\/subslist(?:\.ts)?$/i.exec(rest);
+      if (subslistMatch) {
+        const subslistUsername = decodeURIComponent(subslistMatch[1]).toLowerCase().trim();
+        const currentUser = await getUserFromRequest(env, request);
+        const targetUser = await env.DB.prepare('SELECT * FROM users WHERE username = ?')
+          .bind(subslistUsername)
+          .first<User>();
+        if (!targetUser) {
+          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+        }
+        const followingUsers = await getFollowingList(env, targetUser.id, currentUser?.id);
+        return html(subslistPage(targetUser, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
+      }
+
+      const editprofileMatch = /^([^\/]+)\/editprofile(?:\.ts)?$/i.exec(rest);
+      if (editprofileMatch) {
+        const requestedUsername = decodeURIComponent(editprofileMatch[1]).toLowerCase().trim();
+        const currentUser = await getUserFromRequest(env, request);
+        if (!currentUser) {
+          return redirect('/login', request, setLangCookie);
+        }
+        if (currentUser.username.toLowerCase() !== requestedUsername) {
+          return redirect(`/u/${encodeURIComponent(currentUser.username)}/editprofile`, request, setLangCookie);
+        }
+        const profile = await getProfileData(env, currentUser.username, currentUser.id);
+        if (!profile) {
+          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+        }
+        return html(editProfilePage(profile, t, userTheme), setLangCookie, isHttps);
+      }
+
+      const targetUsername = decodeURIComponent(rest).toLowerCase().trim();
       const currentUser = await getUserFromRequest(env, request);
       const profile = await getProfileData(env, targetUsername, currentUser?.id);
       if (!profile) {
-        return new Response(t.explore.noResults, { status: 404 });
+        return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
       }
-      return html(profilePage(profile, t), setLangCookie);
+      return html(profilePage(profile, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname.startsWith('/media/') && (method === 'GET' || method === 'HEAD')) {
@@ -160,6 +253,11 @@ export default {
       if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/octet-stream');
       }
+      if (url.searchParams.get('download') === '1' && key.startsWith('posts/')) {
+        const ct = (headers.get('Content-Type') || '').toLowerCase();
+        const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : ct.includes('gif') ? 'gif' : 'jpg';
+        headers.set('Content-Disposition', `attachment; filename="photogram-photo.${ext}"`);
+      }
 
       return new Response(object.body, { headers });
     }
@@ -174,6 +272,18 @@ export default {
 
     if (pathname === '/api/auth/logout' && method === 'POST') {
       return handleLogout(request, env);
+    }
+
+    if (pathname === '/api/auth/change-password' && method === 'POST') {
+      return handleChangePassword(request, env);
+    }
+
+    if (pathname === '/api/auth/switch-account' && method === 'POST') {
+      return handleSwitchAccount(request, env);
+    }
+
+    if (pathname === '/api/auth/remove-account' && method === 'POST') {
+      return handleRemoveAccount(request, env);
     }
 
     if (pathname === '/api/profile/update' && method === 'POST') {
@@ -213,13 +323,15 @@ export default {
         });
       }
       try {
-        const body = (await request.json()) as { events?: any[] };
-        if (body && Array.isArray(body.events)) {
-          await handleTelemetryBatch(env, user.id, body.events);
-        }
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const body = (await request.json()) as { events?: unknown };
+        const result = await handleTelemetryBatch(env, user.id, body?.events);
+        return new Response(
+          JSON.stringify(result.ok ? { success: true, accepted: result.accepted || 0 } : { error: result.error || 'Bad request' }),
+          {
+            status: result.status,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
       } catch {
         return new Response(JSON.stringify({ error: 'Bad request' }), {
           status: 400,
@@ -306,7 +418,7 @@ export default {
         return new Response(JSON.stringify({ success: true, lang: valid }), {
           headers: {
             'Content-Type': 'application/json',
-            'Set-Cookie': `lang=${valid}; Path=/; Max-Age=31536000; SameSite=Lax`,
+            'Set-Cookie': `lang=${valid}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`,
           },
         });
       } catch {
@@ -318,28 +430,51 @@ export default {
     }
 
     return new Response('Not Found', { status: 404 });
-  },
-};
+}
 
-function html(content: string, setLangCookie?: string): Response {
+function withSecurityHeaders(response: Response, isMedia = false): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('X-Frame-Options', 'DENY');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+
+  if (isMedia) {
+    headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  } else {
+    headers.set(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    );
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function html(content: string, setLangCookie?: string, isHttps = true, status = 200, extraCookie?: string): Response {
   const headers = new Headers({
     'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    'X-Frame-Options': 'DENY',
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Content-Security-Policy': "frame-ancestors 'none'",
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
   });
   if (setLangCookie) {
-    headers.set('Set-Cookie', `lang=${setLangCookie}; Path=/; Max-Age=31536000; SameSite=Lax`);
+    headers.append('Set-Cookie', `lang=${setLangCookie}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`);
   }
-  return new Response(content, { headers });
+  if (extraCookie) {
+    headers.append('Set-Cookie', extraCookie);
+  }
+  return new Response(content, { status, headers });
 }
 
 function redirect(path: string, request: Request, setLangCookie?: string): Response {
+  const isHttps = new URL(request.url).protocol === 'https:' || !['localhost', '127.0.0.1'].includes(new URL(request.url).hostname);
   const headers = new Headers({ Location: new URL(path, request.url).toString() });
   if (setLangCookie) {
-    headers.set('Set-Cookie', `lang=${setLangCookie}; Path=/; Max-Age=31536000; SameSite=Lax`);
+    headers.set('Set-Cookie', `lang=${setLangCookie}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`);
   }
   return new Response(null, { status: 302, headers });
 }

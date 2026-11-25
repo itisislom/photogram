@@ -1,25 +1,28 @@
 import { FeedPost, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
-import { renderBottomNav, renderCreatePostModal, renderCreatePostScript } from './nav';
+import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { renderBottomNav } from './nav';
 import { COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
+import { formatLocalizedFullDate, formatLocalizedShortDate } from '../languages';
 import { PersonalizedFeedResult } from '../recommendations';
 
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="80" height="80" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#B0B0B0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
 
-function getDateLocale(code: string): string {
-  if (code === 'kz') return 'kk-KZ';
-  if (code === 'uz') return 'uz-UZ';
-  if (code === 'en') return 'en-US';
-  return 'ru-RU';
+function parseDateSafe(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const s = String(dateStr).trim();
+  if (s.includes('T')) {
+    return new Date(s.endsWith('Z') ? s : s + 'Z');
+  }
+  return new Date(s.replace(' ', 'T') + 'Z');
 }
 
 function formatFeedTime(dateStr: string, t: Translations): string {
   try {
-    const d = new Date(dateStr.replace(' ', 'T') + 'Z');
+    const d = parseDateSafe(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     const now = Date.now();
     const diff = Math.floor((now - d.getTime()) / 1000);
@@ -27,7 +30,7 @@ function formatFeedTime(dateStr: string, t: Translations): string {
     if (diff < 3600) return `${Math.floor(diff / 60)} ${t.common.minutesShort}`;
     if (diff < 86400) return `${Math.floor(diff / 3600)} ${t.common.hoursShort}`;
     if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} ${t.common.daysShort}`;
-    return d.toLocaleDateString(getDateLocale(t.code), { day: 'numeric', month: 'short' });
+    return formatLocalizedShortDate(d, t.code);
   } catch {
     return dateStr;
   }
@@ -35,8 +38,8 @@ function formatFeedTime(dateStr: string, t: Translations): string {
 
 function formatFullDate(dateStr: string, t: Translations): string {
   try {
-    const d = new Date(dateStr.replace(' ', 'T') + 'Z');
-    return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString(getDateLocale(t.code), { day: 'numeric', month: 'long', year: 'numeric' });
+    const d = parseDateSafe(dateStr);
+    return isNaN(d.getTime()) ? dateStr : formatLocalizedFullDate(d, t.code);
   } catch {
     return dateStr;
   }
@@ -67,10 +70,13 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
           <span class="feed-card-time">${formatFeedTime(p.created_at, t)}</span>
         </div>
       </a>
-      ${isSuggested ? `
-      <button type="button" class="feed-card-follow-btn" data-author-id="${p.user_id}" data-following="false">
-        ${escapeHtml(t.recommendations.follow)}
-      </button>` : ''}
+      <div class="feed-card-header-right">
+        ${isSuggested ? `
+        <button type="button" class="feed-card-follow-btn" data-author-id="${p.user_id}" data-username="${escapeHtml(p.username)}" data-following="false">
+          ${escapeHtml(t.recommendations.follow)}
+        </button>` : ''}
+        <button type="button" class="post-more-btn" data-post-more-img="/media/${encodeURIComponent(p.image_key)}" data-post-more-id="${p.id}" data-post-more-user="${escapeHtml(p.username)}" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
+      </div>
     </header>
 
     <div class="feed-card-image-wrap" data-post-id="${p.id}">
@@ -107,7 +113,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
   </article>`;
 }
 
-export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], currentUser: User, t: Translations = ru): string {
+export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], currentUser: User, t: Translations = ru, theme?: string): string {
   let followedPosts: FeedPost[] = [];
   let suggestedPosts: FeedPost[] = [];
   let allCaughtUp = false;
@@ -157,7 +163,7 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
               <div class="feed-rec-name">${escapeHtml(u.display_name || u.username)}${u.is_verified ? renderVerifiedBadge(13) : ''}</div>
               <div class="feed-rec-username">@${escapeHtml(u.username)}</div>
             </a>
-            <button type="button" class="feed-follow-btn" data-user-id="${u.id}" data-following="false">${escapeHtml(t.recommendations.follow)}</button>
+            <button type="button" class="feed-follow-btn" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" data-following="false">${escapeHtml(t.recommendations.follow)}</button>
           </div>`;
         }).join('')}
       </div>
@@ -194,7 +200,6 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
   </main>
 
   ${renderBottomNav('feed', t)}
-  ${renderCreatePostModal(t)}
   ${renderCommentsSheetHtml(t)}
 </div>`;
 
@@ -203,11 +208,13 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
     addComment: t.feed.addComment,
     networkError: t.common.networkError,
     follow: t.recommendations.follow,
-    following: t.recommendations.following
+    following: t.recommendations.following,
+    unfollowTitle: t.profile.unfollowTitle,
+    unfollowConfirmTpl: t.profile.unfollowConfirm('{username}'),
+    unfollowBtn: t.profile.unfollowBtn
   });
 
   const script = `
-${renderCreatePostScript(t)}
 ${renderCommentsSheetScript(t)}
 
 (function() {
@@ -316,6 +323,7 @@ ${renderCommentsSheetScript(t)}
       likesCountEl.textContent = formatLikes(newCount);
     }
     if (newLiked) {
+      if (window.markPostEngaged) window.markPostEngaged(postId);
       showBurst(imageWrap, x, y);
     }
 
@@ -371,6 +379,11 @@ ${renderCommentsSheetScript(t)}
       e.stopPropagation();
       var pid = this.dataset.postId;
       var card = document.querySelector('.feed-card[data-post-id="' + pid + '"]');
+      var aid = card ? (parseInt(card.dataset.authorId, 10) || undefined) : undefined;
+      if (window.markPostEngaged) window.markPostEngaged(pid);
+      if (window.trackTelemetryEvent && pid) {
+        window.trackTelemetryEvent({ type: 'comment_open', post_id: parseInt(pid, 10), author_id: aid });
+      }
       var linkEl = card ? card.querySelector('.feed-card-comments-link') : null;
       var btnEl = card ? card.querySelector('.feed-comment-btn') : null;
 
@@ -415,36 +428,71 @@ ${renderCommentsSheetScript(t)}
     });
   });
 
+  document.querySelectorAll('.feed-card-author, .feed-caption-user').forEach(function(link) {
+    link.addEventListener('click', function() {
+      var card = this.closest('.feed-card[data-post-id]');
+      if (!card) return;
+      var pid = parseInt(card.dataset.postId, 10);
+      var aid = parseInt(card.dataset.authorId, 10) || undefined;
+      if (window.markPostEngaged) window.markPostEngaged(pid);
+      if (window.trackTelemetryEvent && pid) {
+        window.trackTelemetryEvent({ type: 'profile_visit', post_id: pid, author_id: aid });
+      }
+    });
+  });
+
   document.querySelectorAll('.feed-follow-btn, .feed-card-follow-btn').forEach(function(btn) {
-    btn.addEventListener('click', async function(e) {
+    btn.addEventListener('click', function(e) {
       e.stopPropagation();
-      var targetId = parseInt(this.dataset.userId || this.dataset.authorId, 10);
-      if (!targetId) return;
-      var isFollowing = this.dataset.following === 'true';
-      this.disabled = true;
-      try {
-        var res = await fetch('/api/users/follow', {
+      var btnRef = this;
+      var targetId = parseInt(btnRef.dataset.userId || btnRef.dataset.authorId, 10);
+      if (!targetId || btnRef.disabled) return;
+      var isFollowing = btnRef.dataset.following === 'true';
+      var targetUsername = btnRef.dataset.username || '';
+
+      function executeFeedFollow() {
+        btnRef.disabled = true;
+        fetch('/api/users/follow', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ following_id: targetId })
-        });
-        var data = await res.json();
-        if (res.ok && data.success) {
-          var nowFollowing = Boolean(data.is_following);
-          document.querySelectorAll('[data-user-id="' + targetId + '"].feed-follow-btn, [data-author-id="' + targetId + '"].feed-card-follow-btn').forEach(function(b) {
-            b.dataset.following = nowFollowing ? 'true' : 'false';
-            b.textContent = nowFollowing ? i18n.following : i18n.follow;
-            if (nowFollowing) b.classList.add('following');
-            else b.classList.remove('following');
+        }).then(function(res) {
+          return res.json().then(function(data) {
+            if (data && data.success) {
+              var nowFollowing = Boolean(data.is_following);
+              document.querySelectorAll('[data-user-id="' + targetId + '"].feed-follow-btn, [data-author-id="' + targetId + '"].feed-card-follow-btn').forEach(function(b) {
+                b.dataset.following = nowFollowing ? 'true' : 'false';
+                b.textContent = nowFollowing ? i18n.following : i18n.follow;
+                if (nowFollowing) b.classList.add('following');
+                else b.classList.remove('following');
+              });
+            }
           });
+        }).catch(function() {}).finally(function() {
+          btnRef.disabled = false;
+        });
+      }
+
+      if (isFollowing) {
+        if (window.showAppConfirm) {
+          var confirmMsg = (i18n.unfollowConfirmTpl || 'Вы действительно хотите отписаться от @{username}?').replace('{username}', targetUsername);
+          window.showAppConfirm({
+            type: 'unfollow',
+            title: i18n.unfollowTitle || 'Отписаться?',
+            message: confirmMsg,
+            okText: i18n.unfollowBtn || 'Отписаться',
+            onOk: executeFeedFollow
+          });
+        } else {
+          executeFeedFollow();
         }
-      } catch(err) {} finally {
-        this.disabled = false;
+      } else {
+        executeFeedFollow();
       }
     });
   });
 })();
 `;
 
-  return layout(`${t.common.appName} — ${t.nav.feed}`, body, script, t);
+  return layout(`${t.common.appName} — ${t.nav.feed}`, body, script, t, theme);
 }

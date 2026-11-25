@@ -59,6 +59,64 @@ export function getTranslations(lang: string | LangCode): Translations {
   return DICTIONARIES[normalized] || ru;
 }
 
+const DATE_FORMATS: Record<LangCode, { monthsLong: string[]; monthsShort: string[]; fullPattern: 'dmy_suffix' | 'mdy'; yearSuffix: string }> = {
+  ru: {
+    monthsLong: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
+    monthsShort: ['янв.', 'февр.', 'мар.', 'апр.', 'мая', 'июн.', 'июл.', 'авг.', 'сент.', 'окт.', 'нояб.', 'дек.'],
+    fullPattern: 'dmy_suffix',
+    yearSuffix: ' г.',
+  },
+  en: {
+    monthsLong: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    fullPattern: 'mdy',
+    yearSuffix: '',
+  },
+  uz: {
+    monthsLong: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'],
+    monthsShort: ['yan.', 'fev.', 'mar.', 'apr.', 'may', 'iyun', 'iyul', 'avg.', 'sen.', 'okt.', 'noy.', 'dek.'],
+    fullPattern: 'dmy_suffix',
+    yearSuffix: ' y.',
+  },
+  kz: {
+    monthsLong: ['қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан'],
+    monthsShort: ['қаң.', 'ақп.', 'нау.', 'сәу.', 'мам.', 'мау.', 'шіл.', 'там.', 'қыр.', 'қаз.', 'қар.', 'жел.'],
+    fullPattern: 'dmy_suffix',
+    yearSuffix: ' ж.',
+  },
+};
+
+export function formatLocalizedFullDate(d: Date, lang: LangCode): string {
+  const cfg = DATE_FORMATS[lang] || DATE_FORMATS.ru;
+  const day = d.getDate();
+  const month = cfg.monthsLong[d.getMonth()] || '';
+  const year = d.getFullYear();
+  if (cfg.fullPattern === 'mdy') {
+    return `${month} ${day}, ${year}`;
+  }
+  return `${day} ${month} ${year}${cfg.yearSuffix}`;
+}
+
+export function formatLocalizedShortDate(d: Date, lang: LangCode): string {
+  const cfg = DATE_FORMATS[lang] || DATE_FORMATS.ru;
+  const day = d.getDate();
+  const month = cfg.monthsShort[d.getMonth()] || '';
+  if (cfg.fullPattern === 'mdy') {
+    return `${month} ${day}`;
+  }
+  return `${day} ${month}`;
+}
+
+export function formatLocalizedTime(d: Date): string {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+export function getClientDateFormat(lang: LangCode): { monthsLong: string[]; monthsShort: string[]; fullPattern: string; yearSuffix: string } {
+  return DATE_FORMATS[lang] || DATE_FORMATS.ru;
+}
+
 export function renderLangSwitcherHtml(currentLang: LangCode, extraClass: string = ''): string {
   return `
 <div class="lang-switcher-wrap notranslate ${extraClass}" translate="no">
@@ -85,11 +143,26 @@ export function renderLangScript(): string {
   }
 
   function setCookie(name, val) {
-    document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; max-age=31536000; SameSite=Lax';
+    var secureFlag = window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; max-age=31536000; SameSite=Lax' + secureFlag;
   }
 
+  var isSwitchingLang = false;
+
   async function setLanguage(code) {
-    if (!code) return;
+    if (!code || isSwitchingLang) return;
+    var currentHtmlLang = (document.documentElement.getAttribute('lang') || 'ru').toLowerCase();
+    if (code === currentHtmlLang) {
+      try {
+        localStorage.setItem('photogram_lang', code);
+      } catch(e) {}
+      if (getCookie('lang') !== code) {
+        setCookie('lang', code);
+      }
+      return;
+    }
+
+    isSwitchingLang = true;
     try {
       localStorage.setItem('photogram_lang', code);
     } catch(e) {}
@@ -103,19 +176,39 @@ export function renderLangScript(): string {
       });
     } catch(e) {}
 
+    var path = window.location.pathname;
+    if ((path === '/login' || path === '/register') && typeof window.softReloadAuthLanguage === 'function') {
+      var swapped = await window.softReloadAuthLanguage(code);
+      isSwitchingLang = false;
+      if (swapped) return;
+    }
+
     window.location.reload();
   }
 
-  document.addEventListener('click', function(e) {
-    var btn = e.target && e.target.closest ? e.target.closest('[data-lang-code]') : null;
-    if (btn) {
-      var code = btn.getAttribute('data-lang-code');
-      if (code) {
-        e.preventDefault();
-        setLanguage(code);
+  if (!window.__pgLangClickBound) {
+    window.__pgLangClickBound = true;
+    document.addEventListener('click', function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-lang-code]') : null;
+      if (btn) {
+        var code = btn.getAttribute('data-lang-code');
+        if (code) {
+          e.preventDefault();
+          var currentHtmlLang = (document.documentElement.getAttribute('lang') || 'ru').toLowerCase();
+          if (btn.classList.contains('active') || code === currentHtmlLang) {
+            try {
+              localStorage.setItem('photogram_lang', code);
+            } catch(err) {}
+            if (getCookie('lang') !== code) {
+              setCookie('lang', code);
+            }
+            return;
+          }
+          setLanguage(code);
+        }
       }
-    }
-  });
+    });
+  }
 
   var savedLang = null;
   try {

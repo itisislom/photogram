@@ -1,6 +1,9 @@
+import type { PostgresDb } from './db/client';
+
 export interface Env {
-  DB: D1Database;
+  DB: D1Database | PostgresDb;
   STORAGE: R2Bucket;
+  DATABASE_URL?: string;
 }
 
 export interface User {
@@ -90,3 +93,21 @@ export interface FeedPost extends Post {
 
 
 
+export interface FollowerUser {
+  id: number;
+  username: string;
+  display_name: string;
+  avatar_key: string;
+  is_verified?: number | boolean;
+  is_following?: boolean;
+  is_self?: boolean;
+}
+
+export interface SavedAccountItem {
+  id: number;
+  username: string;
+  display_name: string;
+  avatar_key: string;
+  is_verified?: number | boolean;
+  is_current: boolean;
+}
