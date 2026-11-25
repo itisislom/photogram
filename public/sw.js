@@ -1,20 +1,38 @@
-const CACHE_NAME = 'photogram-v5';
+const CACHE_NAME = 'photogram-v8';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
-  OFFLINE_URL,
   '/icon.svg',
   '/icon.jpg',
   '/manifest.webmanifest'
 ];
+
+function refreshOfflineCache() {
+  return fetch(new Request(OFFLINE_URL, { cache: 'reload', credentials: 'same-origin' }))
+    .then(function(res) {
+      if (!res || !res.ok) return;
+      return caches.open(CACHE_NAME).then(function(cache) {
+        return cache.put(OFFLINE_URL, res);
+      });
+    })
+    .catch(function() {});
+}
 
 self.addEventListener('install', function(event) {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
       return cache.addAll(PRECACHE_ASSETS);
+    }).then(function() {
+      return refreshOfflineCache();
     })
   );
+});
+
+self.addEventListener('message', function(event) {
+  if (event.data && event.data.type === 'REFRESH_OFFLINE') {
+    event.waitUntil(refreshOfflineCache());
+  }
 });
 
 self.addEventListener('activate', function(event) {
@@ -103,4 +121,55 @@ self.addEventListener('fetch', function(event) {
     );
     return;
   }
+});
+
+self.addEventListener('push', function(event) {
+  event.waitUntil((async function() {
+    var data = {};
+    try {
+      data = event.data ? event.data.json() : {};
+    } catch (e) {
+      data = { title: 'Photogram', body: event.data ? event.data.text() : '' };
+    }
+    var windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    var isAppFocused = windowClients.some(function(c) {
+      return Boolean(c.focused);
+    });
+    if (isAppFocused) {
+      return;
+    }
+    if (!data.title && !data.body) {
+      return;
+    }
+    await self.registration.showNotification(data.title || 'Photogram', {
+      body: data.body || '',
+      icon: '/icon.jpg',
+      badge: '/icon.svg',
+      tag: data.tag || 'photogram-notif',
+      renotify: true,
+      data: { url: data.url || '/' }
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  var rawUrl = (event.notification && event.notification.data && event.notification.data.url) || '/';
+  var targetUrl = (typeof rawUrl === 'string' && rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? rawUrl : '/';
+  event.waitUntil((async function() {
+    var windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (var i = 0; i < windowClients.length; i++) {
+      var client = windowClients[i];
+      if (client && 'focus' in client) {
+        await client.focus();
+        if ('navigate' in client) {
+          try { await client.navigate(targetUrl); } catch (e) {}
+        }
+        return;
+      }
+    }
+    if (self.clients.openWindow) {
+      await self.clients.openWindow(targetUrl);
+    }
+  })());
 });

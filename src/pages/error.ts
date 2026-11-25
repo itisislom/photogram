@@ -1,4 +1,4 @@
-import { Translations, ru } from '../languages';
+import { Translations, ru, en, uz, kz } from '../languages';
 import { esc } from './layout';
 
 const OFFLINE_WIFI_ICON = `<svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="#2196F3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -17,51 +17,91 @@ const REFRESH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none
   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
 </svg>`;
 
+const OFFLINE_I18N_MAP = {
+  ru: {
+    title: ru.error.offlineTitle,
+    desc: ru.error.offlineDesc,
+    reload: ru.error.reloadBtn,
+  },
+  en: {
+    title: en.error.offlineTitle,
+    desc: en.error.offlineDesc,
+    reload: en.error.reloadBtn,
+  },
+  uz: {
+    title: uz.error.offlineTitle,
+    desc: uz.error.offlineDesc,
+    reload: uz.error.reloadBtn,
+  },
+  kz: {
+    title: kz.error.offlineTitle,
+    desc: kz.error.offlineDesc,
+    reload: kz.error.reloadBtn,
+  },
+};
+
 export function errorPage(t: Translations = ru, theme?: string): string {
-  const themeAttr = theme === 'dark' || theme === 'light' ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : '';
-  const metaThemeColor = theme === 'dark' ? '#000000' : '#FFFFFF';
+  const safeTheme = theme === 'dark' || theme === 'light' ? theme : undefined;
+  const bgHex = safeTheme === 'dark' ? '#000000' : '#FFFFFF';
+  const themeAttr = safeTheme
+    ? ` data-theme="${safeTheme}" style="color-scheme: ${safeTheme}; background-color: ${bgHex};"`
+    : '';
+  const metaThemeColor = bgHex;
+  const statusBarStyle = safeTheme === 'dark' ? 'black-translucent' : 'default';
 
   return `<!DOCTYPE html>
-<html lang="${t.code}"${themeAttr}>
+<html lang="${t.code}" translate="no" class="notranslate"${themeAttr}>
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Language" content="${t.code}">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="${metaThemeColor}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="${statusBarStyle}">
 <title>${esc(t.error.offlineTitle)} — Photogram</title>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.jpg">
 <link rel="manifest" href="/manifest.webmanifest">
 <script>
 (function() {
-  var t;
-  try {
-    t = localStorage.getItem('theme');
-  } catch(e) {}
-  if (!t) {
-    var m = (document.cookie || '').match(/(?:^|;\\s*)theme=(dark|light)/);
-    if (m && m[1]) {
-      t = m[1];
-    }
-  }
-  if (!t) {
+  function readSavedTheme() {
+    var val = null;
     try {
-      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-      localStorage.setItem('theme', t);
-    } catch(e) {
-      t = 'light';
+      val = localStorage.getItem('theme');
+    } catch(e) {}
+    if (val === 'dark' || val === 'light') return val;
+    var m = (document.cookie || '').match(/(?:^|;\\s*)theme=(dark|light)/);
+    if (m && (m[1] === 'dark' || m[1] === 'light')) {
+      try { localStorage.setItem('theme', m[1]); } catch(e) {}
+      return m[1];
     }
+    var prefersDark = false;
+    try {
+      prefersDark = Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch(e) {}
+    val = prefersDark ? 'dark' : 'light';
+    try { localStorage.setItem('theme', val); } catch(e) {}
     var s = window.location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = 'theme=' + t + '; Path=/; Max-Age=31536000; SameSite=Lax' + s;
+    document.cookie = 'theme=' + val + '; Path=/; Max-Age=31536000; SameSite=Lax' + s;
+    return val;
   }
-  document.documentElement.setAttribute('data-theme', t);
-  document.documentElement.style.colorScheme = t;
-  var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) {
-    meta.setAttribute('content', t === 'dark' ? '#000000' : '#FFFFFF');
+
+  function applyOfflineTheme() {
+    var t = readSavedTheme();
+    var bg = t === 'dark' ? '#000000' : '#FFFFFF';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.colorScheme = t;
+    document.documentElement.style.backgroundColor = bg;
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', bg);
+    var appleMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (appleMeta) appleMeta.setAttribute('content', t === 'dark' ? 'black-translucent' : 'default');
   }
+
+  window.__applyOfflineTheme = applyOfflineTheme;
+  applyOfflineTheme();
 })();
 </script>
 <style>
@@ -94,9 +134,13 @@ html[data-theme="dark"] {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--bg-primary);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100dvh;
   display: flex;
@@ -217,7 +261,7 @@ body {
     </div>
     <h1 class="offline-title" id="offlineTitle">${esc(t.error.offlineTitle)}</h1>
     <p class="offline-desc" id="offlineDesc">${esc(t.error.offlineDesc)}</p>
-    <button type="button" class="offline-reload-btn" id="offlineReloadBtn" onclick="window.location.href='/feed'">
+    <button type="button" class="offline-reload-btn" id="offlineReloadBtn">
       ${REFRESH_ICON}
       <span id="offlineReloadText">${esc(t.error.reloadBtn)}</span>
     </button>
@@ -231,48 +275,38 @@ body {
 
   <script>
   (function() {
-    var I18N = {
-      ru: {
-        title: 'Нет подключения к интернету',
-        desc: 'Проверьте сетевое соединение и повторите попытку',
-        reload: 'Перезагрузить'
-      },
-      en: {
-        title: 'No internet connection',
-        desc: 'Please check your connection and try again',
-        reload: 'Reload'
-      },
-      uz: {
-        title: 'Internet aloqasi yo‘q',
-        desc: 'Iltimos, internet ulanishini tekshiring va qaytadan urinib ko‘ring',
-        reload: 'Qayta yuklash'
-      },
-      kz: {
-        title: 'Интернет байланысы жоқ',
-        desc: 'Интернет байланысын тексеріп, қайталап көріңіз',
-        reload: 'Қайта жүктеу'
-      }
-    };
+    var I18N = ${JSON.stringify(OFFLINE_I18N_MAP)};
+
+    function normalizeCode(raw) {
+      if (!raw) return null;
+      var clean = String(raw).trim().toLowerCase().split(/[-_]/)[0];
+      if (clean === 'kk') clean = 'kz';
+      return I18N[clean] ? clean : null;
+    }
 
     function getSavedLang() {
       try {
-        var stored = localStorage.getItem('photogram_lang');
-        if (stored && I18N[stored]) return stored;
+        var stored = normalizeCode(localStorage.getItem('photogram_lang'));
+        if (stored) return stored;
       } catch (e) {}
 
-      var m = document.cookie.match(/(?:^|;\\s*)lang=([a-zA-Z-]+)/);
+      var m = (document.cookie || '').match(/(?:^|;\\s*)lang=([a-zA-Z_-]+)/);
       if (m && m[1]) {
-        var c = m[1].toLowerCase().slice(0, 2);
-        if (I18N[c]) return c;
+        var fromCookie = normalizeCode(m[1]);
+        if (fromCookie) return fromCookie;
       }
 
-      var nav = (navigator.language || '').toLowerCase().slice(0, 2);
-      if (I18N[nav]) return nav;
+      var list = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || 'ru'];
+      for (var i = 0; i < list.length; i++) {
+        var matched = normalizeCode(list[i]);
+        if (matched) return matched;
+      }
       return 'ru';
     }
 
     function applyLang(code) {
-      var data = I18N[code] || I18N.ru;
+      var safeCode = normalizeCode(code) || 'ru';
+      var data = I18N[safeCode] || I18N.ru;
       var titleEl = document.getElementById('offlineTitle');
       var descEl = document.getElementById('offlineDesc');
       var reloadEl = document.getElementById('offlineReloadText');
@@ -280,10 +314,11 @@ body {
       if (titleEl) titleEl.textContent = data.title;
       if (descEl) descEl.textContent = data.desc;
       if (reloadEl) reloadEl.textContent = data.reload;
-      document.documentElement.lang = code;
+      document.title = data.title + ' — Photogram';
+      document.documentElement.lang = safeCode;
 
       document.querySelectorAll('.offline-lang-btn').forEach(function(btn) {
-        if (btn.dataset.lang === code) {
+        if (btn.dataset.lang === safeCode) {
           btn.classList.add('active');
         } else {
           btn.classList.remove('active');
@@ -291,24 +326,40 @@ body {
       });
     }
 
-    var currentLang = getSavedLang();
-    applyLang(currentLang);
+    function retryNavigation() {
+      if (window.location.pathname === '/offline') {
+        window.location.href = '/feed';
+      } else {
+        window.location.reload();
+      }
+    }
+
+    applyLang(getSavedLang());
+
+    var reloadBtn = document.getElementById('offlineReloadBtn');
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', retryNavigation);
+    }
 
     document.querySelectorAll('.offline-lang-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        var lang = this.dataset.lang;
-        if (!lang || !I18N[lang]) return;
+        var lang = normalizeCode(this.dataset.lang);
+        if (!lang) return;
         try {
           localStorage.setItem('photogram_lang', lang);
         } catch (e) {}
-        document.cookie = 'lang=' + lang + ';path=/;max-age=31536000';
+        var s = window.location.protocol === 'https:' ? '; Secure' : '';
+        document.cookie = 'lang=' + lang + '; Path=/; Max-Age=31536000; SameSite=Lax' + s;
         applyLang(lang);
       });
     });
 
-    window.addEventListener('online', function() {
-      window.location.href = '/feed';
+    window.addEventListener('pageshow', function() {
+      if (window.__applyOfflineTheme) window.__applyOfflineTheme();
+      applyLang(getSavedLang());
     });
+
+    window.addEventListener('online', retryNavigation);
   })();
   </script>
 </body>

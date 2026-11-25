@@ -176,6 +176,12 @@ export function renderLangScript(): string {
       });
     } catch(e) {}
 
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'REFRESH_OFFLINE' });
+      }
+    } catch(e) {}
+
     var path = window.location.pathname;
     if ((path === '/login' || path === '/register') && typeof window.softReloadAuthLanguage === 'function') {
       var swapped = await window.softReloadAuthLanguage(code);

@@ -45,6 +45,7 @@ export interface Translations {
     feed: string;
     explore: string;
     create: string;
+    messages: string;
     profile: string;
     menu: string;
     settings: string;
@@ -208,5 +209,67 @@ export interface Translations {
     title: string;
     date: string;
     cards: LegalCard[];
+  };
+
+  messages: {
+    title: string;
+    searchPlaceholder: string;
+    emptyListTitle: string;
+    emptyListDesc: string;
+    selectChatTitle: string;
+    selectChatDesc: string;
+    inputPlaceholder: string;
+    send: string;
+    photoLabel: string;
+    youPrefix: string;
+    seen: string;
+    unsend: string;
+    unsendConfirmTitle: string;
+    unsendConfirmDesc: string;
+    messageBtn: string;
+    loadOlder: string;
+    noMessagesYet: string;
+    errEmptyMessage: string;
+    errTooLong: string;
+    errRateLimit: string;
+    errInvalidImage: string;
+    errImageTooLarge: string;
+    errSelfMessage: string;
+    encryptedPushBody: string;
+    encryptedPreview: string;
+    e2eeRequired: string;
+    e2eeBadge: string;
+    e2eeSafetyTitle: string;
+    e2eeSafetyDesc: string;
+    e2eeVerified: string;
+    e2eeVerifyBtn: string;
+    e2eeUnverifyBtn: string;
+    e2eeKeyChanged: string;
+    e2eeAcceptNewKey: string;
+    e2eePartnerNotReady: string;
+    e2eeDecryptFailed: string;
+    e2eeInitializing: string;
+  };
+
+  notifications: {
+    title: string;
+    emptyTitle: string;
+    emptyDesc: string;
+    likedYourPost: string;
+    commentedYourPost: string;
+    startedFollowingYou: string;
+    settingTitle: string;
+    settingDesc: string;
+    enabledToast: string;
+    disabledToast: string;
+    disabledBanner: string;
+    blockedTitle: string;
+    blockedDesc: string;
+    blockedStepsChrome: string;
+    blockedStepsDesktopPwa: string;
+    blockedStepsAndroid: string;
+    blockedStepsFirefox: string;
+    blockedStepsSafari: string;
+    blockedStepsIos: string;
   };
 }

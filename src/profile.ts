@@ -3,6 +3,7 @@ import { getUserFromRequest } from './auth';
 import { adjustAffinity, getPersonalizedExplore } from './recommendations';
 import { isBlockedUsername } from './blockedUsernames';
 import { detectLanguage, getTranslations } from './languages';
+import { createNotification, removeNotification } from './notifications';
 
 const MAX_DISPLAY_NAME_LEN = 50;
 const MAX_BIO_LEN = 150;
@@ -478,6 +479,7 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
         .run();
       isFollowing = false;
       await adjustAffinity(env, currentUser.id, targetId, -8.0);
+      await removeNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
     } else {
       await env.DB.prepare(
         'INSERT INTO follows (follower_id, following_id) VALUES (?, ?)'
@@ -486,6 +488,7 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
         .run();
       isFollowing = true;
       await adjustAffinity(env, currentUser.id, targetId, 10.0);
+      await createNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
     }
 
     const countRow = await env.DB.prepare(

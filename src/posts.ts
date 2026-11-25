@@ -1,6 +1,7 @@
 import { Env, Post, FeedPost, Comment } from './types';
 import { getUserFromRequest } from './auth';
 import { savePostTags, adjustAffinity, adjustTagAffinity } from './recommendations';
+import { createNotification, removeNotification } from './notifications';
 
 const MAX_POST_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_CAPTION_LEN = 1000;
@@ -254,6 +255,7 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
     liked = false;
     await adjustAffinity(env, currentUser.id, post.user_id, -3.5);
     await adjustTagAffinity(env, currentUser.id, postId, -2.0);
+    await removeNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
   } else {
     await env.DB.prepare('INSERT OR IGNORE INTO likes (post_id, user_id) VALUES (?, ?)')
       .bind(postId, currentUser.id)
@@ -261,6 +263,7 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
     liked = true;
     await adjustAffinity(env, currentUser.id, post.user_id, 3.5);
     await adjustTagAffinity(env, currentUser.id, postId, 2.0);
+    await createNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
   }
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM likes WHERE post_id = ?')
@@ -439,6 +442,14 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
 
   await adjustAffinity(env, currentUser.id, post.user_id, 5.0);
   await adjustTagAffinity(env, currentUser.id, postId, 2.5);
+  await createNotification(env, {
+    userId: post.user_id,
+    actorId: currentUser.id,
+    type: 'comment',
+    postId,
+    commentId: commentId || null,
+    commentPreview: content,
+  });
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(postId)
@@ -508,6 +519,7 @@ export async function handleDeleteComment(request: Request, env: Env): Promise<R
   }
 
   await env.DB.prepare('DELETE FROM comments WHERE id = ?').bind(commentId).run();
+  await removeNotification(env, { userId: comment.post_author_id, actorId: comment.user_id, type: 'comment', commentId });
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(comment.post_id)

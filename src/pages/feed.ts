@@ -193,6 +193,10 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
 <div class="app-layout">
   <header class="top-bar">
     <div class="top-bar-title">Photogram</div>
+    <a href="/notifications" class="top-bar-notif-btn" id="topNotificationsBtn" aria-label="${escapeHtml(t.notifications.title)}" title="${escapeHtml(t.notifications.title)}">
+      ${HEART_ICON}
+      <span class="top-notif-badge" id="topNotificationsBadge" style="display:none;"></span>
+    </a>
   </header>
 
   <main class="feed-main">

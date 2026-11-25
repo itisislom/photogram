@@ -24,6 +24,7 @@ export const MORE_DOTS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" f
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+const APP_STYLE_VERSION = '20261126-v9';
 
 export function renderVerifiedBadge(size: number = 13.5): string {
   return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>`;
@@ -91,7 +92,7 @@ export function layout(title: string, body: string, script: string = '', t: Tran
   }
 })();
 </script>
-<style>${getStyles()}</style>
+<style id="appMainStyles" data-app-v="${APP_STYLE_VERSION}">${getStyles()}</style>
 </head>
 <body>
 <div id="appPageRoot">
@@ -246,6 +247,226 @@ window.showAppConfirm = function(opts) {
       toast.classList.remove('visible');
     }, 2600);
   };
+
+  window.updateUnreadMessagesBadge = function(count) {
+    var n = Number(count) || 0;
+    document.querySelectorAll('#navMessagesBadge').forEach(function(el) {
+      if (n > 0) {
+        el.textContent = n > 99 ? '99+' : String(n);
+        el.style.display = 'inline-flex';
+      } else {
+        el.textContent = '';
+        el.style.display = 'none';
+      }
+    });
+  };
+
+  window.refreshUnreadMessagesBadge = function() {
+    if (!document.getElementById('navMessagesBadge')) return;
+    if (document.visibilityState === 'hidden') return;
+    fetch('/api/messages/unread', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (d && typeof d.unread_total === 'number') {
+          window.updateUnreadMessagesBadge(d.unread_total);
+        }
+      })
+      .catch(function() {});
+  };
+
+  window.updateNotificationsBadge = function(count) {
+    var n = Number(count) || 0;
+    document.querySelectorAll('#topNotificationsBadge').forEach(function(el) {
+      if (n > 0) {
+        el.textContent = n > 99 ? '99+' : String(n);
+        el.style.display = 'inline-flex';
+      } else {
+        el.textContent = '';
+        el.style.display = 'none';
+      }
+    });
+  };
+
+  var notifToastLabels = ${JSON.stringify({
+    like: t.notifications.likedYourPost,
+    comment: t.notifications.commentedYourPost,
+    follow: t.notifications.startedFollowingYou
+  })};
+
+  window.refreshNotificationsBadge = function() {
+    if (!document.getElementById('navMessagesBadge') && !document.getElementById('topNotificationsBadge')) return;
+    if (document.visibilityState === 'hidden') return;
+    fetch('/api/notifications/unread', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d) return;
+        if (!d.enabled) {
+          window.updateNotificationsBadge(0);
+          return;
+        }
+        window.updateNotificationsBadge(d.unread_count || 0);
+        if (d.latest && d.latest.id && window.location.pathname !== '/notifications') {
+          var prevId = 0;
+          try { prevId = parseInt(sessionStorage.getItem('pg_last_notif_id') || '0', 10) || 0; } catch (e) {}
+          var nextId = Number(d.latest.id);
+          if (prevId > 0 && nextId > prevId && window.showAppToast) {
+            var label = notifToastLabels[d.latest.type] || '';
+            var msg = '@' + d.latest.actor_username + ' ' + label;
+            if (d.latest.type === 'comment' && d.latest.comment_preview) {
+              msg += ' «' + d.latest.comment_preview.slice(0, 48) + '»';
+            }
+            window.showAppToast(msg);
+          }
+          if (nextId > prevId) {
+            try { sessionStorage.setItem('pg_last_notif_id', String(nextId)); } catch (e) {}
+          }
+        }
+      })
+      .catch(function() {});
+  };
+
+  function urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; i++) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  window.ensurePushSubscription = async function(askPermission) {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        return false;
+      }
+      var perm = Notification.permission;
+      if (perm === 'denied') return false;
+      if (perm === 'default') {
+        if (!askPermission) return false;
+        perm = await Notification.requestPermission();
+        if (perm !== 'granted') return false;
+      }
+      var keyRes = await fetch('/api/push/vapid-key', { credentials: 'same-origin', cache: 'no-store' });
+      if (!keyRes.ok) return false;
+      var keyData = await keyRes.json();
+      if (!keyData || !keyData.public_key) return false;
+
+      var reg = await navigator.serviceWorker.ready;
+      if (!reg || !reg.pushManager) return false;
+      var sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyData.public_key)
+        });
+      }
+      var subJson = sub && typeof sub.toJSON === 'function' ? sub.toJSON() : null;
+      if (!subJson || !subJson.endpoint || !subJson.keys) return false;
+      var saveRes = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(subJson)
+      });
+      return saveRes.ok;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  window.unsubscribePushNotifications = async function() {
+    try {
+      var endpoint = '';
+      if ('serviceWorker' in navigator) {
+        var reg = await navigator.serviceWorker.ready;
+        if (reg && reg.pushManager) {
+          var sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            endpoint = sub.endpoint || '';
+            await sub.unsubscribe();
+          }
+        }
+      }
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: endpoint })
+      });
+    } catch (e) {}
+  };
+
+  window.loadPhotogramE2ee = function() {
+    if (window.PhotogramE2EE) return Promise.resolve(window.PhotogramE2EE);
+    if (window.__pgE2eeLoadPromise) return window.__pgE2eeLoadPromise;
+    window.__pgE2eeLoadPromise = new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = '/e2ee.js?v=${APP_STYLE_VERSION}';
+      s.async = true;
+      s.onload = function() {
+        if (window.PhotogramE2EE) resolve(window.PhotogramE2EE);
+        else reject(new Error('E2EE module unavailable'));
+      };
+      s.onerror = function() {
+        window.__pgE2eeLoadPromise = null;
+        reject(new Error('Failed to load E2EE module'));
+      };
+      document.head.appendChild(s);
+    });
+    return window.__pgE2eeLoadPromise;
+  };
+
+  if (!window.__pgE2eeBgInit) {
+    window.__pgE2eeBgInit = true;
+    setTimeout(function() {
+      if (!document.getElementById('navMessagesBadge')) return;
+      fetch('/api/e2ee/keys/count', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) {
+          if (!d || !d.user_id) return;
+          return window.loadPhotogramE2ee().then(function(mod) {
+            return mod.getClient(Number(d.user_id)).ensureInitialized();
+          });
+        })
+        .catch(function() {});
+    }, 1200);
+  }
+
+  if (!window.__pgPushInitBound) {
+    window.__pgPushInitBound = true;
+    setTimeout(function() {
+      if (!document.getElementById('navMessagesBadge')) return;
+      if ('Notification' in window && Notification.permission === 'granted') {
+        window.ensurePushSubscription(false);
+      }
+    }, 600);
+    document.addEventListener('click', function onFirstPushGesture() {
+      if (!document.getElementById('navMessagesBadge')) return;
+      document.removeEventListener('click', onFirstPushGesture);
+      try {
+        if (localStorage.getItem('pg_push_prompted') === '1') return;
+        localStorage.setItem('pg_push_prompted', '1');
+      } catch (e) {}
+      if ('Notification' in window && Notification.permission === 'default') {
+        window.ensurePushSubscription(true);
+      }
+    });
+  }
+
+  if (!window.__pgUnreadInterval) {
+    window.__pgUnreadInterval = setInterval(function() {
+      if (document.visibilityState === 'visible' && document.getElementById('navMessagesBadge')) {
+        window.refreshUnreadMessagesBadge();
+        window.refreshNotificationsBadge();
+      }
+    }, 12000);
+  }
+  setTimeout(function() {
+    if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+    if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+  }, 150);
 
   var activePostMenuTarget = null;
   var postMenuModal = document.getElementById('appPostMenuModal');
@@ -423,6 +644,11 @@ ${renderLangScript()}
     var s = window.location.protocol === 'https:' ? '; Secure' : '';
     document.cookie = 'theme=' + t + '; Path=/; Max-Age=31536000; SameSite=Lax' + s;
     syncThemeButtons(t);
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'REFRESH_OFFLINE' });
+      }
+    } catch(e) {}
   }
 
   window.syncThemeButtons = syncThemeButtons;
@@ -861,7 +1087,8 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
-${script ? `<script type="text/plain" data-initial-page-script="true" data-page-script="true">${script}</script>` : ''}
+<script type="text/plain" data-initial-page-script="true" data-page-script="true">(function(){var s=document.getElementById('appMainStyles');if(!s||s.getAttribute('data-app-v')!=='${APP_STYLE_VERSION}'){var k='pg_css_reload_${APP_STYLE_VERSION}';try{if(sessionStorage.getItem(k)!=='1'){sessionStorage.setItem(k,'1');window.location.reload();return;}}catch(e){window.location.reload();return;}}})();
+${script || ''}</script>
 
 <script>
 (function() {
@@ -934,6 +1161,16 @@ ${script ? `<script type="text/plain" data-initial-page-script="true" data-page-
 
     if (window.endModalDwell) window.endModalDwell();
     if (window.flushActivePostDwell) window.flushActivePostDwell();
+    if (window.__dmPollTimer) {
+      clearInterval(window.__dmPollTimer);
+      window.__dmPollTimer = null;
+    }
+    if (window.__dmViewportCleanup) {
+      try { window.__dmViewportCleanup(); } catch (e) {}
+      window.__dmViewportCleanup = null;
+    }
+    document.documentElement.classList.remove('dm-lock-scroll');
+    document.body.classList.remove('dm-lock-scroll');
 
     var root = document.getElementById('appPageRoot');
     if (root) root.style.opacity = '0.35';
@@ -955,6 +1192,12 @@ ${script ? `<script type="text/plain" data-initial-page-script="true" data-page-
 
       var htmlText = await res.text();
       var doc = new DOMParser().parseFromString(htmlText, 'text/html');
+      var curStyle = document.getElementById('appMainStyles');
+      var nextStyle = doc.getElementById('appMainStyles');
+      if (!curStyle || !nextStyle || curStyle.getAttribute('data-app-v') !== nextStyle.getAttribute('data-app-v')) {
+        window.location.href = finalUrl.href;
+        return;
+      }
       var nextRoot = doc.getElementById('appPageRoot');
       if (!nextRoot || !root) {
         window.location.href = finalUrl.href;
@@ -981,6 +1224,8 @@ ${script ? `<script type="text/plain" data-initial-page-script="true" data-page-
 
       if (window.syncThemeButtons) window.syncThemeButtons();
       if (window.initTelemetryObserver) window.initTelemetryObserver();
+      if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+      if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
 
       requestAnimationFrame(function() {
         if (root) root.style.opacity = '1';
@@ -1026,6 +1271,12 @@ ${script ? `<script type="text/plain" data-initial-page-script="true" data-page-
 
       var htmlText = await res.text();
       var doc = new DOMParser().parseFromString(htmlText, 'text/html');
+      var curStyle = document.getElementById('appMainStyles');
+      var nextStyle = doc.getElementById('appMainStyles');
+      if (!curStyle || !nextStyle || curStyle.getAttribute('data-app-v') !== nextStyle.getAttribute('data-app-v')) {
+        savedFields = null;
+        return false;
+      }
       var nextRoot = doc.getElementById('appPageRoot');
       if (!nextRoot) {
         savedFields = null;

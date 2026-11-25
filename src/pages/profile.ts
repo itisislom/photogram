@@ -59,7 +59,8 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     ? `<a href="/u/${encodeURIComponent(user.username)}/editprofile" class="btn btn-secondary btn-sm" id="editProfileBtn">${escapeHtml(t.profile.editProfile)}</a>`
     : `<button class="btn ${is_following ? 'btn-secondary' : 'btn-primary'} btn-sm" id="followBtn" data-target-id="${user.id}" data-username="${usernameSafe}" data-is-following="${is_following ? '1' : '0'}" data-follows-you="${follows_you ? '1' : '0'}">
          ${escapeHtml(followText)}
-       </button>`;
+       </button>
+       <a href="/messages/${encodeURIComponent(user.username)}" class="btn btn-secondary btn-sm profile-message-btn" id="messageUserBtn">${escapeHtml(t.messages.messageBtn)}</a>`;
 
   const statLabels = {
     ru: { posts: 'Публикации', followers: 'Подписчики', following: 'Подписки' },

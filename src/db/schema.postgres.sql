@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     bio           TEXT    NOT NULL DEFAULT '',
     avatar_key    TEXT    NOT NULL DEFAULT '',
     is_verified   INTEGER NOT NULL DEFAULT 0,
+    notifications_enabled INTEGER NOT NULL DEFAULT 1,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -144,6 +145,92 @@ CREATE TABLE IF NOT EXISTS user_tag_affinity (
 
 CREATE INDEX IF NOT EXISTS idx_user_tag_affinity         ON user_tag_affinity(user_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_user_tag_affinity_updated ON user_tag_affinity(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id              SERIAL PRIMARY KEY,
+    user1_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user2_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_message_id BIGINT,
+    last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (user1_id < user2_id),
+    UNIQUE (user1_id, user2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user1_recent ON conversations(user1_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_user2_recent ON conversations(user2_id, last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id                  BIGSERIAL PRIMARY KEY,
+    conversation_id     INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body                TEXT    NOT NULL DEFAULT '',
+    image_key           TEXT    NOT NULL DEFAULT '',
+    is_encrypted        INTEGER NOT NULL DEFAULT 0,
+    sender_device_id    INTEGER NOT NULL DEFAULT 0,
+    ciphertext_envelope TEXT    NOT NULL DEFAULT '',
+    read_at             TIMESTAMPTZ,
+    deleted_at          TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conv_id_desc ON messages(conversation_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(conversation_id, sender_id) WHERE read_at IS NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type            TEXT    NOT NULL CHECK (type IN ('like', 'comment', 'follow')),
+    post_id         INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    comment_id      INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+    comment_preview TEXT    NOT NULL DEFAULT '',
+    is_read         INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread  ON notifications(user_id, is_read) WHERE is_read = 0;
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint   TEXT    NOT NULL UNIQUE,
+    p256dh     TEXT    NOT NULL,
+    auth       TEXT    NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+CREATE TABLE IF NOT EXISTS e2ee_devices (
+    id                SERIAL PRIMARY KEY,
+    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id         INTEGER NOT NULL,
+    registration_id   INTEGER NOT NULL,
+    identity_key_pub  TEXT    NOT NULL,
+    signed_prekey_id  INTEGER NOT NULL,
+    signed_prekey_pub TEXT    NOT NULL,
+    signed_prekey_sig TEXT    NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_devices_user ON e2ee_devices(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS e2ee_prekeys (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id   INTEGER NOT NULL,
+    key_id      INTEGER NOT NULL,
+    public_key  TEXT    NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, device_id, key_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_prekeys_lookup ON e2ee_prekeys(user_id, device_id, id ASC);
 
 CREATE OR REPLACE FUNCTION datetime(t text) RETURNS timestamptz AS $$
   SELECT CASE WHEN t = 'now' THEN clock_timestamp() ELSE t::timestamptz END

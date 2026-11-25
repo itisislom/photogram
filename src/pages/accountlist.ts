@@ -69,12 +69,14 @@ export function accountListPage(
       <span id="addAccountBtnText">${escapeHtml(t.auth.addAccount)}</span>
     </a>`;
 
-  const hintTemplates = [0, 1, 2, 3, 4, 5].map((n) => t.auth.accountsLimitHint(n, MAX_SAVED_ACCOUNTS));
+  const hintTemplates = Array.from({ length: MAX_SAVED_ACCOUNTS + 1 }, (_, n) =>
+    t.auth.accountsLimitHint(n, MAX_SAVED_ACCOUNTS),
+  );
 
   const body = `
 <div class="app-layout">
   <header class="settings-top-bar">
-    <a href="/settings" class="settings-back-btn" aria-label="${escapeHtml(t.common.close)}">
+    <a href="/settings" class="settings-back-btn" aria-label="${escapeHtml(t.post.back)}">
       ${BACK_ARROW_ICON}
     </a>
     <h1 class="settings-title">${escapeHtml(t.auth.accountsTitle)}</h1>
@@ -193,16 +195,17 @@ export function accountListPage(
         });
       }
 
+      var confirmMsg = i18n.removeConfirmTpl.replace('{username}', uname);
       if (window.showAppConfirm) {
         window.showAppConfirm({
           type: 'unfollow',
           title: i18n.removeTitle,
-          message: i18n.removeConfirmTpl.replace('{username}', uname),
+          message: confirmMsg,
           okText: i18n.removeBtn,
           danger: true,
           onOk: doRemove
         });
-      } else {
+      } else if (window.confirm(confirmMsg)) {
         doRemove();
       }
     });

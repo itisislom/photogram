@@ -9,6 +9,7 @@ import { getLegalCardsHtml } from './useraccept';
 const BACK_ARROW_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>`;
 const CHEVRON_RIGHT_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
 const LOCK_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const BELL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
 const TERMS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
 const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
 const PALETTE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`;
@@ -94,6 +95,23 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
           </div>
         </div>
         ${renderLangSwitcherHtml(t.code)}
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.notifications.settingTitle)}</div>
+      <div class="settings-row settings-toggle-row">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${BELL_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.notifications.settingTitle)}</span>
+            <span class="settings-row-sub">${escapeHtml(t.notifications.settingDesc)}</span>
+          </div>
+        </div>
+        <label class="settings-switch" for="notificationsToggleInput">
+          <input type="checkbox" id="notificationsToggleInput" ${currentUser.notifications_enabled === 0 || currentUser.notifications_enabled === false ? '' : 'checked'}>
+          <span class="settings-switch-slider"></span>
+        </label>
       </div>
     </section>
 
@@ -202,6 +220,20 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
       </div>
     </div>
   </div>
+
+  <div class="modal-backdrop" id="notifBlockedModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.notifications.blockedTitle)}</h3>
+        <button class="modal-close" id="closeNotifBlockedBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <p style="font-size: 14px; color: var(--text-secondary);">${escapeHtml(t.notifications.blockedDesc)}</p>
+      <p id="notifBlockedSteps" style="font-size: 14px; color: var(--text-primary); white-space: pre-line; line-height: 1.6; margin-top: 8px;"></p>
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        <button type="button" class="btn btn-primary btn-sm" id="okNotifBlockedBtn" style="flex:1;">${escapeHtml(t.common.understood)}</button>
+      </div>
+    </div>
+  </div>
 </div>`;
 
   const script = `
@@ -248,6 +280,188 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
       if (e.key === 'Escape' && termsModal.classList.contains('visible')) {
         termsModal.classList.remove('visible');
         syncBodyOverflow();
+      }
+    });
+  }
+
+  var notifToggle = document.getElementById('notificationsToggleInput');
+  var notifBlockedModal = document.getElementById('notifBlockedModal');
+  var notifBlockedSteps = document.getElementById('notifBlockedSteps');
+  var closeNotifBlockedBtn = document.getElementById('closeNotifBlockedBtn');
+  var okNotifBlockedBtn = document.getElementById('okNotifBlockedBtn');
+  var pendingNotifEnable = false;
+  var notifI18n = ${JSON.stringify({
+    enabled: t.notifications.enabledToast,
+    disabled: t.notifications.disabledToast,
+    networkError: t.common.networkError,
+    steps: {
+      chrome: t.notifications.blockedStepsChrome,
+      desktopPwa: t.notifications.blockedStepsDesktopPwa,
+      android: t.notifications.blockedStepsAndroid,
+      firefox: t.notifications.blockedStepsFirefox,
+      safari: t.notifications.blockedStepsSafari,
+      ios: t.notifications.blockedStepsIos
+    }
+  })};
+
+  function getNotifPermission() {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+    return Notification.permission;
+  }
+
+  function detectNotifPlatform() {
+    var ua = navigator.userAgent || '';
+    var isIos = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (isIos) return 'ios';
+    if (/Android/.test(ua)) return 'android';
+    var isStandalone = false;
+    try {
+      isStandalone = Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    } catch (e) {}
+    if (/Firefox\\//.test(ua)) return 'firefox';
+    if (/Safari\\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|YaBrowser/.test(ua)) return 'safari';
+    if (isStandalone) return 'desktopPwa';
+    return 'chrome';
+  }
+
+  function openNotifBlockedModal() {
+    if (!notifBlockedModal) return;
+    if (notifBlockedSteps) notifBlockedSteps.textContent = notifI18n.steps[detectNotifPlatform()] || notifI18n.steps.chrome;
+    notifBlockedModal.classList.add('visible');
+    syncBodyOverflow();
+  }
+
+  function closeNotifBlockedModal() {
+    if (!notifBlockedModal) return;
+    notifBlockedModal.classList.remove('visible');
+    syncBodyOverflow();
+  }
+
+  if (closeNotifBlockedBtn) closeNotifBlockedBtn.addEventListener('click', closeNotifBlockedModal);
+  if (okNotifBlockedBtn) okNotifBlockedBtn.addEventListener('click', closeNotifBlockedModal);
+  if (notifBlockedModal) {
+    notifBlockedModal.addEventListener('click', function(e) {
+      if (e.target === notifBlockedModal) closeNotifBlockedModal();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && notifBlockedModal.classList.contains('visible')) {
+        closeNotifBlockedModal();
+      }
+    });
+  }
+
+  function askNotifPermission() {
+    return new Promise(function(resolve) {
+      try {
+        var p = Notification.requestPermission(function(res) { resolve(res); });
+        if (p && typeof p.then === 'function') {
+          p.then(resolve, function() { resolve(Notification.permission); });
+        }
+      } catch (e) {
+        resolve(Notification.permission);
+      }
+    });
+  }
+
+  async function saveNotifSetting(val) {
+    try {
+      var r = await fetch('/api/settings/notifications', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: val })
+      });
+      var d = null;
+      try { d = await r.json(); } catch (e) {}
+      if (r.ok && d && d.success) return { ok: true };
+      return { ok: false, error: (d && d.error) || notifI18n.networkError };
+    } catch (e) {
+      return { ok: false, error: notifI18n.networkError };
+    }
+  }
+
+  function afterNotifSaved(val) {
+    if (val) {
+      if (window.ensurePushSubscription) window.ensurePushSubscription(false);
+      if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+    } else {
+      if (window.unsubscribePushNotifications) window.unsubscribePushNotifications();
+      if (window.updateNotificationsBadge) window.updateNotificationsBadge(0);
+    }
+    if (window.showAppToast) window.showAppToast(val ? notifI18n.enabled : notifI18n.disabled);
+  }
+
+  async function recheckNotifPermission() {
+    if (!pendingNotifEnable || !notifToggle || !document.body.contains(notifToggle)) return;
+    var perm = getNotifPermission();
+    if (perm === 'denied') return;
+    pendingNotifEnable = false;
+    closeNotifBlockedModal();
+    if (perm !== 'granted') return;
+    notifToggle.checked = true;
+    notifToggle.disabled = true;
+    var result = await saveNotifSetting(true);
+    notifToggle.disabled = false;
+    if (result.ok) {
+      afterNotifSaved(true);
+    } else {
+      notifToggle.checked = false;
+      if (window.showAppToast) window.showAppToast(result.error);
+    }
+  }
+
+  if (notifToggle) {
+    if (notifToggle.checked && getNotifPermission() === 'denied') {
+      notifToggle.checked = false;
+    }
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') recheckNotifPermission();
+    });
+    window.addEventListener('focus', recheckNotifPermission);
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: 'notifications' }).then(function(status) {
+          if (status && status.addEventListener) {
+            status.addEventListener('change', recheckNotifPermission);
+          }
+        }).catch(function() {});
+      }
+    } catch (e) {}
+
+    notifToggle.addEventListener('change', async function() {
+      var self = this;
+      var nextVal = Boolean(self.checked);
+
+      if (nextVal) {
+        var perm = getNotifPermission();
+        if (perm === 'default') {
+          self.disabled = true;
+          perm = await askNotifPermission();
+          self.disabled = false;
+        }
+        if (perm === 'denied') {
+          self.checked = false;
+          pendingNotifEnable = true;
+          openNotifBlockedModal();
+          return;
+        }
+        if (perm !== 'granted' && perm !== 'unsupported') {
+          self.checked = false;
+          return;
+        }
+      } else {
+        pendingNotifEnable = false;
+      }
+
+      self.disabled = true;
+      var result = await saveNotifSetting(nextVal);
+      self.disabled = false;
+      if (result.ok) {
+        afterNotifSaved(nextVal);
+      } else {
+        self.checked = !nextVal;
+        if (window.showAppToast) window.showAppToast(result.error);
       }
     });
   }

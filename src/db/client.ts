@@ -10,7 +10,7 @@ export function toPostgresSql(rawSql: string): string {
     }
   }
 
-  if (/INSERT\s+INTO\s+(users|posts|comments|username_changes)\b/i.test(s) && !/RETURNING/i.test(s)) {
+  if (/INSERT\s+INTO\s+(users|posts|comments|username_changes|conversations|messages|notifications)\b/i.test(s) && !/RETURNING/i.test(s)) {
     s += ' RETURNING id';
   }
 

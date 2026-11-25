@@ -7,6 +7,38 @@ import { registerPage } from './pages/register';
 import { profilePage, userNotFoundPage } from './pages/profile';
 import { settingsPage } from './pages/settings';
 import { accountListPage } from './pages/accountlist';
+import { messagesPage } from './pages/messages';
+import { notificationsPage } from './pages/notifications';
+import {
+  getUserNotifications,
+  markAllNotificationsRead,
+  handleUnreadNotifications,
+  handleToggleNotificationsSetting,
+} from './notifications';
+import {
+  handleGetVapidKey,
+  handlePushSubscribe,
+  handlePushUnsubscribe,
+} from './push';
+import {
+  handleRegisterE2eeKeys,
+  handleUploadPreKeys,
+  handlePreKeyCount,
+  handleGetKeyBundle,
+  handleGetIdentities,
+} from './e2ee';
+import {
+  getChatPageData,
+  canAccessDmMedia,
+  handleGetConversations,
+  handleStartConversation,
+  handleGetMessages,
+  handlePollMessages,
+  handleSendMessage,
+  handleMarkRead,
+  handleDeleteMessage,
+  handleUnreadCount,
+} from './messages';
 import { sublistPage } from './pages/sublist';
 import { editProfilePage } from './pages/editprofile';
 import { publishPostPage } from './pages/publishpost';
@@ -113,6 +145,16 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       });
     }
 
+    if (pathname === '/e2ee.js' && method === 'GET' && env.ASSETS) {
+      const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes && assetRes.ok) {
+        const headers = new Headers(assetRes.headers);
+        headers.set('Content-Type', 'application/javascript; charset=utf-8');
+        headers.set('Cache-Control', url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
+        return new Response(assetRes.body, { status: assetRes.status, headers });
+      }
+    }
+
     if (pathname === '/offline') {
       return html(errorPage(t, userTheme), setLangCookie, isHttps);
     }
@@ -172,6 +214,31 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       if (!user) return redirect('/login', request, setLangCookie);
       const { accounts, syncCookie } = await getSavedAccountsForPage(env, request, user);
       return html(accountListPage(accounts, t, userTheme), setLangCookie, isHttps, 200, syncCookie);
+    }
+
+    if ((pathname === '/messages' || pathname === '/messages.ts') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      const chatData = await getChatPageData(env, user);
+      return html(messagesPage(chatData, user, t, userTheme), setLangCookie, isHttps);
+    }
+
+    if ((pathname === '/notifications' || pathname === '/notifications.ts') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      const items = await getUserNotifications(env, user.id);
+      await markAllNotificationsRead(env, user.id);
+      return html(notificationsPage(items, user, t, userTheme), setLangCookie, isHttps);
+    }
+
+    if (pathname.startsWith('/messages/') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      const targetUsername = decodeURIComponent(pathname.slice('/messages/'.length)).replace(/\/+$/, '').trim();
+      if (!targetUsername) return redirect('/messages', request, setLangCookie);
+      const chatData = await getChatPageData(env, user, targetUsername);
+      if (chatData.notFound) return redirect('/messages', request, setLangCookie);
+      return html(messagesPage(chatData, user, t, userTheme), setLangCookie, isHttps);
     }
 
     if ((pathname === '/publishpost' || pathname === '/publishpost.ts') && method === 'GET') {
@@ -237,8 +304,15 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
     if (pathname.startsWith('/media/') && (method === 'GET' || method === 'HEAD')) {
       const key = decodeURIComponent(pathname.slice('/media/'.length));
-      if (!key || key.includes('..') || (!key.startsWith('posts/') && !key.startsWith('avatars/'))) {
+      const isDmMedia = key.startsWith('dm/');
+      if (!key || key.includes('..') || (!key.startsWith('posts/') && !key.startsWith('avatars/') && !isDmMedia)) {
         return new Response('Not Found', { status: 404 });
+      }
+      if (isDmMedia) {
+        const user = await getUserFromRequest(env, request);
+        if (!user) return new Response('Unauthorized', { status: 401 });
+        const allowed = await canAccessDmMedia(env, user.id, key);
+        if (!allowed) return new Response('Forbidden', { status: 403 });
       }
 
       const object = await env.STORAGE.get(key);
@@ -247,7 +321,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       const headers = new Headers();
       object.writeHttpMetadata(headers);
       headers.set('etag', object.httpEtag);
-      headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+      headers.set('Cache-Control', isDmMedia ? 'private, max-age=3600' : 'public, max-age=31536000, immutable');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Content-Security-Policy', "default-src 'none'");
       if (!headers.has('Content-Type')) {
@@ -401,6 +475,78 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
     if (pathname === '/api/posts/comment/delete' && method === 'POST') {
       return handleDeleteComment(request, env);
+    }
+
+    if (pathname === '/api/messages/conversations' && method === 'GET') {
+      return handleGetConversations(request, env);
+    }
+
+    if (pathname === '/api/messages/start' && method === 'POST') {
+      return handleStartConversation(request, env);
+    }
+
+    if (pathname === '/api/messages/list' && method === 'GET') {
+      return handleGetMessages(request, env, url);
+    }
+
+    if (pathname === '/api/messages/poll' && method === 'GET') {
+      return handlePollMessages(request, env, url);
+    }
+
+    if (pathname === '/api/messages/send' && method === 'POST') {
+      return handleSendMessage(request, env);
+    }
+
+    if (pathname === '/api/messages/read' && method === 'POST') {
+      return handleMarkRead(request, env);
+    }
+
+    if (pathname === '/api/messages/delete' && method === 'POST') {
+      return handleDeleteMessage(request, env);
+    }
+
+    if (pathname === '/api/messages/unread' && method === 'GET') {
+      return handleUnreadCount(request, env);
+    }
+
+    if (pathname === '/api/notifications/unread' && method === 'GET') {
+      return handleUnreadNotifications(request, env);
+    }
+
+    if (pathname === '/api/settings/notifications' && method === 'POST') {
+      return handleToggleNotificationsSetting(request, env);
+    }
+
+    if (pathname === '/api/push/vapid-key' && method === 'GET') {
+      return handleGetVapidKey(env);
+    }
+
+    if (pathname === '/api/push/subscribe' && method === 'POST') {
+      return handlePushSubscribe(request, env);
+    }
+
+    if (pathname === '/api/push/unsubscribe' && method === 'POST') {
+      return handlePushUnsubscribe(request, env);
+    }
+
+    if (pathname === '/api/e2ee/keys/register' && method === 'POST') {
+      return handleRegisterE2eeKeys(request, env);
+    }
+
+    if (pathname === '/api/e2ee/keys/prekeys' && method === 'POST') {
+      return handleUploadPreKeys(request, env);
+    }
+
+    if (pathname === '/api/e2ee/keys/count' && method === 'GET') {
+      return handlePreKeyCount(request, env, url);
+    }
+
+    if (pathname === '/api/e2ee/keys/bundle' && method === 'GET') {
+      return handleGetKeyBundle(request, env, url);
+    }
+
+    if (pathname === '/api/e2ee/keys/identities' && method === 'GET') {
+      return handleGetIdentities(request, env, url);
     }
 
 
