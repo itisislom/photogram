@@ -161,6 +161,7 @@ export async function getUserConversations(env: Env, userId: number): Promise<Co
        lm.sender_device_id AS last_message_sender_device_id,
        lm.ciphertext_envelope AS last_message_ciphertext_envelope,
        lm.edit_version AS last_message_edit_version,
+       lm.read_at AS last_message_read_at,
        (
          SELECT COUNT(*)
          FROM messages um
@@ -206,6 +207,7 @@ export async function getUserConversations(env: Env, userId: number): Promise<Co
       last_message_sender_device_id?: number | null;
       last_message_ciphertext_envelope?: string | null;
       last_message_edit_version?: number | null;
+      last_message_read_at?: string | null;
       unread_count: number;
     }>();
 
@@ -228,6 +230,7 @@ export async function getUserConversations(env: Env, userId: number): Promise<Co
         ? filterEnvelopeForUser(r.last_message_ciphertext_envelope || '', userId)
         : '',
       last_message_edit_version: Number(r.last_message_edit_version || 0),
+      last_message_read: Boolean(r.last_message_read_at),
       last_message_at: r.last_message_at,
       unread_count: Number(r.unread_count || 0),
     };

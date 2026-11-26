@@ -16,13 +16,42 @@ const REFILL_PREKEY_COUNT = 40;
 const SPK_ROTATE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_PLAIN_TEXT_LEN = 2000;
 const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
+const MAX_VOICE_BYTES = 1536 * 1024;
+const MAX_VOICE_DURATION_MS = 120_000;
+const MAX_WAVEFORM_BARS = 40;
 const ALLOWED_MEDIA_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const ALLOWED_VOICE_MIMES = new Set([
+  'audio/webm',
+  'audio/webm;codecs=opus',
+  'audio/ogg',
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+  'audio/mpeg',
+]);
+
+function normalizeAudioMime(raw: string): string {
+  return String(raw || '').toLowerCase().replace(/\s*;\s*/g, ';').trim();
+}
+
+function sanitizeWaveform(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: number[] = [];
+  const cap = Math.min(raw.length, MAX_WAVEFORM_BARS);
+  for (let i = 0; i < cap; i++) {
+    const v = Number(raw[i]);
+    out.push(Number.isFinite(v) ? Math.max(4, Math.min(100, Math.round(v))) : 12);
+  }
+  return out;
+}
 
 export interface DecryptedMediaMeta {
   aesKey: string;
   iv: string;
   sha256: string;
   mime: string;
+  kind?: 'image' | 'voice';
+  durationMs?: number;
+  waveform?: number[];
 }
 
 export interface DecryptedPayload {
@@ -556,13 +585,26 @@ export class E2eeClient {
   private async encryptAttachment(
     fileBytes: ArrayBuffer,
     mime: string,
+    mediaKind: 'image' | 'voice' = 'image',
+    voiceDurationMs?: number,
+    voiceWaveform?: number[],
   ): Promise<{ encryptedBlob: Blob; encryptedBytes: Uint8Array; mediaMeta: DecryptedMediaMeta }> {
-    const cleanMime = (mime || '').toLowerCase();
-    if (!ALLOWED_MEDIA_MIMES.has(cleanMime)) {
-      throw Object.assign(new Error('Invalid image type'), { code: 'INVALID_IMAGE' });
-    }
-    if (fileBytes.byteLength === 0 || fileBytes.byteLength > MAX_MEDIA_BYTES) {
-      throw Object.assign(new Error('Image too large'), { code: 'IMAGE_TOO_LARGE' });
+    const isVoice = mediaKind === 'voice';
+    const cleanMime = isVoice ? normalizeAudioMime(mime) : (mime || '').toLowerCase();
+    if (isVoice) {
+      if (!ALLOWED_VOICE_MIMES.has(cleanMime)) {
+        throw Object.assign(new Error('Invalid audio type'), { code: 'INVALID_VOICE' });
+      }
+      if (fileBytes.byteLength === 0 || fileBytes.byteLength > MAX_VOICE_BYTES) {
+        throw Object.assign(new Error('Voice message too large'), { code: 'VOICE_TOO_LARGE' });
+      }
+    } else {
+      if (!ALLOWED_MEDIA_MIMES.has(cleanMime)) {
+        throw Object.assign(new Error('Invalid image type'), { code: 'INVALID_IMAGE' });
+      }
+      if (fileBytes.byteLength === 0 || fileBytes.byteLength > MAX_MEDIA_BYTES) {
+        throw Object.assign(new Error('Image too large'), { code: 'IMAGE_TOO_LARGE' });
+      }
     }
 
     const aesKey = (await crypto.subtle.generateKey(
@@ -576,15 +618,24 @@ export class E2eeClient {
     const encBytes = new Uint8Array(ciphertext);
     const hashBuf = await crypto.subtle.digest('SHA-256', encBytes);
 
+    const mediaMeta: DecryptedMediaMeta = {
+      aesKey: bytesToBase64(rawKey),
+      iv: bytesToBase64(iv),
+      sha256: bytesToBase64(hashBuf),
+      mime: cleanMime,
+    };
+    if (isVoice) {
+      mediaMeta.kind = 'voice';
+      const dur = Number(voiceDurationMs || 0);
+      mediaMeta.durationMs = Number.isFinite(dur) ? Math.max(0, Math.min(MAX_VOICE_DURATION_MS, Math.round(dur))) : 0;
+      const wf = sanitizeWaveform(voiceWaveform);
+      if (wf) mediaMeta.waveform = wf;
+    }
+
     return {
       encryptedBlob: new Blob([encBytes], { type: 'application/octet-stream' }),
       encryptedBytes: encBytes,
-      mediaMeta: {
-        aesKey: bytesToBase64(rawKey),
-        iv: bytesToBase64(iv),
-        sha256: bytesToBase64(hashBuf),
-        mime: cleanMime,
-      },
+      mediaMeta,
     };
   }
 
@@ -593,6 +644,9 @@ export class E2eeClient {
     text: string;
     fileBytes?: ArrayBuffer | null;
     fileMime?: string;
+    mediaKind?: 'image' | 'voice';
+    voiceDurationMs?: number;
+    voiceWaveform?: number[];
     existingMedia?: DecryptedMediaMeta | null;
     editOf?: number;
   }): Promise<{
@@ -616,7 +670,14 @@ export class E2eeClient {
     let mediaMeta: DecryptedMediaMeta | null = null;
 
     if (opts.fileBytes) {
-      const enc = await this.encryptAttachment(opts.fileBytes, opts.fileMime || 'image/jpeg');
+      const kind = opts.mediaKind === 'voice' ? 'voice' : 'image';
+      const enc = await this.encryptAttachment(
+        opts.fileBytes,
+        opts.fileMime || (kind === 'voice' ? 'audio/webm' : 'image/jpeg'),
+        kind,
+        opts.voiceDurationMs,
+        opts.voiceWaveform,
+      );
       encryptedBlob = enc.encryptedBlob;
       encryptedBytes = enc.encryptedBytes;
       mediaMeta = enc.mediaMeta;
@@ -951,7 +1012,8 @@ export class E2eeClient {
         return { ok: false, reason: 'TAMPERED_EDIT' };
       }
       const rawMedia = parsed?.media;
-      const safeMedia: DecryptedMediaMeta | null =
+      let safeMedia: DecryptedMediaMeta | null = null;
+      if (
         rawMedia &&
         typeof rawMedia === 'object' &&
         typeof rawMedia.aesKey === 'string' &&
@@ -962,13 +1024,25 @@ export class E2eeClient {
         rawMedia.iv.length <= 64 &&
         rawMedia.sha256.length <= 128 &&
         rawMedia.mime.length <= 64
-          ? {
-              aesKey: rawMedia.aesKey,
-              iv: rawMedia.iv,
-              sha256: rawMedia.sha256,
-              mime: rawMedia.mime,
-            }
-          : null;
+      ) {
+        const isVoiceMedia = rawMedia.kind === 'voice';
+        const normMime = isVoiceMedia ? normalizeAudioMime(rawMedia.mime) : rawMedia.mime.toLowerCase();
+        safeMedia = {
+          aesKey: rawMedia.aesKey,
+          iv: rawMedia.iv,
+          sha256: rawMedia.sha256,
+          mime: normMime,
+        };
+        if (isVoiceMedia) {
+          safeMedia.kind = 'voice';
+          const durNum = Number(rawMedia.durationMs || 0);
+          safeMedia.durationMs = Number.isFinite(durNum)
+            ? Math.max(0, Math.min(MAX_VOICE_DURATION_MS, Math.round(durNum)))
+            : 0;
+          const wf = sanitizeWaveform(rawMedia.waveform);
+          if (wf) safeMedia.waveform = wf;
+        }
+      }
       const payload: DecryptedPayload = {
         v: Number(parsed?.v || 1),
         text: typeof parsed?.text === 'string' ? parsed.text.slice(0, MAX_PLAIN_TEXT_LEN) : '',
@@ -1033,9 +1107,11 @@ export class E2eeClient {
     if (!res.ok) throw new Error('Failed to download encrypted media');
     const encBuf = await res.arrayBuffer();
     const plainBuf = await this.decryptMediaBytes(encBuf, mediaMeta);
-    const safeMime = ALLOWED_MEDIA_MIMES.has((mediaMeta.mime || '').toLowerCase())
-      ? mediaMeta.mime
-      : 'image/jpeg';
+    const isVoice = mediaMeta.kind === 'voice';
+    const rawMime = isVoice ? normalizeAudioMime(mediaMeta.mime || '') : (mediaMeta.mime || '').toLowerCase();
+    const safeMime = isVoice
+      ? (ALLOWED_VOICE_MIMES.has(rawMime) ? rawMime : 'audio/webm')
+      : (ALLOWED_MEDIA_MIMES.has(rawMime) ? rawMime : 'image/jpeg');
     const url = URL.createObjectURL(new Blob([plainBuf], { type: safeMime }));
     this.mediaUrlCache.set(imageKey, url);
     return url;

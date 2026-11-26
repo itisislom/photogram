@@ -1,6 +1,6 @@
 import { Env, User } from './types';
 import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
-import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
+import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleResolveMentions, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
 import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike } from './posts';
 import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
@@ -533,6 +533,10 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return handleSearchUsers(request, env);
     }
 
+    if (pathname === '/api/users/resolve-mentions' && method === 'POST') {
+      return handleResolveMentions(request, env);
+    }
+
     if ((pathname === '/api/profile/follow' || pathname === '/api/users/follow') && method === 'POST') {
       return handleToggleFollow(request, env);
     }
@@ -817,7 +821,7 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  headers.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
 
   if (isMedia) {
     headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
@@ -826,7 +830,7 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
     const wsOrigin = url ? ` ${wsScheme}//${url.host}` : '';
     headers.set(
       'Content-Security-Policy',
-      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'${wsOrigin}; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
+      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'${wsOrigin}; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
     );
   }
 

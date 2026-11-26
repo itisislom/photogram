@@ -5485,10 +5485,72 @@ body.dm-lock-scroll {
 }
 
 .dm-msg-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 10px;
-  opacity: 0.72;
   align-self: flex-end;
   line-height: 1;
+}
+
+.dm-msg-clock {
+  opacity: 0.76;
+}
+
+.dm-msg-status {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  opacity: 0.78;
+}
+
+.dm-msg-status.is-read {
+  opacity: 1;
+}
+
+.dm-check-svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.dm-conv-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.dm-conv-check {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  opacity: 0.72;
+}
+
+.dm-conv-check.is-read {
+  color: var(--accent, #0095f6);
+  opacity: 1;
+}
+
+.dm-date-sep {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 10px 0 6px;
+  pointer-events: none;
+}
+
+.dm-date-sep span {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .dm-msg-bubble.img-only .dm-msg-time {
@@ -5496,41 +5558,12 @@ body.dm-lock-scroll {
   padding: 2px 4px 0;
 }
 
-.dm-unsend-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0.55;
-  padding: 0;
-  flex-shrink: 0;
-  transition: opacity 0.2s ease, color 0.2s ease;
-}
-
-.dm-unsend-btn:hover {
-  opacity: 1;
-  color: var(--like-color);
+.dm-msg-bubble.img-only .dm-msg-status.is-read {
+  color: var(--accent, #0095f6);
 }
 
 .dm-seen-indicator {
-  align-self: flex-end;
-  font-size: 11px;
-  color: var(--text-secondary);
-  padding: 2px 6px 0;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
-}
-
-.dm-seen-indicator.visible {
-  opacity: 1;
-  visibility: visible;
+  display: none;
 }
 
 .dm-attach-preview {
@@ -5635,6 +5668,218 @@ body.dm-lock-scroll {
 
 .dm-send-btn.active {
   opacity: 1;
+}
+
+.dm-voice-btn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-color, #0095f6);
+  color: #FFFFFF;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.2s ease;
+}
+
+.dm-voice-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dm-voice-btn.recording {
+  background: var(--accent-color, #0095f6);
+  box-shadow: 0 0 0 5px rgba(0, 149, 246, 0.24);
+}
+
+.dm-composer.is-voice-cancelling .dm-voice-btn.recording {
+  background: var(--like-color, #ed4956);
+  box-shadow: 0 0 0 5px rgba(237, 73, 86, 0.24);
+}
+
+.dm-voice-rec-bar {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dm-composer.is-recording .dm-attach-btn,
+.dm-composer.is-recording .dm-input {
+  display: none;
+}
+
+.dm-composer.is-recording .dm-voice-rec-bar {
+  display: flex;
+}
+
+.dm-voice-rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--like-color, #ed4956);
+  flex-shrink: 0;
+}
+
+.dm-voice-rec-timer {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  min-width: 34px;
+  flex-shrink: 0;
+}
+
+.dm-voice-live-bars {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.dm-voice-live-bar {
+  width: 2.5px;
+  min-height: 4px;
+  max-height: 24px;
+  border-radius: 2px;
+  background: var(--accent-color, #0095f6);
+  flex-shrink: 0;
+}
+
+.dm-composer.is-voice-cancelling .dm-voice-live-bar {
+  background: var(--like-color, #ed4956);
+}
+
+.dm-voice-rec-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dm-composer.is-voice-cancelling .dm-voice-rec-hint {
+  color: var(--like-color, #ed4956);
+  font-weight: 600;
+}
+
+.dm-msg-bubble.voice-bubble {
+  min-width: 215px;
+  max-width: min(300px, 78vw);
+  padding: 9px 11px 6px;
+}
+
+.dm-voice-msg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.dm-voice-play-btn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 50%;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  background: var(--accent-color, #0095f6);
+  color: #FFFFFF;
+}
+
+.dm-msg-row.mine .dm-voice-play-btn {
+  background: #FFFFFF;
+  color: var(--accent-color, #0095f6);
+}
+
+.dm-voice-msg.is-loading .dm-voice-play-btn {
+  opacity: 0.6;
+}
+
+.dm-voice-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dm-voice-wave {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  padding: 1px 0;
+}
+
+.dm-voice-bar {
+  width: 2.5px;
+  min-height: 4px;
+  max-height: 24px;
+  border-radius: 2px;
+  background: var(--accent-color, #0095f6);
+  opacity: 0.35;
+  flex-shrink: 0;
+}
+
+.dm-voice-bar.played {
+  opacity: 1;
+}
+
+.dm-msg-row.mine .dm-voice-bar {
+  background: #FFFFFF;
+  opacity: 0.4;
+}
+
+.dm-msg-row.mine .dm-voice-bar.played {
+  opacity: 1;
+}
+
+.dm-voice-dur {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.82;
+  font-variant-numeric: tabular-nums;
+}
+
+.dm-mention-link {
+  color: var(--accent-color, #0095f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1.4px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dm-msg-row.mine .dm-mention-link {
+  color: #FFFFFF;
 }
 
 .dm-lightbox-backdrop {

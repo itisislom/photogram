@@ -410,6 +410,55 @@ export async function handleSearchUsers(request: Request, env: Env): Promise<Res
   }
 }
 
+export async function handleResolveMentions(request: Request, env: Env): Promise<Response> {
+  const currentUser = await getUserFromRequest(env, request);
+  if (!currentUser) return jsonError('Необходима авторизация', 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `mentions:resolve:${currentUser.id}`, 60, 60);
+  if (!allowed) return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+
+  const parsed = await readJsonWithLimit<{ usernames?: unknown }>(request, 4096);
+  if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+
+  const rawList = parsed.data?.usernames;
+  if (!Array.isArray(rawList)) return jsonError('Неверный формат запроса', 400);
+
+  const cleanSet = new Set<string>();
+  for (const item of rawList) {
+    if (typeof item !== 'string') continue;
+    const uname = item.trim().toLowerCase();
+    if (/^[a-z0-9_]{3,24}$/.test(uname)) {
+      cleanSet.add(uname);
+      if (cleanSet.size >= 25) break;
+    }
+  }
+
+  const names = Array.from(cleanSet);
+  if (names.length === 0) {
+    return new Response(JSON.stringify({ existing: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  }
+
+  try {
+    const placeholders = names.map((_, idx) => `?${idx + 1}`).join(', ');
+    const rows = await env.DB.prepare(
+      `SELECT LOWER(username) AS username FROM users WHERE LOWER(username) IN (${placeholders})`,
+    )
+      .bind(...names)
+      .all<{ username: string }>();
+
+    const existing = (rows.results || []).map((r) => String(r.username || '').toLowerCase()).filter(Boolean);
+    return new Response(JSON.stringify({ existing }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  } catch {
+    return jsonError('Ошибка проверки упоминаний', 500);
+  }
+}
+
 export async function getExploreData(env: Env, currentUserId?: number): Promise<ExploreData> {
   const viewerId = currentUserId || 0;
   const res = await getPersonalizedExplore(env, viewerId, 'all', 40);

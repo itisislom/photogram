@@ -13,6 +13,11 @@ const TRASH_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="non
 const EDIT_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
 const COPY_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const LOCK_XS_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const CHECK_SINGLE_ICON = `<svg class="dm-check-svg dm-check-single" viewBox="0 0 16 12" width="13" height="10" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2 6.5 6 10.2 14 1.8"/></svg>`;
+const CHECK_DOUBLE_ICON = `<svg class="dm-check-svg dm-check-double" viewBox="0 0 20 12" width="16" height="10" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.5 6.5 5.2 10.2 12.2 1.8"/><polyline points="7.5 6.5 11.2 10.2 18.2 1.8"/></svg>`;
+const MIC_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8.5" y1="21" x2="15.5" y2="21"/></svg>`;
+const PLAY_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><polygon points="6.5 4 20 12 6.5 20 6.5 4"/></svg>`;
+const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="5.5" y="4" width="4.5" height="16" rx="1.2"/><rect x="14" y="4" width="4.5" height="16" rx="1.2"/></svg>`;
 
 function parseDateSafe(dateStr: string): Date {
   if (!dateStr) return new Date();
@@ -42,6 +47,56 @@ function formatMsgClock(dateStr: string, timeZone: string): string {
     return isNaN(d.getTime()) ? '' : formatLocalizedTime(d, timeZone);
   } catch {
     return '';
+  }
+}
+
+function getDatePartsInTz(d: Date, timeZone: string): { year: number; month: number; day: number; key: string } {
+  let year = d.getUTCFullYear();
+  let month = d.getUTCMonth() + 1;
+  let day = d.getUTCDate();
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      }).formatToParts(d);
+      const yPart = parts.find((p) => p.type === 'year')?.value;
+      const mPart = parts.find((p) => p.type === 'month')?.value;
+      const dPart = parts.find((p) => p.type === 'day')?.value;
+      if (yPart && mPart && dPart) {
+        year = parseInt(yPart, 10);
+        month = parseInt(mPart, 10);
+        day = parseInt(dPart, 10);
+      }
+    } catch {}
+  }
+  const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return { year, month, day, key };
+}
+
+function formatChatDateSep(dateStr: string, t: Translations, timeZone: string, nowDate: Date): { key: string; label: string } {
+  try {
+    const d = parseDateSafe(dateStr);
+    if (isNaN(d.getTime())) return { key: '', label: '' };
+    const p = getDatePartsInTz(d, timeZone);
+    const todayP = getDatePartsInTz(nowDate, timeZone);
+    if (p.key === todayP.key) return { key: p.key, label: t.messages.today };
+    const yestDate = new Date(nowDate.getTime() - 86400000);
+    const yestP = getDatePartsInTz(yestDate, timeZone);
+    if (p.key === yestP.key) return { key: p.key, label: t.messages.yesterday };
+    const cfg = getClientDateFormat(t.code);
+    const mon = cfg.monthsLong[Math.max(0, Math.min(11, p.month - 1))] || '';
+    if (p.year === todayP.year) {
+      return { key: p.key, label: cfg.fullPattern === 'mdy' ? `${mon} ${p.day}` : `${p.day} ${mon}` };
+    }
+    return {
+      key: p.key,
+      label: cfg.fullPattern === 'mdy' ? `${mon} ${p.day}, ${p.year}` : `${p.day} ${mon} ${p.year}`,
+    };
+  } catch {
+    return { key: '', label: '' };
   }
 }
 
@@ -99,13 +154,19 @@ export function messagesPage(
             ? `<span class="dm-conv-unread">${c.unread_count > 99 ? '99+' : c.unread_count}</span>`
             : '';
 
+          const isMineLast = c.last_message_sender_id === currentUser.id && Boolean(c.last_message_id);
+          const lastRead = Boolean(c.last_message_read);
+          const convCheckHtml = isMineLast
+            ? `<span class="dm-conv-check ${lastRead ? 'is-read' : ''}" data-read="${lastRead ? '1' : '0'}">${lastRead ? CHECK_DOUBLE_ICON : CHECK_SINGLE_ICON}</span>`
+            : '';
+
           return `
-          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}" data-last-edit-version="${c.last_message_edit_version || 0}">
+          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}" data-last-read="${lastRead ? '1' : '0'}" data-last-edit-version="${c.last_message_edit_version || 0}">
             <div class="dm-avatar">${avatarHtml}</div>
             <div class="dm-conv-meta">
               <div class="dm-conv-top">
                 <span class="dm-conv-name">${escapeHtml(c.other_username)}${c.other_is_verified ? renderVerifiedBadge(13) : ''}</span>
-                <span class="dm-conv-time">${escapeHtml(formatDmShortTime(c.last_message_at, t, timeZone))}</span>
+                <span class="dm-conv-top-right">${convCheckHtml}<span class="dm-conv-time">${escapeHtml(formatDmShortTime(c.last_message_at, t, timeZone))}</span></span>
               </div>
               <div class="dm-conv-bottom">
                 <span class="dm-conv-preview">${escapeHtml(previewText)}</span>
@@ -164,6 +225,8 @@ export function messagesPage(
       ? `<img src="/media/${encodeURIComponent(activePartner.avatar_key)}" alt="${escapeHtml(activePartner.username)}">`
       : `<span>${escapeHtml(pInit)}</span>`;
 
+    const nowDate = new Date();
+    let prevDayKey = '';
     const msgsHtml = messages.length > 0
       ? messages
           .map((m) => {
@@ -171,18 +234,24 @@ export function messagesPage(
             const isEnc = Boolean(m.is_encrypted);
             const isEdited = Boolean(m.edited_at);
             const editVer = Number(m.edit_version || 0);
-            const timeInner = `${isEdited ? `<span class="dm-msg-edited">${escapeHtml(t.messages.editedLabel)}</span> ` : ''}<span class="dm-msg-clock">${escapeHtml(formatMsgClock(m.created_at, timeZone))}</span>`;
-            const unsendBtn = isMine
-              ? `<button type="button" class="dm-unsend-btn" data-unsend-id="${m.id}" aria-label="${escapeHtml(t.messages.unsend)}" title="${escapeHtml(t.messages.unsend)}">${TRASH_SM_ICON}</button>`
+            const isRead = isMine && ((lastReadOwnId > 0 && Number(m.id) <= lastReadOwnId) || Boolean(m.read_at));
+            const statusHtml = isMine
+              ? `<span class="dm-msg-status ${isRead ? 'is-read' : ''}" data-read="${isRead ? '1' : '0'}">${isRead ? CHECK_DOUBLE_ICON : CHECK_SINGLE_ICON}</span>`
               : '';
+            const timeInner = `${isEdited ? `<span class="dm-msg-edited">${escapeHtml(t.messages.editedLabel)}</span> ` : ''}<span class="dm-msg-clock">${escapeHtml(formatMsgClock(m.created_at, timeZone))}</span>${statusHtml}`;
+            const sepInfo = formatChatDateSep(m.created_at, t, timeZone, nowDate);
+            let dateSepHtml = '';
+            if (sepInfo.key && sepInfo.key !== prevDayKey) {
+              prevDayKey = sepInfo.key;
+              dateSepHtml = `<div class="dm-date-sep" data-day-key="${escapeHtml(sepInfo.key)}"><span>${escapeHtml(sepInfo.label)}</span></div>`;
+            }
             if (isEnc) {
-              return `
+              return `${dateSepHtml}
             <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-encrypted="1" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}">
-              ${isMine ? unsendBtn : ''}
               <div class="dm-msg-stack">
                 <div class="dm-msg-bubble">
                   <div class="dm-msg-text dm-msg-decrypt-err" data-enc-slot="1">${escapeHtml(t.messages.e2eeInitializing)}</div>
-                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}">${timeInner}</div>
+                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}" data-mine="${isMine ? '1' : '0'}" data-read="${isRead ? '1' : '0'}">${timeInner}</div>
                 </div>
                 ${renderMsgReactionsHtml(m.id, m.reactions, t.code)}
               </div>
@@ -194,14 +263,13 @@ export function messagesPage(
             const textHtml = m.body
               ? `<div class="dm-msg-text">${escapeHtml(m.body)}</div>`
               : '';
-            return `
+            return `${dateSepHtml}
             <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}">
-              ${isMine ? unsendBtn : ''}
               <div class="dm-msg-stack">
                 <div class="dm-msg-bubble ${m.image_key && !m.body ? 'img-only' : ''}">
                   ${imgHtml}
                   ${textHtml}
-                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}">${timeInner}</div>
+                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}" data-mine="${isMine ? '1' : '0'}" data-read="${isRead ? '1' : '0'}">${timeInner}</div>
                 </div>
                 ${renderMsgReactionsHtml(m.id, m.reactions, t.code)}
               </div>
@@ -256,7 +324,14 @@ export function messagesPage(
       <input type="file" id="dmImageInput" style="display:none;">
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
       <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
-      <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" disabled>${SEND_COMMENT_ICON}</button>
+      <div class="dm-voice-rec-bar" id="dmVoiceRecBar" aria-live="polite">
+        <span class="dm-voice-rec-dot"></span>
+        <span class="dm-voice-rec-timer" id="dmVoiceRecTimer">0:00</span>
+        <div class="dm-voice-live-bars" id="dmVoiceLiveBars" aria-hidden="true"></div>
+        <span class="dm-voice-rec-hint" id="dmVoiceRecHint">${escapeHtml(t.messages.voiceSlideCancel)}</span>
+      </div>
+      <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" style="display:none;" disabled>${SEND_COMMENT_ICON}</button>
+      <button type="button" class="dm-voice-btn" id="dmVoiceBtn" aria-label="${escapeHtml(t.messages.voiceLabel)}" title="${escapeHtml(t.messages.voiceHoldHint)}">${MIC_ICON}</button>
     </div>`;
   } else {
     threadHtml = `
@@ -299,6 +374,20 @@ export function messagesPage(
     <div class="dm-lightbox-inner">
       <button type="button" class="dm-lightbox-close" id="dmLightboxCloseBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       <img id="dmLightboxImg" src="" alt="${escapeHtml(t.messages.photoLabel)}">
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="dmMicBlockedModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.messages.micBlockedTitle)}</h3>
+        <button class="modal-close" id="closeDmMicBlockedBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <p style="font-size: 14px; color: var(--text-secondary);">${escapeHtml(t.messages.micBlockedDesc)}</p>
+      <p id="dmMicBlockedSteps" style="font-size: 14px; color: var(--text-primary); white-space: pre-line; line-height: 1.6; margin-top: 8px;"></p>
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        <button type="button" class="btn btn-primary btn-sm" id="okDmMicBlockedBtn" style="flex:1;">${escapeHtml(t.common.understood)}</button>
+      </div>
     </div>
   </div>
 
@@ -353,6 +442,7 @@ export function messagesPage(
 
   const clientState = safeJsonForScript({
     currentUserId: currentUser.id,
+    currentUsername: currentUser.username,
     activeConversationId: activeConversationId || 0,
     activePartnerId: activePartner ? activePartner.id : 0,
     activePartnerUsername: activePartner ? activePartner.username : '',
@@ -372,9 +462,31 @@ export function messagesPage(
     noResults: t.explore.noResults,
     networkError: t.common.networkError,
     photoLabel: t.messages.photoLabel,
+    voiceLabel: t.messages.voiceLabel,
+    voiceHoldHint: t.messages.voiceHoldHint,
+    voiceSlideCancel: t.messages.voiceSlideCancel,
+    voiceReleaseCancel: t.messages.voiceReleaseCancel,
+    voiceMicDenied: t.messages.voiceMicDenied,
+    micBlockedSteps: {
+      chrome: t.messages.micBlockedStepsChrome,
+      desktopPwa: t.messages.micBlockedStepsDesktopPwa,
+      android: t.messages.micBlockedStepsAndroid,
+      firefox: t.messages.micBlockedStepsFirefox,
+      safari: t.messages.micBlockedStepsSafari,
+      ios: t.messages.micBlockedStepsIos,
+    },
+    voiceUnsupported: t.messages.voiceUnsupported,
+    voiceTooShort: t.messages.voiceTooShort,
+    voiceTooLarge: t.messages.voiceTooLarge,
+    playIcon: PLAY_ICON,
+    pauseIcon: PAUSE_ICON,
     youPrefix: t.messages.youPrefix,
     seen: t.messages.seen,
+    todayLabel: t.messages.today,
+    yesterdayLabel: t.messages.yesterday,
     typingLabel: t.messages.typing,
+    checkSingleIcon: CHECK_SINGLE_ICON,
+    checkDoubleIcon: CHECK_DOUBLE_ICON,
     unsend: t.messages.unsend,
     unsendTitle: t.messages.unsendConfirmTitle,
     unsendDesc: t.messages.unsendConfirmDesc,
@@ -551,6 +663,15 @@ export function messagesPage(
   var formEl = document.getElementById('dmComposeForm');
   var inputEl = document.getElementById('dmMessageInput');
   var sendBtn = document.getElementById('dmSendBtn');
+  var voiceBtn = document.getElementById('dmVoiceBtn');
+  var voiceRecBar = document.getElementById('dmVoiceRecBar');
+  var voiceRecTimer = document.getElementById('dmVoiceRecTimer');
+  var voiceLiveBars = document.getElementById('dmVoiceLiveBars');
+  var voiceRecHint = document.getElementById('dmVoiceRecHint');
+  var micBlockedModal = document.getElementById('dmMicBlockedModal');
+  var micBlockedStepsEl = document.getElementById('dmMicBlockedSteps');
+  var closeMicBlockedBtn = document.getElementById('closeDmMicBlockedBtn');
+  var okMicBlockedBtn = document.getElementById('okDmMicBlockedBtn');
   var attachBtn = document.getElementById('dmAttachBtn');
   var fileInput = document.getElementById('dmImageInput');
   var attachPreview = document.getElementById('dmAttachPreview');
@@ -687,23 +808,106 @@ export function messagesPage(
     return String(txt || '').replace(/\\s+/g, ' ').trim();
   }
 
-  function renderMsgTimeEl(timeEl, ts, isEdited) {
+  function getLocalDayInfoClient(ts) {
+    var d = parseDateClient(ts);
+    if (!d || isNaN(d.getTime())) return { key: '', label: '' };
+    var y = d.getFullYear();
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    var key = y + '-' + String(m).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    var now = new Date();
+    var todayKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    if (key === todayKey) return { key: key, label: state.todayLabel || 'Today' };
+    var yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    var yestKey = yest.getFullYear() + '-' + String(yest.getMonth() + 1).padStart(2, '0') + '-' + String(yest.getDate()).padStart(2, '0');
+    if (key === yestKey) return { key: key, label: state.yesterdayLabel || 'Yesterday' };
+    var cfg = state.dateFmt || {};
+    var mon = (cfg.monthsLong && cfg.monthsLong[m - 1]) || '';
+    if (y === now.getFullYear()) {
+      return { key: key, label: cfg.fullPattern === 'mdy' ? (mon + ' ' + day) : (day + ' ' + mon) };
+    }
+    return { key: key, label: cfg.fullPattern === 'mdy' ? (mon + ' ' + day + ', ' + y) : (day + ' ' + mon + ' ' + y) };
+  }
+
+  function syncDateSeparators() {
+    if (!listEl) return;
+    listEl.querySelectorAll('.dm-date-sep').forEach(function(sep) {
+      sep.remove();
+    });
+    var rows = listEl.querySelectorAll('.dm-msg-row[data-msg-id]');
+    var lastKey = '';
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var timeEl = row.querySelector('.dm-msg-time[data-ts]');
+      var ts = timeEl ? timeEl.getAttribute('data-ts') : '';
+      if (!ts) continue;
+      var info = getLocalDayInfoClient(ts);
+      if (!info.key || info.key === lastKey) continue;
+      lastKey = info.key;
+      var sepEl = document.createElement('div');
+      sepEl.className = 'dm-date-sep';
+      sepEl.setAttribute('data-day-key', info.key);
+      var span = document.createElement('span');
+      span.textContent = info.label;
+      sepEl.appendChild(span);
+      listEl.insertBefore(sepEl, row);
+    }
+  }
+
+  function setStatusCheckIcon(el, isRead) {
+    if (!el) return;
+    var nextFlag = isRead ? '1' : '0';
+    if (el.getAttribute('data-read') === nextFlag && el.firstChild) return;
+    el.setAttribute('data-read', nextFlag);
+    if (isRead) el.classList.add('is-read');
+    else el.classList.remove('is-read');
+    el.innerHTML = isRead ? state.checkDoubleIcon : state.checkSingleIcon;
+  }
+
+  function setConvItemCheck(item, isMine, isRead) {
+    if (!item) return;
+    item.setAttribute('data-last-read', isRead ? '1' : '0');
+    var topRight = item.querySelector('.dm-conv-top-right');
+    var checkEl = item.querySelector('.dm-conv-check');
+    var lastId = parseInt(item.getAttribute('data-last-msg-id') || '0', 10);
+    if (isMine && lastId > 0) {
+      if (!checkEl && topRight) {
+        checkEl = document.createElement('span');
+        checkEl.className = 'dm-conv-check';
+        topRight.insertBefore(checkEl, topRight.firstChild);
+      }
+      if (checkEl) setStatusCheckIcon(checkEl, isRead);
+    } else if (checkEl) {
+      checkEl.remove();
+    }
+  }
+
+  function renderMsgTimeEl(timeEl, ts, isEdited, isMineOpt, isReadOpt) {
     if (!timeEl) return;
+    var isMine = typeof isMineOpt === 'boolean' ? isMineOpt : (timeEl.getAttribute('data-mine') === '1');
+    var isRead = typeof isReadOpt === 'boolean' ? isReadOpt : (timeEl.getAttribute('data-read') === '1');
     var clockText = formatClockClient(ts);
     timeEl.setAttribute('data-ts', ts || '');
     timeEl.setAttribute('data-edited', isEdited ? '1' : '0');
+    timeEl.setAttribute('data-mine', isMine ? '1' : '0');
+    timeEl.setAttribute('data-read', isRead ? '1' : '0');
     while (timeEl.firstChild) timeEl.removeChild(timeEl.firstChild);
     if (isEdited) {
       var edSpan = document.createElement('span');
       edSpan.className = 'dm-msg-edited';
       edSpan.textContent = state.editedLabel;
       timeEl.appendChild(edSpan);
-      timeEl.appendChild(document.createTextNode(' '));
     }
     var clkSpan = document.createElement('span');
     clkSpan.className = 'dm-msg-clock';
     clkSpan.textContent = clockText;
     timeEl.appendChild(clkSpan);
+    if (isMine) {
+      var stSpan = document.createElement('span');
+      stSpan.className = 'dm-msg-status' + (isRead ? ' is-read' : '');
+      setStatusCheckIcon(stSpan, isRead);
+      timeEl.appendChild(stSpan);
+    }
   }
 
   function syncRenderedMsgClocks() {
@@ -717,6 +921,7 @@ export function messagesPage(
         else if (formatted) renderMsgTimeEl(el, ts, el.getAttribute('data-edited') === '1');
       }
     });
+    syncDateSeparators();
   }
 
   function scrollToBottom() {
@@ -727,14 +932,137 @@ export function messagesPage(
   }
 
   function syncSendState() {
-    if (!sendBtn) return;
-    var hasText = inputEl && inputEl.value.trim().length > 0;
+    var hasText = Boolean(inputEl && inputEl.value.trim().length > 0);
+    var showSendMode = Boolean(hasText || pendingFile || editingMsg);
     var canSubmit = editingMsg
       ? Boolean((hasText || editingMsg.existingMedia || editingMsg.imageKey) && !isSending)
       : Boolean((hasText || pendingFile) && !isSending);
-    sendBtn.disabled = !canSubmit;
-    if (canSubmit) sendBtn.classList.add('active');
-    else sendBtn.classList.remove('active');
+    if (sendBtn) {
+      sendBtn.style.display = showSendMode ? 'inline-flex' : 'none';
+      sendBtn.disabled = !canSubmit;
+      if (canSubmit) sendBtn.classList.add('active');
+      else sendBtn.classList.remove('active');
+    }
+    if (voiceBtn) {
+      voiceBtn.style.display = showSendMode ? 'none' : 'inline-flex';
+      voiceBtn.disabled = Boolean(isSending);
+    }
+  }
+
+  var mentionLookupCache = {};
+  if (state.currentUsername) mentionLookupCache[String(state.currentUsername).toLowerCase()] = true;
+  if (state.activePartnerUsername) mentionLookupCache[String(state.activePartnerUsername).toLowerCase()] = true;
+  var pendingMentionNames = {};
+  var mentionWaiters = {};
+  var mentionFlushTimer = null;
+
+  function renderMentionNodes(txtEl, rawText) {
+    if (!txtEl) return;
+    var text = String(rawText || '');
+    txtEl.setAttribute('data-raw-text', text);
+    while (txtEl.firstChild) txtEl.removeChild(txtEl.firstChild);
+    if (!text) return;
+
+    var re = /(^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{3,24})(?![a-zA-Z0-9_])/g;
+    var lastIdx = 0;
+    var match;
+    var needsResolve = [];
+    while ((match = re.exec(text)) !== null) {
+      var prefix = match[1] || '';
+      var uname = match[2];
+      var lower = uname.toLowerCase();
+      var atIdx = match.index + prefix.length;
+      if (atIdx > lastIdx) {
+        txtEl.appendChild(document.createTextNode(text.slice(lastIdx, atIdx)));
+      }
+      if (mentionLookupCache[lower] === true) {
+        var link = document.createElement('a');
+        link.className = 'dm-mention-link';
+        link.setAttribute('href', '/u/' + encodeURIComponent(lower));
+        link.textContent = '@' + uname;
+        txtEl.appendChild(link);
+      } else {
+        txtEl.appendChild(document.createTextNode('@' + uname));
+        if (mentionLookupCache[lower] === undefined) {
+          needsResolve.push(lower);
+        }
+      }
+      lastIdx = atIdx + 1 + uname.length;
+    }
+    if (lastIdx < text.length) {
+      txtEl.appendChild(document.createTextNode(text.slice(lastIdx)));
+    }
+    if (needsResolve.length > 0) {
+      for (var i = 0; i < needsResolve.length; i++) {
+        var nameKey = needsResolve[i];
+        pendingMentionNames[nameKey] = true;
+        if (!mentionWaiters[nameKey]) mentionWaiters[nameKey] = [];
+        if (mentionWaiters[nameKey].indexOf(txtEl) === -1) {
+          mentionWaiters[nameKey].push(txtEl);
+        }
+      }
+      scheduleMentionResolve();
+    }
+  }
+
+  function scheduleMentionResolve() {
+    if (mentionFlushTimer) return;
+    mentionFlushTimer = setTimeout(flushMentionResolve, 40);
+  }
+
+  async function flushMentionResolve() {
+    mentionFlushTimer = null;
+    var names = Object.keys(pendingMentionNames);
+    if (names.length === 0) return;
+    var batch = names.slice(0, 25);
+    for (var i = 0; i < batch.length; i++) {
+      delete pendingMentionNames[batch[i]];
+    }
+    if (Object.keys(pendingMentionNames).length > 0) {
+      scheduleMentionResolve();
+    }
+    try {
+      var res = await fetch('/api/users/resolve-mentions', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: batch })
+      });
+      if (!res.ok) return;
+      var data = await res.json();
+      var foundMap = {};
+      var existingList = (data && Array.isArray(data.existing)) ? data.existing : [];
+      for (var j = 0; j < existingList.length; j++) {
+        foundMap[String(existingList[j]).toLowerCase()] = true;
+      }
+      var toRerender = [];
+      for (var k = 0; k < batch.length; k++) {
+        var uKey = batch[k];
+        var exists = Boolean(foundMap[uKey]);
+        mentionLookupCache[uKey] = exists;
+        var waiters = mentionWaiters[uKey];
+        delete mentionWaiters[uKey];
+        if (exists && Array.isArray(waiters)) {
+          for (var w = 0; w < waiters.length; w++) {
+            if (toRerender.indexOf(waiters[w]) === -1) toRerender.push(waiters[w]);
+          }
+        }
+      }
+      for (var r = 0; r < toRerender.length; r++) {
+        var el = toRerender[r];
+        if (el && el.isConnected) {
+          renderMentionNodes(el, el.getAttribute('data-raw-text') || el.textContent || '');
+        }
+      }
+    } catch (e) {}
+  }
+
+  function hydratePlainTextMentions() {
+    if (!listEl) return;
+    listEl.querySelectorAll('.dm-msg-text:not(.dm-msg-decrypt-err)').forEach(function(el) {
+      var raw = el.getAttribute('data-raw-text') || el.textContent || '';
+      if (raw.indexOf('@') !== -1) renderMentionNodes(el, raw);
+    });
   }
 
   function applyPlainBubbleEdit(bubble, timeEl, newText, hasImg) {
@@ -746,7 +1074,7 @@ export function messagesPage(
         txtEl.className = 'dm-msg-text';
         bubble.insertBefore(txtEl, timeEl);
       }
-      txtEl.textContent = newText;
+      renderMentionNodes(txtEl, newText);
       bubble.classList.remove('img-only');
     } else if (txtEl) {
       txtEl.remove();
@@ -840,19 +1168,31 @@ export function messagesPage(
   }
 
   function updateSeenUI() {
-    if (!seenEl || !listEl) return;
+    if (!listEl) return;
     var rows = listEl.querySelectorAll('.dm-msg-row');
-    if (!rows.length) {
-      seenEl.classList.remove('visible');
-      return;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r.classList.contains('mine')) continue;
+      var rid = parseInt(r.getAttribute('data-msg-id') || '0', 10);
+      var isRead = state.lastReadOwnId > 0 && rid > 0 && rid <= state.lastReadOwnId;
+      var tEl = r.querySelector('.dm-msg-time');
+      if (tEl) tEl.setAttribute('data-read', isRead ? '1' : '0');
+      var stEl = r.querySelector('.dm-msg-status');
+      if (stEl) setStatusCheckIcon(stEl, isRead);
     }
-    var lastRow = rows[rows.length - 1];
-    var lastId = parseInt(lastRow.getAttribute('data-msg-id'), 10) || 0;
-    var isLastMine = lastRow.classList.contains('mine');
-    if (isLastMine && state.lastReadOwnId > 0 && lastId <= state.lastReadOwnId) {
-      seenEl.classList.add('visible');
-    } else {
-      seenEl.classList.remove('visible');
+    if (seenEl) {
+      if (!rows.length) {
+        seenEl.classList.remove('visible');
+      } else {
+        var lastRow = rows[rows.length - 1];
+        var lastId = parseInt(lastRow.getAttribute('data-msg-id'), 10) || 0;
+        var isLastMine = lastRow.classList.contains('mine');
+        if (isLastMine && state.lastReadOwnId > 0 && lastId <= state.lastReadOwnId) {
+          seenEl.classList.add('visible');
+        } else {
+          seenEl.classList.remove('visible');
+        }
+      }
     }
   }
 
@@ -866,10 +1206,205 @@ export function messagesPage(
     return c;
   }
 
+  var activeVoiceAudio = null;
+  var activeVoiceUi = null;
+
+  function formatVoiceDuration(ms) {
+    var totalSec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+    var mins = Math.floor(totalSec / 60);
+    var secs = totalSec % 60;
+    return mins + ':' + (secs < 10 ? '0' : '') + secs;
+  }
+
+  function stopActiveVoicePlayback() {
+    if (activeVoiceAudio) {
+      try { activeVoiceAudio.pause(); } catch (e) {}
+      activeVoiceAudio = null;
+    }
+    if (activeVoiceUi) {
+      activeVoiceUi.setPlaying(false);
+      activeVoiceUi.setProgress(0, activeVoiceUi.totalMs);
+      activeVoiceUi = null;
+    }
+  }
+
+  function buildVoicePlayerEl(mediaMeta, imageKey, localMediaUrl) {
+    var wrap = document.createElement('div');
+    wrap.className = 'dm-voice-msg';
+
+    var playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'dm-voice-play-btn';
+    playBtn.setAttribute('aria-label', state.voiceLabel);
+    playBtn.innerHTML = state.playIcon;
+
+    var body = document.createElement('div');
+    body.className = 'dm-voice-body';
+
+    var wave = document.createElement('div');
+    wave.className = 'dm-voice-wave';
+
+    var rawWf = Array.isArray(mediaMeta && mediaMeta.waveform) && mediaMeta.waveform.length > 0
+      ? mediaMeta.waveform
+      : [18, 34, 52, 28, 66, 80, 44, 24, 58, 72, 40, 30, 62, 48, 36, 76, 54, 28, 46, 68, 38, 22, 50, 32, 42, 60, 34, 26];
+    var barEls = [];
+    for (var i = 0; i < rawWf.length; i++) {
+      var bar = document.createElement('span');
+      bar.className = 'dm-voice-bar';
+      var val = Math.max(12, Math.min(100, Number(rawWf[i]) || 18));
+      bar.style.height = Math.max(4, Math.round((val / 100) * 24)) + 'px';
+      wave.appendChild(bar);
+      barEls.push(bar);
+    }
+
+    var totalMs = Math.max(0, Number(mediaMeta && mediaMeta.durationMs) || 0);
+    var durEl = document.createElement('div');
+    durEl.className = 'dm-voice-dur';
+    durEl.textContent = formatVoiceDuration(totalMs);
+
+    body.appendChild(wave);
+    body.appendChild(durEl);
+    wrap.appendChild(playBtn);
+    wrap.appendChild(body);
+
+    var resolvedUrl = localMediaUrl || '';
+    var audioEl = null;
+    var isLoading = false;
+
+    var uiHandle = {
+      totalMs: totalMs,
+      setPlaying: function(playing) {
+        playBtn.innerHTML = playing ? state.pauseIcon : state.playIcon;
+        if (playing) wrap.classList.add('is-playing');
+        else wrap.classList.remove('is-playing');
+      },
+      setProgress: function(ratio, displayMs) {
+        var r = Math.max(0, Math.min(1, Number(ratio) || 0));
+        var litCount = Math.round(r * barEls.length);
+        for (var j = 0; j < barEls.length; j++) {
+          if (j < litCount) barEls[j].classList.add('played');
+          else barEls[j].classList.remove('played');
+        }
+        durEl.textContent = formatVoiceDuration(displayMs);
+      }
+    };
+
+    async function ensureAudioReady() {
+      if (audioEl) return audioEl;
+      if (!resolvedUrl) {
+        if (!e2eeClient || !mediaMeta || !imageKey) return null;
+        isLoading = true;
+        wrap.classList.add('is-loading');
+        try {
+          resolvedUrl = await e2eeClient.decryptMediaToObjectUrl(imageKey, mediaMeta);
+        } finally {
+          isLoading = false;
+          wrap.classList.remove('is-loading');
+        }
+      }
+      if (!resolvedUrl) return null;
+      audioEl = new Audio(resolvedUrl);
+      audioEl.preload = 'metadata';
+      audioEl.addEventListener('loadedmetadata', function() {
+        if (isFinite(audioEl.duration) && audioEl.duration > 0) {
+          totalMs = Math.round(audioEl.duration * 1000);
+          uiHandle.totalMs = totalMs;
+          if (audioEl.paused) durEl.textContent = formatVoiceDuration(totalMs);
+        }
+      });
+      audioEl.addEventListener('timeupdate', function() {
+        var dur = (isFinite(audioEl.duration) && audioEl.duration > 0) ? audioEl.duration : (totalMs / 1000);
+        var ratio = dur > 0 ? (audioEl.currentTime / dur) : 0;
+        uiHandle.setProgress(ratio, audioEl.currentTime * 1000);
+      });
+      audioEl.addEventListener('ended', function() {
+        uiHandle.setPlaying(false);
+        uiHandle.setProgress(0, totalMs);
+        if (activeVoiceAudio === audioEl) {
+          activeVoiceAudio = null;
+          activeVoiceUi = null;
+        }
+      });
+      audioEl.addEventListener('pause', function() {
+        uiHandle.setPlaying(false);
+      });
+      return audioEl;
+    }
+
+    async function togglePlay(seekRatio) {
+      if (isLoading) return;
+      try {
+        var a = await ensureAudioReady();
+        if (!a) {
+          if (window.showAppToast) window.showAppToast(state.e2eeDecryptFailed);
+          return;
+        }
+        if (typeof seekRatio === 'number') {
+          var dur = (isFinite(a.duration) && a.duration > 0) ? a.duration : (totalMs / 1000);
+          if (dur > 0) {
+            a.currentTime = Math.max(0, Math.min(dur, dur * seekRatio));
+            uiHandle.setProgress(seekRatio, a.currentTime * 1000);
+          }
+          if (a.paused) {
+            if (activeVoiceAudio && activeVoiceAudio !== a) stopActiveVoicePlayback();
+            activeVoiceAudio = a;
+            activeVoiceUi = uiHandle;
+            uiHandle.setPlaying(true);
+            await a.play();
+          }
+          return;
+        }
+        if (!a.paused) {
+          a.pause();
+          return;
+        }
+        if (activeVoiceAudio && activeVoiceAudio !== a) {
+          stopActiveVoicePlayback();
+        }
+        activeVoiceAudio = a;
+        activeVoiceUi = uiHandle;
+        uiHandle.setPlaying(true);
+        await a.play();
+      } catch (err) {
+        uiHandle.setPlaying(false);
+        if (window.showAppToast) window.showAppToast(state.networkError);
+      }
+    }
+
+    playBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      togglePlay();
+    });
+
+    wave.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var rect = wave.getBoundingClientRect();
+      if (!rect.width) return;
+      var ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      togglePlay(ratio);
+    });
+
+    return wrap;
+  }
+
   function hydrateBubbleContent(bubble, timeEl, payload, imageKey, localMediaUrl) {
     while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
-    var hasImg = Boolean((payload && payload.media && imageKey) || localMediaUrl);
+    var isVoice = Boolean(payload && payload.media && payload.media.kind === 'voice' && (imageKey || localMediaUrl));
+    var hasImg = !isVoice && Boolean((payload && payload.media && imageKey) || localMediaUrl);
     var hasText = Boolean(payload && payload.text);
+    var parentRow = bubble.closest ? bubble.closest('.dm-msg-row') : null;
+    if (parentRow) {
+      if (isVoice) parentRow.setAttribute('data-msg-kind', 'voice');
+      else parentRow.removeAttribute('data-msg-kind');
+    }
+    if (isVoice) {
+      bubble.classList.remove('img-only');
+      bubble.classList.add('voice-bubble');
+      bubble.appendChild(buildVoicePlayerEl(payload.media, imageKey, localMediaUrl));
+      bubble.appendChild(timeEl);
+      return;
+    }
+    bubble.classList.remove('voice-bubble');
     if (hasImg && !hasText) bubble.classList.add('img-only');
     else bubble.classList.remove('img-only');
 
@@ -909,7 +1444,7 @@ export function messagesPage(
     if (hasText) {
       var txt = document.createElement('div');
       txt.className = 'dm-msg-text';
-      txt.textContent = payload.text;
+      renderMentionNodes(txt, payload.text);
       bubble.appendChild(txt);
     }
 
@@ -925,22 +1460,12 @@ export function messagesPage(
     row.setAttribute('data-edit-version', String(Number(m.edit_version || 0)));
     row.setAttribute('data-image-key', m.image_key || '');
 
-    if (isMine) {
-      var unsendBtn = document.createElement('button');
-      unsendBtn.type = 'button';
-      unsendBtn.className = 'dm-unsend-btn';
-      unsendBtn.setAttribute('data-unsend-id', String(m.id));
-      unsendBtn.setAttribute('aria-label', state.unsend);
-      unsendBtn.setAttribute('title', state.unsend);
-      unsendBtn.innerHTML = state.trashIcon;
-      row.appendChild(unsendBtn);
-    }
-
     var bubble = document.createElement('div');
     bubble.className = 'dm-msg-bubble';
     var timeEl = document.createElement('div');
     timeEl.className = 'dm-msg-time';
-    renderMsgTimeEl(timeEl, m.created_at || '', Boolean(m.edited_at));
+    var isReadInit = isMine && ((state.lastReadOwnId > 0 && Number(m.id) <= state.lastReadOwnId) || Boolean(m.read_at));
+    renderMsgTimeEl(timeEl, m.created_at || '', Boolean(m.edited_at), isMine, isReadInit);
 
     if (m.is_encrypted) {
       if (decryptedPayload) {
@@ -971,7 +1496,7 @@ export function messagesPage(
       if (m.body) {
         var txt = document.createElement('div');
         txt.className = 'dm-msg-text';
-        txt.textContent = m.body;
+        renderMentionNodes(txt, m.body);
         bubble.appendChild(txt);
       }
       bubble.appendChild(timeEl);
@@ -1044,6 +1569,7 @@ export function messagesPage(
     listEl.appendChild(buildMessageRowEl(m, decryptedPayload, localMediaUrl));
     if (Number(m.id) > state.lastMsgId) state.lastMsgId = Number(m.id);
     if (!state.oldestMsgId || Number(m.id) < state.oldestMsgId) state.oldestMsgId = Number(m.id);
+    syncDateSeparators();
     updateSeenUI();
     if (shouldScroll) scrollToBottom();
   }
@@ -1064,10 +1590,16 @@ export function messagesPage(
             var prefix = isMine ? state.youPrefix : '';
             var txtEl = lastRow.querySelector('.dm-msg-text');
             var txt = txtEl ? (txtEl.textContent || '') : '';
-            var hasImg = Boolean(lastRow.querySelector('.dm-msg-img') || lastRow.getAttribute('data-image-key'));
+            var isVoiceRow = lastRow.getAttribute('data-msg-kind') === 'voice';
+            var hasImg = !isVoiceRow && Boolean(lastRow.querySelector('.dm-msg-img') || lastRow.getAttribute('data-image-key'));
             var isEnc = lastRow.getAttribute('data-encrypted') === '1';
-            previewEl.textContent = txt ? (prefix + txt) : (hasImg ? (prefix + state.photoLabel) : (isEnc ? (prefix + state.encryptedPreview) : ''));
+            previewEl.textContent = txt ? (prefix + txt) : (isVoiceRow ? (prefix + state.voiceLabel) : (hasImg ? (prefix + state.photoLabel) : (isEnc ? (prefix + state.encryptedPreview) : '')));
           }
+          var lastRowId = parseInt(lastRow.getAttribute('data-msg-id') || '0', 10);
+          var lastRowMine = lastRow.classList.contains('mine');
+          item.setAttribute('data-last-msg-id', String(lastRowId));
+          item.setAttribute('data-last-mine', lastRowMine ? '1' : '0');
+          setConvItemCheck(item, lastRowMine, lastRowMine && state.lastReadOwnId > 0 && lastRowId <= state.lastReadOwnId);
         }
       }
     } else {
@@ -1077,13 +1609,16 @@ export function messagesPage(
         if (emptyItem) {
           var emptyPrev = emptyItem.querySelector('.dm-conv-preview');
           if (emptyPrev) emptyPrev.textContent = '';
+          emptyItem.setAttribute('data-last-msg-id', '0');
+          setConvItemCheck(emptyItem, false, false);
         }
       }
     }
+    syncDateSeparators();
     updateSeenUI();
   }
 
-  function updateSidebarPreview(convId, senderId, plainText, hasImg) {
+  function updateSidebarPreview(convId, senderId, plainText, hasImg, mediaKind) {
     if (!convListEl) return;
     var item = convListEl.querySelector('.dm-conv-item[data-conv-id="' + convId + '"]');
     if (!item) return;
@@ -1092,9 +1627,15 @@ export function messagesPage(
     var isMine = Number(senderId) === Number(state.currentUserId);
     var prefix = isMine ? state.youPrefix : '';
     if (previewEl) {
-      previewEl.textContent = plainText ? (prefix + plainText) : (hasImg ? (prefix + state.photoLabel) : (prefix + state.encryptedPreview));
+      var mediaLabel = mediaKind === 'voice' ? state.voiceLabel : state.photoLabel;
+      previewEl.textContent = plainText ? (prefix + plainText) : (hasImg ? (prefix + mediaLabel) : (prefix + state.encryptedPreview));
     }
     if (timeEl) timeEl.textContent = state.justNow;
+    item.setAttribute('data-last-mine', isMine ? '1' : '0');
+    if (Number(state.lastMsgId) > 0 && Number(convId) === Number(state.activeConversationId)) {
+      item.setAttribute('data-last-msg-id', String(state.lastMsgId));
+    }
+    setConvItemCheck(item, isMine, false);
     convListEl.prepend(item);
   }
 
@@ -1158,9 +1699,10 @@ export function messagesPage(
             continue;
           }
           var cleanTxt = cleanPreviewText(payload.text);
+          var mediaLabel = (payload.media && payload.media.kind === 'voice') ? state.voiceLabel : state.photoLabel;
           previewEl.textContent = cleanTxt
             ? (prefix + cleanTxt)
-            : (payload.media ? (prefix + state.photoLabel) : (prefix + state.encryptedPreview));
+            : (payload.media ? (prefix + mediaLabel) : (prefix + state.encryptedPreview));
           item.setAttribute('data-preview-hydrated', verKey);
         }
       } while (needSidebarRehydrate);
@@ -1208,6 +1750,7 @@ export function messagesPage(
   }
 
   syncRenderedMsgClocks();
+  hydratePlainTextMentions();
   if (scrollEl) {
     scrollToBottom();
     setTimeout(scrollToBottom, 80);
@@ -1614,6 +2157,479 @@ export function messagesPage(
     sendBtn.addEventListener('click', submitDmMessage);
   }
 
+  var VOICE_MAX_MS = 120000;
+  var VOICE_MIN_MS = 500;
+  var VOICE_LIVE_BAR_COUNT = 24;
+  var VOICE_WAVEFORM_BARS = 32;
+  var VOICE_CANCEL_PX = 70;
+  var voiceRecording = false;
+  var voiceStarting = false;
+  var voicePointerHeld = false;
+  var voiceCancelActive = false;
+  var voicePointerId = null;
+  var voiceStartX = 0;
+  var voiceStartedAt = 0;
+  var voiceMediaStream = null;
+  var voiceRecorder = null;
+  var voiceAudioCtx = null;
+  var voiceAnalyser = null;
+  var voiceRafId = 0;
+  var voiceTimerId = null;
+  var voiceChunks = [];
+  var voiceLiveLevels = [];
+  var voiceLiveBarEls = [];
+  var voicePeakSamples = [];
+  var voiceLastSampleAt = 0;
+
+  if (voiceLiveBars) {
+    for (var vbIdx = 0; vbIdx < VOICE_LIVE_BAR_COUNT; vbIdx++) {
+      var vBar = document.createElement('span');
+      vBar.className = 'dm-voice-live-bar';
+      vBar.style.height = '4px';
+      voiceLiveBars.appendChild(vBar);
+      voiceLiveBarEls.push(vBar);
+      voiceLiveLevels.push(4);
+    }
+  }
+
+  function pickVoiceMimeType() {
+    if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') return '';
+    var candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+      } catch (e) {}
+    }
+    return '';
+  }
+
+  function downsampleVoiceWaveform(samples, count) {
+    var out = [];
+    if (!samples || samples.length === 0) {
+      for (var i = 0; i < count; i++) out.push(18);
+      return out;
+    }
+    var step = samples.length / count;
+    for (var j = 0; j < count; j++) {
+      var start = Math.floor(j * step);
+      var end = Math.max(start + 1, Math.floor((j + 1) * step));
+      var sum = 0;
+      var cnt = 0;
+      for (var k = start; k < end && k < samples.length; k++) {
+        sum += samples[k];
+        cnt++;
+      }
+      var avg = cnt > 0 ? Math.round(sum / cnt) : 14;
+      out.push(Math.max(10, Math.min(100, avg)));
+    }
+    return out;
+  }
+
+  function cleanupVoiceHardware() {
+    if (voiceRafId) {
+      cancelAnimationFrame(voiceRafId);
+      voiceRafId = 0;
+    }
+    if (voiceTimerId) {
+      clearInterval(voiceTimerId);
+      voiceTimerId = null;
+    }
+    if (voiceMediaStream) {
+      try {
+        voiceMediaStream.getTracks().forEach(function(tr) { tr.stop(); });
+      } catch (e) {}
+      voiceMediaStream = null;
+    }
+    if (voiceAudioCtx) {
+      try { voiceAudioCtx.close(); } catch (e2) {}
+      voiceAudioCtx = null;
+    }
+    voiceAnalyser = null;
+  }
+
+  function resetVoiceUi() {
+    voiceRecording = false;
+    voiceStarting = false;
+    voicePointerHeld = false;
+    voiceCancelActive = false;
+    voicePointerId = null;
+    if (formEl) formEl.classList.remove('is-recording', 'is-voice-cancelling');
+    if (voiceBtn) voiceBtn.classList.remove('recording');
+    if (voiceRecTimer) voiceRecTimer.textContent = '0:00';
+    if (voiceRecHint) voiceRecHint.textContent = state.voiceSlideCancel;
+    for (var i = 0; i < voiceLiveBarEls.length; i++) {
+      voiceLiveLevels[i] = 4;
+      voiceLiveBarEls[i].style.height = '4px';
+    }
+  }
+
+  function abortVoiceRecording() {
+    voicePointerHeld = false;
+    voiceCancelActive = true;
+    var rec = voiceRecorder;
+    voiceRecorder = null;
+    if (rec && rec.state !== 'inactive') {
+      try {
+        rec.onstop = null;
+        rec.stop();
+      } catch (e) {}
+    }
+    cleanupVoiceHardware();
+    resetVoiceUi();
+  }
+
+  function pumpVoiceMeter() {
+    if (!voiceRecording || !voiceAnalyser) return;
+    var buf = new Uint8Array(voiceAnalyser.fftSize);
+    voiceAnalyser.getByteTimeDomainData(buf);
+    var sumSq = 0;
+    for (var i = 0; i < buf.length; i++) {
+      var norm = (buf[i] - 128) / 128;
+      sumSq += norm * norm;
+    }
+    var rms = Math.sqrt(sumSq / buf.length);
+    var level = Math.max(8, Math.min(100, Math.round(Math.pow(Math.min(1, rms * 4.2), 0.72) * 100)));
+    var now = Date.now();
+    if (now - voiceLastSampleAt >= 48) {
+      voiceLastSampleAt = now;
+      voicePeakSamples.push(level);
+      voiceLiveLevels.shift();
+      voiceLiveLevels.push(level);
+      for (var j = 0; j < voiceLiveBarEls.length; j++) {
+        var px = Math.max(4, Math.round((voiceLiveLevels[j] / 100) * 24));
+        voiceLiveBarEls[j].style.height = px + 'px';
+      }
+    }
+    voiceRafId = requestAnimationFrame(pumpVoiceMeter);
+  }
+
+  async function sendVoiceMessage(audioBlob, durationMs, waveform) {
+    if (!audioBlob || audioBlob.size <= 0 || isSending) return;
+    if (audioBlob.size > 1536 * 1024) {
+      if (window.showAppToast) window.showAppToast(state.voiceTooLarge);
+      return;
+    }
+    isSending = true;
+    syncSendState();
+    var sentLocalUrl = '';
+    try {
+      var c = await ensureE2eeReady();
+      if (!c) {
+        if (window.showAppToast) window.showAppToast(state.networkError);
+        return;
+      }
+      var fileBytes = await audioBlob.arrayBuffer();
+      var fileMime = audioBlob.type || 'audio/webm';
+      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        sentLocalUrl = URL.createObjectURL(audioBlob);
+      }
+      var enc;
+      try {
+        enc = await c.encryptMessage({
+          partnerUserId: state.activePartnerId,
+          text: '',
+          fileBytes: fileBytes,
+          fileMime: fileMime,
+          mediaKind: 'voice',
+          voiceDurationMs: durationMs,
+          voiceWaveform: waveform
+        });
+      } catch (encErr) {
+        if (sentLocalUrl) { try { URL.revokeObjectURL(sentLocalUrl); } catch (e2) {} }
+        if (encErr && encErr.code === 'PARTNER_NOT_READY') {
+          if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
+          return;
+        }
+        if (encErr && encErr.code === 'KEY_CHANGED') {
+          pendingKeyChange = {
+            userId: encErr.userId,
+            deviceId: encErr.deviceId,
+            identityKey: encErr.identityKey,
+            devices: encErr.devices
+          };
+          showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+          return;
+        }
+        if (encErr && encErr.code === 'VOICE_TOO_LARGE') {
+          if (window.showAppToast) window.showAppToast(state.voiceTooLarge);
+          return;
+        }
+        if (window.showAppToast) window.showAppToast(state.networkError);
+        return;
+      }
+      var fd = new FormData();
+      if (state.activeConversationId > 0) fd.append('conversation_id', String(state.activeConversationId));
+      else if (state.activePartnerId > 0) fd.append('target_user_id', String(state.activePartnerId));
+      fd.append('sender_device_id', String(enc.senderDeviceId));
+      fd.append('envelopes', JSON.stringify(enc.envelopes));
+      fd.append('encrypted_media', enc.encryptedBlob, 'voice.enc');
+      var res = await fetch('/api/messages/send', { method: 'POST', credentials: 'same-origin', body: fd });
+      var data = await res.json();
+      if (res.ok && data && data.success && data.message) {
+        hideBanner();
+        if (data.conversation_id) state.activeConversationId = Number(data.conversation_id);
+        await c.cacheSentMessage(Number(data.message.id), enc.payload);
+        appendMessageIfNew(data.message, true, enc.payload, sentLocalUrl);
+        updateSidebarPreview(state.activeConversationId, state.currentUserId, '', true, 'voice');
+      } else {
+        if (sentLocalUrl) { try { URL.revokeObjectURL(sentLocalUrl); } catch (e3) {} }
+        if (window.showAppToast) window.showAppToast((data && data.error) || state.networkError);
+      }
+    } catch (err) {
+      if (sentLocalUrl) { try { URL.revokeObjectURL(sentLocalUrl); } catch (e4) {} }
+      if (window.showAppToast) window.showAppToast(state.networkError);
+    } finally {
+      isSending = false;
+      syncSendState();
+    }
+  }
+
+  function finishVoiceRecording(cancelled) {
+    if (!voiceRecording) {
+      voicePointerHeld = false;
+      return;
+    }
+    var rec = voiceRecorder;
+    var elapsedMs = Math.min(VOICE_MAX_MS, Math.max(0, Date.now() - voiceStartedAt));
+    var samplesCopy = voicePeakSamples.slice();
+    var wasCancelled = Boolean(cancelled || voiceCancelActive);
+    voiceRecorder = null;
+    cleanupVoiceHardware();
+    resetVoiceUi();
+
+    if (!rec) return;
+    if (wasCancelled) {
+      try {
+        rec.onstop = null;
+        if (rec.state !== 'inactive') rec.stop();
+      } catch (e) {}
+      voiceChunks = [];
+      return;
+    }
+    if (elapsedMs < VOICE_MIN_MS) {
+      try {
+        rec.onstop = null;
+        if (rec.state !== 'inactive') rec.stop();
+      } catch (e2) {}
+      voiceChunks = [];
+      if (window.showAppToast) window.showAppToast(state.voiceHoldHint);
+      return;
+    }
+    rec.onstop = function() {
+      var chunks = voiceChunks.slice();
+      voiceChunks = [];
+      var finalMime = (rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm');
+      var blob = new Blob(chunks, { type: finalMime });
+      var waveform = downsampleVoiceWaveform(samplesCopy, VOICE_WAVEFORM_BARS);
+      sendVoiceMessage(blob, elapsedMs, waveform);
+    };
+    try {
+      if (rec.state !== 'inactive') rec.stop();
+    } catch (e3) {
+      voiceChunks = [];
+    }
+  }
+
+  function detectMicPlatform() {
+    var ua = navigator.userAgent || '';
+    var isIos = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (isIos) return 'ios';
+    if (/Android/.test(ua)) return 'android';
+    var isStandalone = false;
+    try {
+      isStandalone = Boolean(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    } catch (e) {}
+    if (/Firefox\\//.test(ua)) return 'firefox';
+    if (/Safari\\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|YaBrowser/.test(ua)) return 'safari';
+    if (isStandalone) return 'desktopPwa';
+    return 'chrome';
+  }
+
+  function openMicBlockedModal() {
+    if (!micBlockedModal) {
+      if (window.showAppToast) window.showAppToast(state.voiceMicDenied);
+      return;
+    }
+    var stepsMap = state.micBlockedSteps || {};
+    if (micBlockedStepsEl) {
+      micBlockedStepsEl.textContent = stepsMap[detectMicPlatform()] || stepsMap.chrome || state.voiceMicDenied;
+    }
+    micBlockedModal.classList.add('visible');
+  }
+
+  function closeMicBlockedModal() {
+    if (micBlockedModal) micBlockedModal.classList.remove('visible');
+  }
+
+  if (closeMicBlockedBtn) closeMicBlockedBtn.addEventListener('click', closeMicBlockedModal);
+  if (okMicBlockedBtn) okMicBlockedBtn.addEventListener('click', closeMicBlockedModal);
+  if (micBlockedModal) {
+    micBlockedModal.addEventListener('click', function(e) {
+      if (e.target === micBlockedModal) closeMicBlockedModal();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && micBlockedModal.classList.contains('visible')) {
+        closeMicBlockedModal();
+      }
+    });
+  }
+
+  async function startVoiceRecording(clientX, pointerId) {
+    if (voiceRecording || voiceStarting || isSending) return;
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function' || typeof MediaRecorder === 'undefined') {
+      if (window.showAppToast) window.showAppToast(state.voiceUnsupported);
+      return;
+    }
+    stopActiveVoicePlayback();
+    voiceStarting = true;
+    voicePointerHeld = true;
+    voiceCancelActive = false;
+    voicePointerId = pointerId;
+    voiceStartX = clientX;
+    voiceChunks = [];
+    voicePeakSamples = [];
+    voiceLastSampleAt = 0;
+
+    var stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        }
+      });
+    } catch (err) {
+      voiceStarting = false;
+      voicePointerHeld = false;
+      var errName = err && err.name ? String(err.name) : '';
+      if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        if (window.showAppToast) window.showAppToast(state.voiceMicDenied);
+      } else {
+        openMicBlockedModal();
+      }
+      return;
+    }
+
+    if (!voicePointerHeld) {
+      try { stream.getTracks().forEach(function(tr) { tr.stop(); }); } catch (e) {}
+      voiceStarting = false;
+      if (window.showAppToast) window.showAppToast(state.voiceHoldHint);
+      return;
+    }
+
+    voiceMediaStream = stream;
+    var chosenMime = pickVoiceMimeType();
+    var recOpts = { audioBitsPerSecond: 64000 };
+    if (chosenMime) recOpts.mimeType = chosenMime;
+    try {
+      voiceRecorder = new MediaRecorder(stream, recOpts);
+    } catch (e2) {
+      try {
+        voiceRecorder = new MediaRecorder(stream);
+      } catch (e3) {
+        cleanupVoiceHardware();
+        resetVoiceUi();
+        if (window.showAppToast) window.showAppToast(state.voiceUnsupported);
+        return;
+      }
+    }
+
+    voiceRecorder.ondataavailable = function(ev) {
+      if (ev && ev.data && ev.data.size > 0) voiceChunks.push(ev.data);
+    };
+
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        voiceAudioCtx = new AudioCtx();
+        var src = voiceAudioCtx.createMediaStreamSource(stream);
+        voiceAnalyser = voiceAudioCtx.createAnalyser();
+        voiceAnalyser.fftSize = 256;
+        voiceAnalyser.smoothingTimeConstant = 0.5;
+        src.connect(voiceAnalyser);
+      }
+    } catch (e4) {}
+
+    voiceStarting = false;
+    voiceRecording = true;
+    voiceStartedAt = Date.now();
+    if (formEl) formEl.classList.add('is-recording');
+    if (voiceBtn) voiceBtn.classList.add('recording');
+    if (voiceRecTimer) voiceRecTimer.textContent = '0:00';
+    if (voiceRecHint) voiceRecHint.textContent = state.voiceSlideCancel;
+
+    try {
+      voiceRecorder.start(200);
+    } catch (e5) {
+      cleanupVoiceHardware();
+      resetVoiceUi();
+      return;
+    }
+
+    voiceTimerId = setInterval(function() {
+      if (!voiceRecording) return;
+      var elapsed = Date.now() - voiceStartedAt;
+      if (voiceRecTimer) voiceRecTimer.textContent = formatVoiceDuration(elapsed);
+      if (elapsed >= VOICE_MAX_MS) {
+        finishVoiceRecording(false);
+      }
+    }, 100);
+    pumpVoiceMeter();
+  }
+
+  if (voiceBtn) {
+    voiceBtn.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+    });
+    voiceBtn.addEventListener('pointerdown', function(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      try { voiceBtn.setPointerCapture(e.pointerId); } catch (ce) {}
+      startVoiceRecording(e.clientX, e.pointerId);
+    });
+    voiceBtn.addEventListener('pointermove', function(e) {
+      if (!voiceRecording || (voicePointerId !== null && e.pointerId !== voicePointerId)) return;
+      var dx = voiceStartX - e.clientX;
+      var nextCancel = dx >= VOICE_CANCEL_PX;
+      if (nextCancel !== voiceCancelActive) {
+        voiceCancelActive = nextCancel;
+        if (formEl) {
+          if (voiceCancelActive) formEl.classList.add('is-voice-cancelling');
+          else formEl.classList.remove('is-voice-cancelling');
+        }
+        if (voiceRecHint) {
+          voiceRecHint.textContent = voiceCancelActive ? state.voiceReleaseCancel : state.voiceSlideCancel;
+        }
+      }
+    });
+    function onVoicePointerEnd(e) {
+      if (voicePointerId !== null && e && e.pointerId !== undefined && e.pointerId !== voicePointerId) return;
+      if (voiceStarting) {
+        voicePointerHeld = false;
+        return;
+      }
+      if (voiceRecording) {
+        finishVoiceRecording(voiceCancelActive);
+      }
+    }
+    voiceBtn.addEventListener('pointerup', onVoicePointerEnd);
+    voiceBtn.addEventListener('pointercancel', function() {
+      if (voiceStarting) { voicePointerHeld = false; return; }
+      if (voiceRecording) finishVoiceRecording(true);
+    });
+  }
+
+  var prevCleanupFn = window.__dmViewportCleanup;
+  window.__dmViewportCleanup = function() {
+    abortVoiceRecording();
+    stopActiveVoicePlayback();
+    if (typeof prevCleanupFn === 'function') prevCleanupFn();
+  };
+  syncSendState();
+
   if (loadOlderBtn && listEl && scrollEl) {
     loadOlderBtn.addEventListener('click', async function() {
       if (!state.activeConversationId || !state.oldestMsgId || loadOlderBtn.disabled) return;
@@ -1653,6 +2669,8 @@ export function messagesPage(
           if (data.messages.length > 0) {
             state.oldestMsgId = Number(data.messages[0].id);
           }
+          syncDateSeparators();
+          updateSeenUI();
           scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight;
           if (!data.has_more) {
             loadOlderBtn.remove();
@@ -1712,7 +2730,8 @@ export function messagesPage(
       msgCopyBtn.style.display = canCopyMsg ? 'flex' : 'none';
     }
     if (msgEditBtn) {
-      var canEditMsg = row.classList.contains('mine') && !row.querySelector('.dm-msg-decrypt-err');
+      var isVoiceRowCtx = row.getAttribute('data-msg-kind') === 'voice';
+      var canEditMsg = row.classList.contains('mine') && !isVoiceRowCtx && !row.querySelector('.dm-msg-decrypt-err');
       msgEditBtn.style.display = canEditMsg ? 'flex' : 'none';
     }
     if (msgActionList) {
@@ -1887,7 +2906,6 @@ export function messagesPage(
 
   if (listEl) {
     listEl.addEventListener('contextmenu', function(e) {
-      if (e.target && e.target.closest && e.target.closest('.dm-unsend-btn')) return;
       var row = e.target && e.target.closest ? e.target.closest('.dm-msg-row[data-msg-id]') : null;
       if (!row || !reactionPicker) return;
       e.preventDefault();
@@ -1900,7 +2918,7 @@ export function messagesPage(
         clearMsgLongPressTimer();
         return;
       }
-      if (e.target && e.target.closest && e.target.closest('.dm-unsend-btn, .dm-reaction-pill')) return;
+      if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link')) return;
       var bubble = e.target && e.target.closest ? e.target.closest('.dm-msg-bubble') : null;
       var row = bubble && bubble.closest ? bubble.closest('.dm-msg-row[data-msg-id]') : null;
       if (!row || !reactionPicker) return;
@@ -1962,11 +2980,6 @@ export function messagesPage(
         lightbox.classList.add('visible');
         return;
       }
-      var unsendBtn = e.target && e.target.closest ? e.target.closest('[data-unsend-id]') : null;
-      if (!unsendBtn) return;
-      var msgId = parseInt(unsendBtn.getAttribute('data-unsend-id'), 10);
-      if (!msgId) return;
-      openDeleteMessageModal(msgId);
     });
   }
 
@@ -2602,6 +3615,7 @@ export function messagesPage(
     var isCurrent = Number(state.activeConversationId) > 0 && Number(state.activeConversationId) === Number(c.id);
     var isUnread = Number(c.unread_count || 0) > 0 && !isCurrent;
     var isMine = Number(c.last_message_sender_id || 0) === Number(state.currentUserId);
+    var isLastRead = Boolean(c.last_message_read);
     var prefix = isMine ? state.youPrefix : '';
     var a = document.createElement('a');
     a.setAttribute('href', '/messages/' + encodeURIComponent(c.other_username || ''));
@@ -2612,6 +3626,7 @@ export function messagesPage(
     a.setAttribute('data-last-msg-id', String(c.last_message_id || 0));
     a.setAttribute('data-last-encrypted', c.last_message_encrypted ? '1' : '0');
     a.setAttribute('data-last-mine', isMine ? '1' : '0');
+    a.setAttribute('data-last-read', isLastRead ? '1' : '0');
     a.setAttribute('data-last-edit-version', String(c.last_message_edit_version || 0));
 
     var avatarDiv = document.createElement('div');
@@ -2643,11 +3658,20 @@ export function messagesPage(
       vbWrap.innerHTML = window.renderVerifiedBadge(13);
       if (vbWrap.firstChild) nameSpan.appendChild(vbWrap.firstChild);
     }
+    var topRight = document.createElement('span');
+    topRight.className = 'dm-conv-top-right';
+    if (isMine && Number(c.last_message_id || 0) > 0) {
+      var chkSpan = document.createElement('span');
+      chkSpan.className = 'dm-conv-check';
+      setStatusCheckIcon(chkSpan, isLastRead);
+      topRight.appendChild(chkSpan);
+    }
     var timeSpan = document.createElement('span');
     timeSpan.className = 'dm-conv-time';
     timeSpan.textContent = formatDmShortTimeClient(c.last_message_at || '');
+    topRight.appendChild(timeSpan);
     topDiv.appendChild(nameSpan);
-    topDiv.appendChild(timeSpan);
+    topDiv.appendChild(topRight);
     metaDiv.appendChild(topDiv);
 
     var botDiv = document.createElement('div');
@@ -2736,6 +3760,7 @@ export function messagesPage(
 
         var timeEl = item.querySelector('.dm-conv-time');
         if (timeEl) timeEl.textContent = formatDmShortTimeClient(c.last_message_at || '');
+        setConvItemCheck(item, isMine, Boolean(c.last_message_read));
 
         var botEl = item.querySelector('.dm-conv-bottom');
         var dotEl = item.querySelector('.dm-conv-unread');
@@ -2879,11 +3904,21 @@ export function messagesPage(
     }
 
     if (ev.type === 'message.read') {
-      if (Number(ev.conversation_id) === Number(state.activeConversationId) && Number(ev.reader_id) !== Number(state.currentUserId)) {
-        var nextRead = Number(ev.last_read_id || 0);
-        if (nextRead > state.lastReadOwnId) {
+      var readConvId = Number(ev.conversation_id || 0);
+      var nextRead = Number(ev.last_read_id || 0);
+      if (Number(ev.reader_id) !== Number(state.currentUserId)) {
+        if (readConvId === Number(state.activeConversationId) && nextRead > state.lastReadOwnId) {
           state.lastReadOwnId = nextRead;
           updateSeenUI();
+        }
+        if (convListEl && readConvId > 0 && nextRead > 0) {
+          var rConvItem = convListEl.querySelector('.dm-conv-item[data-conv-id="' + readConvId + '"]');
+          if (rConvItem && rConvItem.getAttribute('data-last-mine') === '1') {
+            var rLastId = parseInt(rConvItem.getAttribute('data-last-msg-id') || '0', 10);
+            if (rLastId > 0 && nextRead >= rLastId) {
+              setConvItemCheck(rConvItem, true, true);
+            }
+          }
         }
       }
       return;
@@ -3078,7 +4113,8 @@ export function messagesPage(
           }
           var cleanTxt = cleanPreviewText(dec ? dec.text : (m.is_encrypted ? '' : (m.body || '')));
           var hasImg = dec ? Boolean(dec.media) : Boolean(m.image_key);
-          updateSidebarPreview(mConvId, m.sender_id, cleanTxt, hasImg);
+          var mKind = (dec && dec.media && dec.media.kind) ? dec.media.kind : '';
+          updateSidebarPreview(mConvId, m.sender_id, cleanTxt, hasImg, mKind);
           if (dec || !m.is_encrypted) {
             item.setAttribute('data-preview-hydrated', Number(m.id) + ':' + Number(m.edit_version || 0));
           }
@@ -3110,6 +4146,11 @@ export function messagesPage(
 
   function onDmVisibilityChange() {
     if (document.visibilityState === 'visible') {
+      if (micBlockedModal && micBlockedModal.classList.contains('visible') && navigator.permissions && typeof navigator.permissions.query === 'function') {
+        navigator.permissions.query({ name: 'microphone' }).then(function(st) {
+          if (st && st.state === 'granted') closeMicBlockedModal();
+        }).catch(function() {});
+      }
       var wsConnected = Boolean(window.PhotogramRealtime && window.PhotogramRealtime.isConnected());
       if (!wsConnected) {
         if (window.PhotogramRealtime) window.PhotogramRealtime.ensureConnected();
