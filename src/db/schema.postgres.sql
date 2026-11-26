@@ -89,12 +89,24 @@ CREATE TABLE IF NOT EXISTS comments (
     id         SERIAL PRIMARY KEY,
     post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parent_id  INTEGER REFERENCES comments(id) ON DELETE CASCADE,
     content    TEXT    NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_comments_post_created ON comments(post_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_comments_user_created ON comments(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_parent_id    ON comments(parent_id);
+
+CREATE TABLE IF NOT EXISTS comment_likes (
+    comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (comment_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_likes_comment ON comment_likes(comment_id);
+CREATE INDEX IF NOT EXISTS idx_comment_likes_user    ON comment_likes(user_id);
 
 CREATE TABLE IF NOT EXISTS user_interactions (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -199,7 +211,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     id              BIGSERIAL PRIMARY KEY,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     actor_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type            TEXT    NOT NULL CHECK (type IN ('like', 'comment', 'follow')),
+    type            TEXT    NOT NULL CHECK (type IN ('like', 'comment', 'comment_like', 'comment_reply', 'follow')),
     post_id         INTEGER REFERENCES posts(id) ON DELETE CASCADE,
     comment_id      INTEGER REFERENCES comments(id) ON DELETE CASCADE,
     comment_preview TEXT    NOT NULL DEFAULT '',

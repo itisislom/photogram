@@ -11,6 +11,7 @@ const PHOTO_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" 
 const CHAT_BIG_ICON = `<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
 const TRASH_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 const EDIT_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+const COPY_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const LOCK_XS_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 
 function parseDateSafe(dateStr: string): Date {
@@ -313,6 +314,10 @@ export function messagesPage(
       ${ALLOWED_DM_REACTIONS.map((em) => `<button type="button" class="dm-reaction-pick-btn" data-pick-emoji="${escapeHtml(em)}" role="menuitem" aria-label="${escapeHtml(em)}">${escapeHtml(em)}</button>`).join('')}
     </div>
     <div class="dm-msg-action-list" id="dmMsgActionList">
+      <button type="button" class="dm-msg-action-btn" id="dmMsgCopyBtn" role="menuitem" style="display:none;">
+        ${COPY_SM_ICON}
+        <span>${escapeHtml(t.messages.copyMessage)}</span>
+      </button>
       <button type="button" class="dm-msg-action-btn" id="dmMsgEditBtn" role="menuitem" style="display:none;">
         ${EDIT_SM_ICON}
         <span>${escapeHtml(t.messages.editMessage)}</span>
@@ -378,6 +383,7 @@ export function messagesPage(
     deleteChatSuccess: t.messages.deleteChatSuccess,
     deleteMessageConfirmTitle: t.messages.deleteMessageConfirmTitle,
     deleteMessageConfirmDesc: t.messages.deleteMessageConfirmDesc,
+    copiedToast: t.messages.copiedToast,
     editedLabel: t.messages.editedLabel,
     emptyListTitle: t.messages.emptyListTitle,
     emptyListDesc: t.messages.emptyListDesc,
@@ -570,6 +576,7 @@ export function messagesPage(
   var deleteChatConfirmBtn = document.getElementById('dmDeleteChatConfirmBtn');
   var reactionPicker = document.getElementById('dmReactionPicker');
   var msgActionList = document.getElementById('dmMsgActionList');
+  var msgCopyBtn = document.getElementById('dmMsgCopyBtn');
   var msgEditBtn = document.getElementById('dmMsgEditBtn');
   var msgDeleteBtn = document.getElementById('dmMsgDeleteBtn');
   var editBar = document.getElementById('dmEditBar');
@@ -1591,6 +1598,11 @@ export function messagesPage(
         b.classList.remove('is-selected');
       }
     });
+    if (msgCopyBtn) {
+      var copyTxtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
+      var canCopyMsg = Boolean(copyTxtEl && copyTxtEl.textContent && copyTxtEl.textContent.trim());
+      msgCopyBtn.style.display = canCopyMsg ? 'flex' : 'none';
+    }
     if (msgEditBtn) {
       var canEditMsg = row.classList.contains('mine') && !row.querySelector('.dm-msg-decrypt-err');
       msgEditBtn.style.display = canEditMsg ? 'flex' : 'none';
@@ -1646,6 +1658,55 @@ export function messagesPage(
     } finally {
       delete reactingMsgIds[msgId];
     }
+  }
+
+  async function copyTextToClipboard(text) {
+    if (!text) return false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {}
+    var ta = null;
+    try {
+      ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      if (typeof ta.setSelectionRange === 'function') {
+        ta.setSelectionRange(0, text.length);
+      }
+      var ok = Boolean(document.execCommand && document.execCommand('copy'));
+      return ok;
+    } catch (e2) {
+      return false;
+    } finally {
+      if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
+    }
+  }
+
+  if (msgCopyBtn) {
+    msgCopyBtn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var targetRow = reactActiveRow;
+      closeReactionPicker();
+      if (!targetRow) return;
+      var txtEl = targetRow.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
+      var txt = txtEl ? (txtEl.textContent || '') : '';
+      if (!txt) return;
+      var copied = await copyTextToClipboard(txt);
+      if (copied && window.showAppToast) {
+        window.showAppToast(state.copiedToast);
+      }
+    });
   }
 
   if (msgEditBtn) {

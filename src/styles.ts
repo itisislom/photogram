@@ -2534,6 +2534,219 @@ body {
   text-decoration: underline;
 }
 
+.comment-like-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -6px -10px -6px 0;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.comment-like-btn svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.comment-like-btn.liked {
+  color: var(--like-color);
+}
+
+.comment-like-btn.liked svg {
+  fill: var(--like-color);
+  stroke: var(--like-color);
+}
+
+.comment-like-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.comment-like-count {
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-height: 11px;
+}
+
+.comment-like-count:empty {
+  display: none;
+}
+
+.comment-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.comment-reply-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.comment-reply-btn:hover {
+  color: var(--text-primary);
+}
+
+.comment-replies-block {
+  position: relative;
+  margin-left: 15px;
+  padding-left: 25px;
+  margin-top: 4px;
+}
+
+.comment-replies-block::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -12px;
+  width: 18px;
+  height: 29px;
+  border-left: 1.5px solid var(--border-color);
+  border-bottom: 1.5px solid var(--border-color);
+  border-bottom-left-radius: 12px;
+  pointer-events: none;
+}
+
+.comment-replies-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 4px 10px 4px 6px;
+  margin-left: -4px;
+  background: transparent;
+  border: none;
+  border-radius: 16px;
+  color: var(--accent-color);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.comment-replies-toggle:hover {
+  background: var(--pill-bg);
+}
+
+.comment-replies-chevron {
+  flex-shrink: 0;
+  display: block;
+}
+
+.comment-replies-block.is-expanded .comment-replies-chevron {
+  transform: rotate(180deg);
+}
+
+.comment-replies-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  position: relative;
+}
+
+.comment-item.is-reply {
+  position: relative;
+  padding-left: 0;
+}
+
+.comment-item.is-reply::before {
+  content: '';
+  position: absolute;
+  left: -25px;
+  top: -10px;
+  bottom: -10px;
+  width: 1.5px;
+  background: var(--border-color);
+  pointer-events: none;
+}
+
+.comment-item.is-reply:last-child::before {
+  bottom: auto;
+  height: 22px;
+}
+
+.comment-item.is-reply::after {
+  content: '';
+  position: absolute;
+  left: -25px;
+  top: 0;
+  width: 19px;
+  height: 13px;
+  border-left: 1.5px solid var(--border-color);
+  border-bottom: 1.5px solid var(--border-color);
+  border-bottom-left-radius: 11px;
+  pointer-events: none;
+}
+
+.comment-avatar.is-reply-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.comments-reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.comments-reply-bar-icon {
+  display: inline-flex;
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.comments-reply-bar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.comments-reply-bar-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.comments-reply-bar-close:hover {
+  color: var(--text-primary);
+  background: var(--pill-bg);
+}
+
 .comment-empty-text {
   font-size: 13px;
   color: var(--text-secondary);

@@ -55,6 +55,12 @@ export function notificationsPage(
           let actionText = '';
           if (n.type === 'like') {
             actionText = escapeHtml(t.notifications.likedYourPost);
+          } else if (n.type === 'comment_like') {
+            const preview = n.comment_preview ? ` «${escapeHtml(n.comment_preview)}»` : '';
+            actionText = `${escapeHtml(t.notifications.likedYourComment)}${preview}`;
+          } else if (n.type === 'comment_reply') {
+            const preview = n.comment_preview ? ` «${escapeHtml(n.comment_preview)}»` : '';
+            actionText = `${escapeHtml(t.notifications.repliedYourComment)}${preview}`;
           } else if (n.type === 'follow') {
             actionText = escapeHtml(t.notifications.startedFollowingYou);
           } else {
@@ -71,8 +77,9 @@ export function notificationsPage(
                 ${escapeHtml(btnLabel)}
               </button>`;
           } else if (n.post_image_key) {
+            const targetUser = n.post_author_username || currentUser.username;
             rightHtml = `
-              <a href="/u/${encodeURIComponent(currentUser.username)}" class="notif-thumb">
+              <a href="/u/${encodeURIComponent(targetUser)}" class="notif-thumb">
                 <img src="/media/${encodeURIComponent(n.post_image_key)}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
               </a>`;
           }

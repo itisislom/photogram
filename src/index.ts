@@ -1,7 +1,7 @@
 import { Env, User } from './types';
 import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
 import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
-import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment } from './posts';
+import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike } from './posts';
 import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
 import { profilePage, userNotFoundPage } from './pages/profile';
@@ -595,6 +595,10 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
     if (pathname === '/api/posts/comment/delete' && method === 'POST') {
       return handleDeleteComment(request, env);
+    }
+
+    if (pathname === '/api/posts/comment/like' && method === 'POST') {
+      return handleToggleCommentLike(request, env);
     }
 
     if (pathname === '/api/messages/conversations' && method === 'GET') {

@@ -180,6 +180,10 @@ export const ru: Translations = {
     send: 'Опубликовать',
     deleteTitle: 'Удалить комментарий?',
     deleteConfirm: 'Вы уверены, что хотите удалить этот комментарий?',
+    reply: 'Ответить',
+    replyingTo: 'Ответ @{username}',
+    showReplies: 'Ответы ({n})',
+    hideReplies: 'Скрыть ответы',
   },
 
   sublist: {
@@ -298,6 +302,8 @@ export const ru: Translations = {
     deleteChatConfirmDesc: 'Вы уверены, что хотите удалить всю переписку с @{username}?',
     deleteChatAlsoFor: 'Также удалить для @{username}',
     deleteChatSuccess: 'Чат удалён',
+    copyMessage: 'Скопировать',
+    copiedToast: 'Скопировано',
     editMessage: 'Изменить сообщение',
     editingMessage: 'Редактирование',
     editedLabel: 'Изменено',
@@ -330,6 +336,8 @@ export const ru: Translations = {
     emptyDesc: 'Когда кто-то подпишется на вас, поставит лайк или оставит комментарий, вы увидите это здесь.',
     likedYourPost: 'понравилась ваша публикация',
     commentedYourPost: 'прокомментировал(-а):',
+    likedYourComment: 'понравился ваш комментарий:',
+    repliedYourComment: 'ответил(-а) на ваш комментарий:',
     startedFollowingYou: 'подписался(-ась) на вас',
     settingTitle: 'Уведомления',
     settingDesc: 'Лайки, комментарии и новые подписчики',

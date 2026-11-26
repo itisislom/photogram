@@ -175,6 +175,10 @@ export const uz: Translations = {
     send: 'Yuborish',
     deleteTitle: 'Izohni o‘chirish?',
     deleteConfirm: 'Haqiqatan ham bu izohni o‘chirmoqchimisiz?',
+    reply: 'Javob berish',
+    replyingTo: '@{username} ga javob',
+    showReplies: 'Javoblar ({n})',
+    hideReplies: 'Javoblarni yashirish',
   },
 
   sublist: {
@@ -293,6 +297,8 @@ export const uz: Translations = {
     deleteChatConfirmDesc: '@{username} bilan barcha yozishmalarni o‘chirishga ishonchingiz komilmi?',
     deleteChatAlsoFor: '@{username} uchun ham o‘chirish',
     deleteChatSuccess: 'Chat o‘chirildi',
+    copyMessage: 'Nusxalash',
+    copiedToast: 'Nusxalandi',
     editMessage: 'Xabarni tahrirlash',
     editingMessage: 'Tahrirlanmoqda',
     editedLabel: 'Tahrirlangan',
@@ -325,6 +331,8 @@ export const uz: Translations = {
     emptyDesc: 'Kimdir sizga obuna bo‘lsa, layk bossa yoki izoh qoldirsa, shu yerda ko‘rinadi.',
     likedYourPost: 'postingizga layk bosdi',
     commentedYourPost: 'izoh qoldirdi:',
+    likedYourComment: 'izohingizga layk bosdi:',
+    repliedYourComment: 'izohingizga javob yozdi:',
     startedFollowingYou: 'sizga obuna bo‘ldi',
     settingTitle: 'Bildirishnomalar',
     settingDesc: 'Layklar, izohlar va yangi obunachilar',

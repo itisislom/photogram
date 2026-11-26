@@ -177,6 +177,10 @@ export interface Translations {
     send: string;
     deleteTitle: string;
     deleteConfirm: string;
+    reply: string;
+    replyingTo: string;
+    showReplies: string;
+    hideReplies: string;
   };
 
   sublist: {
@@ -231,6 +235,8 @@ export interface Translations {
     deleteChatConfirmDesc: string;
     deleteChatAlsoFor: string;
     deleteChatSuccess: string;
+    copyMessage: string;
+    copiedToast: string;
     editMessage: string;
     editingMessage: string;
     editedLabel: string;
@@ -263,6 +269,8 @@ export interface Translations {
     emptyDesc: string;
     likedYourPost: string;
     commentedYourPost: string;
+    likedYourComment: string;
+    repliedYourComment: string;
     startedFollowingYou: string;
     settingTitle: string;
     settingDesc: string;

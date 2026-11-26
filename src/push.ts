@@ -192,7 +192,7 @@ export function isAllowedPushEndpoint(raw: string): boolean {
 }
 
 export interface PushPayload {
-  kind: 'dm' | 'like' | 'comment' | 'follow';
+  kind: 'dm' | 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow';
   title: string;
   body: string;
   url: string;

@@ -175,6 +175,10 @@ export const en: Translations = {
     send: 'Post',
     deleteTitle: 'Delete comment?',
     deleteConfirm: 'Are you sure you want to delete this comment?',
+    reply: 'Reply',
+    replyingTo: 'Replying to @{username}',
+    showReplies: '{n} replies',
+    hideReplies: 'Hide replies',
   },
 
   sublist: {
@@ -293,6 +297,8 @@ export const en: Translations = {
     deleteChatConfirmDesc: 'Are you sure you want to delete the entire chat with @{username}?',
     deleteChatAlsoFor: 'Also delete for @{username}',
     deleteChatSuccess: 'Chat deleted',
+    copyMessage: 'Copy',
+    copiedToast: 'Copied',
     editMessage: 'Edit message',
     editingMessage: 'Editing message',
     editedLabel: 'Edited',
@@ -325,6 +331,8 @@ export const en: Translations = {
     emptyDesc: 'When someone follows you, likes or comments on your post, you will see it here.',
     likedYourPost: 'liked your post',
     commentedYourPost: 'commented:',
+    likedYourComment: 'liked your comment:',
+    repliedYourComment: 'replied to your comment:',
     startedFollowingYou: 'started following you',
     settingTitle: 'Notifications',
     settingDesc: 'Likes, comments and new followers',

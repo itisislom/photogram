@@ -15,12 +15,14 @@ function jsonError(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+export type NotificationType = 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow';
+
 export async function createNotification(
   env: Env,
   opts: {
     userId: number;
     actorId: number;
-    type: 'like' | 'comment' | 'follow';
+    type: NotificationType;
     postId?: number | null;
     commentId?: number | null;
     commentPreview?: string;
@@ -41,6 +43,12 @@ export async function createNotification(
         "DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'like' AND post_id = ?",
       )
         .bind(opts.userId, opts.actorId, opts.postId)
+        .run();
+    } else if (opts.type === 'comment_like' && opts.commentId) {
+      await env.DB.prepare(
+        "DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'comment_like' AND comment_id = ?",
+      )
+        .bind(opts.userId, opts.actorId, opts.commentId)
         .run();
     } else if (opts.type === 'follow') {
       await env.DB.prepare(
@@ -77,6 +85,8 @@ export async function createNotification(
       if (pushAllowed) {
         let bodyText = '';
         if (opts.type === 'like') bodyText = `@${actor.username} liked your post`;
+        else if (opts.type === 'comment_like') bodyText = `@${actor.username} liked your comment${preview ? `: ${preview}` : ''}`;
+        else if (opts.type === 'comment_reply') bodyText = `@${actor.username} replied: ${preview || 'to your comment'}`;
         else if (opts.type === 'follow') bodyText = `@${actor.username} started following you`;
         else bodyText = `@${actor.username}: ${preview || 'commented on your post'}`;
 
@@ -85,7 +95,7 @@ export async function createNotification(
           title: 'Photogram',
           body: bodyText.slice(0, 140),
           url: '/notifications',
-          tag: `notif-${opts.type}-${opts.postId || opts.actorId}`,
+          tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
         });
       }
     }
@@ -97,7 +107,7 @@ export async function removeNotification(
   opts: {
     userId: number;
     actorId: number;
-    type: 'like' | 'comment' | 'follow';
+    type: NotificationType;
     postId?: number | null;
     commentId?: number | null;
   },
@@ -109,13 +119,19 @@ export async function removeNotification(
       )
         .bind(opts.userId, opts.actorId, opts.postId)
         .run();
+    } else if (opts.type === 'comment_like' && opts.commentId) {
+      await env.DB.prepare(
+        "DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'comment_like' AND comment_id = ?",
+      )
+        .bind(opts.userId, opts.actorId, opts.commentId)
+        .run();
     } else if (opts.type === 'follow') {
       await env.DB.prepare(
         "DELETE FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'follow'",
       )
         .bind(opts.userId, opts.actorId)
         .run();
-    } else if (opts.type === 'comment' && opts.commentId) {
+    } else if ((opts.type === 'comment' || opts.type === 'comment_reply') && opts.commentId) {
       await env.DB.prepare('DELETE FROM notifications WHERE comment_id = ?')
         .bind(opts.commentId)
         .run();
@@ -139,10 +155,12 @@ export async function getUserNotifications(env: Env, userId: number): Promise<No
          u.avatar_key AS actor_avatar_key,
          u.is_verified AS actor_is_verified,
          p.image_key AS post_image_key,
+         pu.username AS post_author_username,
          EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = n.actor_id) AS is_following_actor
        FROM notifications n
        JOIN users u ON u.id = n.actor_id
        LEFT JOIN posts p ON p.id = n.post_id
+       LEFT JOIN users pu ON pu.id = p.user_id
        WHERE n.user_id = ?
        ORDER BY n.created_at DESC, n.id DESC
        LIMIT 60`,
@@ -150,7 +168,7 @@ export async function getUserNotifications(env: Env, userId: number): Promise<No
       .bind(userId, userId)
       .all<{
         id: number;
-        type: 'like' | 'comment' | 'follow';
+        type: NotificationType;
         actor_id: number;
         post_id: number | null;
         comment_preview: string;
@@ -161,6 +179,7 @@ export async function getUserNotifications(env: Env, userId: number): Promise<No
         actor_avatar_key: string;
         actor_is_verified?: number | boolean;
         post_image_key: string | null;
+        post_author_username?: string | null;
         is_following_actor: number | boolean;
       }>();
 
@@ -174,6 +193,7 @@ export async function getUserNotifications(env: Env, userId: number): Promise<No
       actor_is_verified: r.actor_is_verified,
       post_id: r.post_id !== null ? Number(r.post_id) : null,
       post_image_key: r.post_image_key || '',
+      post_author_username: r.post_author_username || '',
       comment_preview: r.comment_preview || '',
       is_read: Boolean(r.is_read),
       is_following_actor: Boolean(r.is_following_actor),

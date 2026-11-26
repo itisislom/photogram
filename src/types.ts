@@ -44,6 +44,7 @@ export interface Comment {
   id: number;
   post_id: number;
   user_id: number;
+  parent_id?: number | null;
   content: string;
   created_at: string;
   username: string;
@@ -51,6 +52,8 @@ export interface Comment {
   avatar_key: string;
   can_delete: boolean;
   is_verified?: number | boolean;
+  likes_count?: number;
+  is_liked?: boolean;
 }
 
 export interface ProfileData {
@@ -168,7 +171,7 @@ export interface DirectMessage {
 
 export interface NotificationItem {
   id: number;
-  type: 'like' | 'comment' | 'follow';
+  type: 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow';
   actor_id: number;
   actor_username: string;
   actor_display_name: string;
@@ -176,6 +179,7 @@ export interface NotificationItem {
   actor_is_verified?: number | boolean;
   post_id: number | null;
   post_image_key: string;
+  post_author_username?: string;
   comment_preview: string;
   is_read: boolean;
   is_following_actor: boolean;

@@ -34,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v20';
+const APP_STYLE_VERSION = '20261126-v23';
 
 export function renderVerifiedBadge(size: number = 13.5): string {
   return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>`;
@@ -303,6 +303,8 @@ window.showAppConfirm = function(opts) {
   var notifToastLabels = ${safeJsonForScript({
     like: t.notifications.likedYourPost,
     comment: t.notifications.commentedYourPost,
+    comment_like: t.notifications.likedYourComment,
+    comment_reply: t.notifications.repliedYourComment,
     follow: t.notifications.startedFollowingYou
   })};
 
@@ -325,7 +327,7 @@ window.showAppConfirm = function(opts) {
           if (prevId > 0 && nextId > prevId && window.showAppToast) {
             var label = notifToastLabels[d.latest.type] || '';
             var msg = '@' + d.latest.actor_username + ' ' + label;
-            if (d.latest.type === 'comment' && d.latest.comment_preview) {
+            if ((d.latest.type === 'comment' || d.latest.type === 'comment_like' || d.latest.type === 'comment_reply') && d.latest.comment_preview) {
               msg += ' «' + d.latest.comment_preview.slice(0, 48) + '»';
             }
             window.showAppToast(msg);

@@ -175,6 +175,10 @@ export const kz: Translations = {
     send: 'Жіберу',
     deleteTitle: 'Пікірді жою?',
     deleteConfirm: 'Бұл пікірді шынымен жойғыңыз келе ме?',
+    reply: 'Жауап беру',
+    replyingTo: '@{username} пайдаланушысына жауап',
+    showReplies: 'Жауаптар ({n})',
+    hideReplies: 'Жауаптарды жасыру',
   },
 
   sublist: {
@@ -293,6 +297,8 @@ export const kz: Translations = {
     deleteChatConfirmDesc: '@{username} пайдаланушысымен барлық хат алмасуды жоюға сенімдісіз бе?',
     deleteChatAlsoFor: '@{username} үшін де жою',
     deleteChatSuccess: 'Чат жойылды',
+    copyMessage: 'Көшіру',
+    copiedToast: 'Көшірілді',
     editMessage: 'Хабарламаны өзгерту',
     editingMessage: 'Өзгерту',
     editedLabel: 'Өзгертілді',
@@ -325,6 +331,8 @@ export const kz: Translations = {
     emptyDesc: 'Біреу сізге жазылса, лайк басса немесе пікір қалдырса, осында көрінеді.',
     likedYourPost: 'жарияланымыңызды ұнатты',
     commentedYourPost: 'пікір қалдырды:',
+    likedYourComment: 'пікіріңізді ұнатты:',
+    repliedYourComment: 'пікіріңізге жауап берді:',
     startedFollowingYou: 'сізге жазылды',
     settingTitle: 'Хабарландырулар',
     settingDesc: 'Лайктар, пікірлер және жаңа жазылушылар',

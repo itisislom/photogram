@@ -1,6 +1,6 @@
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { getClientDateFormat } from '../languages';
+import { getClientDateFormat, getCompactCountUnits } from '../languages';
 import { esc, safeJsonForScript } from './layout';
 
 export const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
@@ -8,6 +8,9 @@ export const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fil
 export const MINI_COMMENT_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
 
 export const SEND_COMMENT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M21.426 11.095l-17-8A1 1 0 0 0 3.03 4.242l1.212 4.849L12 12l-7.758 2.909-1.212 4.849a.998.998 0 0 0 1.396 1.147l17-8a1 1 0 0 0 0-1.81z"/></svg>`;
+const COMMENT_HEART_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+const REPLY_CHEVRON_ICON = `<svg class="comment-replies-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>`;
+const REPLY_ARROW_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>`;
 
 export function renderCommentsSheetHtml(t: Translations = ru): string {
   return `
@@ -26,6 +29,13 @@ export function renderCommentsSheetHtml(t: Translations = ru): string {
     <div class="comments-sheet-body" id="appCommentsSheetList">
       <div class="comment-loading">${t.comments.loading}</div>
     </div>
+    <div class="comments-reply-bar" id="appCommentsReplyBar" style="display:none;">
+      <span class="comments-reply-bar-icon">${REPLY_ARROW_ICON}</span>
+      <span class="comments-reply-bar-text" id="appCommentsReplyBarText"></span>
+      <button type="button" class="comments-reply-bar-close" id="appCommentsReplyCancelBtn" aria-label="${esc(t.common.cancel)}">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
     <form class="comments-sheet-form" id="appCommentsSheetForm" autocomplete="off">
       <input type="text" class="comment-input" id="appCommentsSheetInput" placeholder="${t.comments.inputPlaceholder}" maxlength="500" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
       <button type="submit" class="comment-submit-btn" id="appCommentsSheetSubmitBtn" aria-label="${esc(t.comments.send)}" title="${esc(t.comments.send)}" disabled>${SEND_COMMENT_ICON}</button>
@@ -36,13 +46,21 @@ export function renderCommentsSheetHtml(t: Translations = ru): string {
 
 export function renderCommentsSheetScript(t: Translations = ru): string {
   const i18n = safeJsonForScript({
+    langCode: t.code,
+    compactUnits: getCompactCountUnits(t.code),
     dateFmt: getClientDateFormat(t.code),
+    heartIcon: COMMENT_HEART_ICON,
+    chevronIcon: REPLY_CHEVRON_ICON,
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
     hoursShort: t.common.hoursShort,
     daysShort: t.common.daysShort,
     empty: t.comments.firstCommentPrompt,
     deleteBtn: t.common.delete,
+    replyBtn: t.comments.reply,
+    replyingTo: t.comments.replyingTo,
+    showReplies: t.comments.showReplies,
+    hideReplies: t.comments.hideReplies,
     loading: t.comments.loading,
     loadFailed: t.common.networkError,
     networkError: t.common.networkError,
@@ -66,10 +84,15 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
   var input = document.getElementById('appCommentsSheetInput');
   var submitBtn = document.getElementById('appCommentsSheetSubmitBtn');
   var closeBtn = document.getElementById('appCommentsSheetCloseBtn');
+  var replyBar = document.getElementById('appCommentsReplyBar');
+  var replyBarText = document.getElementById('appCommentsReplyBarText');
+  var replyCancelBtn = document.getElementById('appCommentsReplyCancelBtn');
 
   var currentPostId = null;
   var currentOptions = null;
   var isSubmitting = false;
+  var likingCommentIds = {};
+  var replyingTo = null;
   var isDraggingSheet = false;
   var sheetDragStartY = 0;
   var sheetCurrentY = 0;
@@ -121,6 +144,137 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
     }
   }
 
+  function formatCompactCountClient(count) {
+    var raw = Number(count);
+    if (!isFinite(raw) || raw <= 0) return '0';
+    var n = Math.floor(raw);
+    if (n < 1000) return String(n);
+    var u = i18n.compactUnits || { k: 'K', m: 'M', b: 'B' };
+    var sep = i18n.langCode === 'en' ? '' : ' ';
+    function fmt(val, unit) {
+      var rounded = val >= 100 ? Math.floor(val) : Math.floor(val * 10) / 10;
+      var s = (rounded % 1 === 0) ? String(rounded) : rounded.toFixed(1).replace(/\\.0$/, '');
+      return s + sep + unit;
+    }
+    if (n >= 1000000000) return fmt(n / 1000000000, u.b);
+    if (n >= 1000000) return fmt(n / 1000000, u.m);
+    return fmt(n / 1000, u.k);
+  }
+
+  function renderCommentLikeBtn(commentId, isLiked, likesCount) {
+    var cnt = Number(likesCount) || 0;
+    var cntTxt = cnt > 0 ? escapeHtmlClient(formatCompactCountClient(cnt)) : '';
+    return '<button type="button" class="comment-like-btn' + (isLiked ? ' liked' : '') + '" data-like-comment-id="' + commentId + '" aria-pressed="' + (isLiked ? 'true' : 'false') + '">' +
+      i18n.heartIcon +
+      '<span class="comment-like-count">' + cntTxt + '</span>' +
+    '</button>';
+  }
+
+  function cancelReplyMode() {
+    replyingTo = null;
+    if (replyBar) replyBar.style.display = 'none';
+    if (replyBarText) replyBarText.textContent = '';
+  }
+
+  function startReplyMode(rootId, targetUsername, isNestedReply) {
+    if (!rootId || !targetUsername) return;
+    replyingTo = { rootId: Number(rootId), username: String(targetUsername) };
+    if (replyBarText) {
+      replyBarText.textContent = String(i18n.replyingTo || '@{username}').replace('{username}', targetUsername);
+    }
+    if (replyBar) replyBar.style.display = 'flex';
+    if (input) {
+      if (isNestedReply) {
+        var prefix = '@' + targetUsername + ' ';
+        var curVal = input.value || '';
+        if (curVal.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) {
+          input.value = prefix + curVal.replace(/^@[a-z0-9._]{3,24}\\s+/i, '');
+        }
+        if (submitBtn) {
+          var v = input.value.trim();
+          submitBtn.disabled = !(v.length > 0 && v.length <= 500);
+          if (!submitBtn.disabled) submitBtn.classList.add('active');
+        }
+      }
+      input.focus();
+      try {
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch (e) {}
+    }
+  }
+
+  function renderSingleCommentHtml(c, isReply, rootId) {
+    var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
+    var avatarHtml = c.avatar_key
+      ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
+      : '<span>' + initial + '</span>';
+
+    var deleteBtn = c.can_delete
+      ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
+      : '';
+
+    var replyBtn = '<button type="button" class="comment-reply-btn" data-reply-root-id="' + rootId + '" data-reply-username="' + escapeHtmlClient(c.username) + '" data-reply-nested="' + (isReply ? '1' : '0') + '">' + escapeHtmlClient(i18n.replyBtn) + '</button>';
+
+    var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
+    var timeTxt = c._justNow ? escapeHtmlClient(i18n.justNow) : formatTime(c.created_at);
+    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="sheetCommentItem_' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '">' +
+      '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar' + (isReply ? ' is-reply-avatar' : '') + '">' + avatarHtml + '</a>' +
+      '<div class="comment-content-wrap">' +
+        '<div>' +
+          '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
+          '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
+        '</div>' +
+        '<div class="comment-meta">' +
+          '<span class="comment-time">' + timeTxt + '</span>' +
+          replyBtn +
+          deleteBtn +
+        '</div>' +
+      '</div>' +
+      renderCommentLikeBtn(c.id, Boolean(c.is_liked), c.likes_count || 0) +
+    '</div>';
+  }
+
+  function formatShowRepliesLabel(count) {
+    return String(i18n.showReplies || '({n})').replace('{n}', formatCompactCountClient(count));
+  }
+
+  function renderRepliesBlockHtml(rootId, replies, expanded) {
+    var cnt = replies.length;
+    var label = expanded ? i18n.hideReplies : formatShowRepliesLabel(cnt);
+    var repliesHtml = '';
+    for (var j = 0; j < cnt; j++) {
+      repliesHtml += renderSingleCommentHtml(replies[j], true, rootId);
+    }
+    return '<div class="comment-replies-block' + (expanded ? ' is-expanded' : '') + '" data-replies-for="' + rootId + '">' +
+      '<button type="button" class="comment-replies-toggle" data-toggle-replies="' + rootId + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
+        i18n.chevronIcon +
+        '<span class="comment-replies-toggle-label">' + escapeHtmlClient(label) + '</span>' +
+      '</button>' +
+      '<div class="comment-replies-list" data-replies-list="' + rootId + '"' + (expanded ? '' : ' style="display:none;"') + '>' +
+        repliesHtml +
+      '</div>' +
+    '</div>';
+  }
+
+  function updateThreadToggleLabel(threadEl) {
+    if (!threadEl) return;
+    var rootId = parseInt(threadEl.getAttribute('data-thread-id') || '0', 10);
+    var block = threadEl.querySelector('.comment-replies-block');
+    if (!block) return;
+    var listBox = block.querySelector('.comment-replies-list');
+    var count = listBox ? listBox.querySelectorAll('.comment-item.is-reply').length : 0;
+    if (count === 0) {
+      block.remove();
+      return;
+    }
+    var expanded = block.classList.contains('is-expanded');
+    var btn = block.querySelector('.comment-replies-toggle');
+    var lbl = block.querySelector('.comment-replies-toggle-label');
+    if (btn) btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (lbl) lbl.textContent = expanded ? i18n.hideReplies : formatShowRepliesLabel(count);
+    if (listBox) listBox.style.display = expanded ? 'flex' : 'none';
+  }
+
   function renderComments(comments) {
     if (!list) return;
     if (!comments || comments.length === 0) {
@@ -128,31 +282,30 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
       return;
     }
 
-    var html = '';
+    var roots = [];
+    var repliesMap = {};
+    var knownIds = {};
+    for (var k = 0; k < comments.length; k++) {
+      knownIds[String(comments[k].id)] = true;
+    }
     for (var i = 0; i < comments.length; i++) {
       var c = comments[i];
-      var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
-      var avatarHtml = c.avatar_key
-        ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
-        : '<span>' + initial + '</span>';
+      var pid = c.parent_id ? Number(c.parent_id) : 0;
+      if (pid > 0 && knownIds[String(pid)]) {
+        if (!repliesMap[String(pid)]) repliesMap[String(pid)] = [];
+        repliesMap[String(pid)].push(c);
+      } else {
+        roots.push(c);
+      }
+    }
 
-      var deleteBtn = c.can_delete
-        ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
-        : '';
-
-      var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
-      html += '<div class="comment-item" id="sheetCommentItem_' + c.id + '">' +
-        '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
-        '<div class="comment-content-wrap">' +
-          '<div>' +
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
-            '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
-          '</div>' +
-          '<div class="comment-meta">' +
-            '<span class="comment-time">' + formatTime(c.created_at) + '</span>' +
-            deleteBtn +
-          '</div>' +
-        '</div>' +
+    var html = '';
+    for (var r = 0; r < roots.length; r++) {
+      var root = roots[r];
+      var reps = repliesMap[String(root.id)] || [];
+      html += '<div class="comment-thread" data-thread-id="' + root.id + '">' +
+        renderSingleCommentHtml(root, false, root.id) +
+        (reps.length > 0 ? renderRepliesBlockHtml(root.id, reps, false) : '') +
       '</div>';
     }
 
@@ -192,6 +345,7 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
     if (input) {
       input.value = '';
     }
+    cancelReplyMode();
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.classList.remove('active');
@@ -346,6 +500,10 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
     window.addEventListener('mouseup', endSheetDrag);
   }
 
+  if (replyCancelBtn) {
+    replyCancelBtn.addEventListener('click', cancelReplyMode);
+  }
+
   if (closeBtn) {
     closeBtn.addEventListener('click', window.closeCommentsSheet);
   }
@@ -393,42 +551,59 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
       }
 
       try {
+        var reqPayload = { post_id: parseInt(currentPostId, 10), content: text };
+        if (replyingTo && replyingTo.rootId) {
+          reqPayload.parent_id = replyingTo.rootId;
+        }
         var res = await fetch('/api/posts/comment', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ post_id: parseInt(currentPostId, 10), content: text })
+          body: JSON.stringify(reqPayload)
         });
         var data = await res.json();
         if (res.ok && data.success) {
           if (input) input.value = '';
+          cancelReplyMode();
           var emptyEl = list.querySelector('.comment-empty-text');
           if (emptyEl) emptyEl.remove();
 
           var c = data.comment;
-          var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
-          var avatarHtml = c.avatar_key
-            ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
-            : '<span>' + initial + '</span>';
-
-          var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
-          var itemDiv = document.createElement('div');
-          itemDiv.className = 'comment-item';
-          itemDiv.id = 'sheetCommentItem_' + c.id;
-          itemDiv.innerHTML =
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
-            '<div class="comment-content-wrap">' +
-              '<div>' +
-                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
-                '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
-              '</div>' +
-              '<div class="comment-meta">' +
-                '<span class="comment-time">' + escapeHtmlClient(i18n.justNow) + '</span>' +
-                '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>' +
-              '</div>' +
-            '</div>';
-
-          list.appendChild(itemDiv);
-          list.scrollTop = list.scrollHeight;
+          c._justNow = true;
+          var pid = c.parent_id ? Number(c.parent_id) : 0;
+          if (pid > 0) {
+            var parentThread = list.querySelector('.comment-thread[data-thread-id="' + pid + '"]');
+            if (parentThread) {
+              var block = parentThread.querySelector('.comment-replies-block');
+              if (!block) {
+                var tmpBlock = document.createElement('div');
+                tmpBlock.innerHTML = renderRepliesBlockHtml(pid, [c], true);
+                if (tmpBlock.firstChild) parentThread.appendChild(tmpBlock.firstChild);
+              } else {
+                var listBox = block.querySelector('.comment-replies-list');
+                if (listBox) {
+                  var tmpRep = document.createElement('div');
+                  tmpRep.innerHTML = renderSingleCommentHtml(c, true, pid);
+                  if (tmpRep.firstChild) listBox.appendChild(tmpRep.firstChild);
+                }
+                block.classList.add('is-expanded');
+                updateThreadToggleLabel(parentThread);
+              }
+              var insertedEl = document.getElementById('sheetCommentItem_' + c.id);
+              if (insertedEl && insertedEl.scrollIntoView) {
+                try { insertedEl.scrollIntoView({ block: 'nearest' }); } catch (se) {}
+              }
+            } else {
+              var tmpFallback = document.createElement('div');
+              tmpFallback.innerHTML = '<div class="comment-thread" data-thread-id="' + c.id + '">' + renderSingleCommentHtml(c, false, c.id) + '</div>';
+              if (tmpFallback.firstChild) list.appendChild(tmpFallback.firstChild);
+              list.scrollTop = list.scrollHeight;
+            }
+          } else {
+            var tmpThread = document.createElement('div');
+            tmpThread.innerHTML = '<div class="comment-thread" data-thread-id="' + c.id + '">' + renderSingleCommentHtml(c, false, c.id) + '</div>';
+            if (tmpThread.firstChild) list.appendChild(tmpThread.firstChild);
+            list.scrollTop = list.scrollHeight;
+          }
 
           var newCount = data.comments_count || 1;
           if (countEl) countEl.textContent = newCount;
@@ -462,7 +637,67 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
 
   if (list) {
     list.addEventListener('click', async function(e) {
-      var delBtn = e.target.closest('.comment-delete-btn');
+      var likeBtn = e.target && e.target.closest ? e.target.closest('.comment-like-btn') : null;
+      if (likeBtn) {
+        var likeCommentId = parseInt(likeBtn.getAttribute('data-like-comment-id') || '0', 10);
+        if (!likeCommentId || isNaN(likeCommentId) || likingCommentIds[likeCommentId]) return;
+        likingCommentIds[likeCommentId] = true;
+        likeBtn.disabled = true;
+        try {
+          var lRes = await fetch('/api/posts/comment/like', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comment_id: likeCommentId })
+          });
+          var lData = await lRes.json();
+          if (lRes.ok && lData && lData.success) {
+            var isLikedNow = Boolean(lData.liked);
+            var cntNow = Number(lData.likes_count || 0);
+            if (isLikedNow) likeBtn.classList.add('liked');
+            else likeBtn.classList.remove('liked');
+            likeBtn.setAttribute('aria-pressed', isLikedNow ? 'true' : 'false');
+            var cntSpan = likeBtn.querySelector('.comment-like-count');
+            if (cntSpan) {
+              cntSpan.textContent = cntNow > 0 ? formatCompactCountClient(cntNow) : '';
+            }
+          } else if (lRes.status === 401 || (lData && lData.error && lData.error.includes('авториз'))) {
+            if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: lData ? lData.error : '' });
+          } else if (window.showAppAlert) {
+            window.showAppAlert({ message: (lData && lData.error) || i18n.networkError });
+          }
+        } catch (lErr) {
+          if (window.showAppAlert) window.showAppAlert({ message: i18n.networkError });
+        } finally {
+          delete likingCommentIds[likeCommentId];
+          likeBtn.disabled = false;
+        }
+        return;
+      }
+
+      var replyBtn = e.target && e.target.closest ? e.target.closest('.comment-reply-btn') : null;
+      if (replyBtn) {
+        var rRootId = parseInt(replyBtn.getAttribute('data-reply-root-id') || '0', 10);
+        var rUname = replyBtn.getAttribute('data-reply-username') || '';
+        var rNested = replyBtn.getAttribute('data-reply-nested') === '1';
+        if (rRootId && rUname) {
+          startReplyMode(rRootId, rUname, rNested);
+        }
+        return;
+      }
+
+      var toggleBtn = e.target && e.target.closest ? e.target.closest('.comment-replies-toggle') : null;
+      if (toggleBtn) {
+        var threadEl = toggleBtn.closest('.comment-thread');
+        var blockEl = toggleBtn.closest('.comment-replies-block');
+        if (threadEl && blockEl) {
+          blockEl.classList.toggle('is-expanded');
+          updateThreadToggleLabel(threadEl);
+        }
+        return;
+      }
+
+      var delBtn = e.target && e.target.closest ? e.target.closest('.comment-delete-btn') : null;
       if (!delBtn) return;
       var commentId = parseInt(delBtn.dataset.commentId, 10);
       if (!commentId || isNaN(commentId)) return;
@@ -480,7 +715,21 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
           var data = await res.json();
           if (res.ok && data.success) {
             var item = document.getElementById('sheetCommentItem_' + commentId);
-            if (item) item.remove();
+            if (item) {
+              var parentIdAttr = parseInt(item.getAttribute('data-comment-parent-id') || '0', 10);
+              var parentThread = item.closest('.comment-thread');
+              if (parentIdAttr > 0) {
+                item.remove();
+                if (parentThread) updateThreadToggleLabel(parentThread);
+              } else if (parentThread) {
+                parentThread.remove();
+              } else {
+                item.remove();
+              }
+            }
+            if (replyingTo && Number(replyingTo.rootId) === Number(commentId)) {
+              cancelReplyMode();
+            }
 
             var newCount = typeof data.comments_count === 'number' ? data.comments_count : 0;
             if (countEl) countEl.textContent = newCount;
@@ -488,7 +737,7 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
               currentOptions.onCountUpdate(newCount);
             }
 
-            if (list.children.length === 0) {
+            if (!list.querySelector('.comment-thread')) {
               list.innerHTML = '<div class="comment-empty-text">' + escapeHtmlClient(i18n.empty) + '</div>';
             }
           } else {
