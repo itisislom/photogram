@@ -3117,45 +3117,6 @@ export function messagesPage(
       openReactionPicker(row, e.clientX, e.clientY);
     });
 
-    listEl.addEventListener('touchstart', function(e) {
-      if (!e.touches || e.touches.length !== 1) {
-        clearMsgLongPressTimer();
-        return;
-      }
-      if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link, .dm-reply-quote')) return;
-      var bubble = e.target && e.target.closest ? e.target.closest('.dm-msg-bubble') : null;
-      var row = bubble && bubble.closest ? bubble.closest('.dm-msg-row[data-msg-id]') : null;
-      if (!row || !reactionPicker) return;
-      clearMsgLongPressTimer();
-      msgLongPressDidFire = false;
-      var t0 = e.touches[0];
-      msgLongPressStartX = t0.clientX;
-      msgLongPressStartY = t0.clientY;
-      resetSwipeReply(false);
-      var isCoarseMobile = (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth || 0) <= 900;
-      var onVoiceWave = Boolean(e.target && e.target.closest && e.target.closest('.dm-voice-wave'));
-      if (isCoarseMobile && !onVoiceWave && !row.querySelector('.dm-msg-decrypt-err')) {
-        swipeRow = row;
-        swipeStack = row.querySelector('.dm-msg-stack');
-        swipeStartX = t0.clientX;
-        swipeStartY = t0.clientY;
-        swipeLocked = false;
-        swipeCancelled = false;
-        swipeTriggered = false;
-      }
-      msgLongPressTimer = setTimeout(function() {
-        msgLongPressTimer = null;
-        if (swipeLocked) return;
-        resetSwipeReply(false);
-        msgLongPressDidFire = true;
-        suppressNextMsgClickUntil = Date.now() + 1000;
-        if (navigator.vibrate) {
-          try { navigator.vibrate(15); } catch (ve) {}
-        }
-        openReactionPicker(row, msgLongPressStartX, msgLongPressStartY);
-      }, 450);
-    }, { passive: true });
-
     var swipeRow = null;
     var swipeStack = null;
     var swipeHintEl = null;
@@ -3166,6 +3127,22 @@ export function messagesPage(
     var swipeTriggered = false;
     var SWIPE_REPLY_THRESHOLD = 46;
     var SWIPE_REPLY_MAX = 68;
+
+    function findSwipeRowAtTouch(target, clientY) {
+      var direct = target && target.closest ? target.closest('.dm-msg-row[data-msg-id]') : null;
+      if (direct) return direct;
+      if (!listEl || typeof listEl.querySelectorAll !== 'function') return null;
+      var rows = listEl.querySelectorAll('.dm-msg-row[data-msg-id]');
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (!r || typeof r.getBoundingClientRect !== 'function') continue;
+        var rect = r.getBoundingClientRect();
+        if (clientY >= rect.top - 3 && clientY <= rect.bottom + 3) {
+          return r;
+        }
+      }
+      return null;
+    }
 
     function resetSwipeReply(fireReply) {
       var targetRow = swipeRow;
@@ -3189,7 +3166,52 @@ export function messagesPage(
       }
     }
 
-    listEl.addEventListener('touchmove', function(e) {
+    function handleMsgTouchStart(e) {
+      if (e.__dmSwipeHandled) return;
+      e.__dmSwipeHandled = true;
+      if (!e.touches || e.touches.length !== 1) {
+        clearMsgLongPressTimer();
+        return;
+      }
+      if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link, .dm-reply-quote, .dm-load-older-btn')) return;
+      var t0 = e.touches[0];
+      var bubble = e.target && e.target.closest ? e.target.closest('.dm-msg-bubble') : null;
+      var row = findSwipeRowAtTouch(e.target, t0.clientY);
+      if (!row) return;
+      clearMsgLongPressTimer();
+      msgLongPressDidFire = false;
+      msgLongPressStartX = t0.clientX;
+      msgLongPressStartY = t0.clientY;
+      resetSwipeReply(false);
+      var isCoarseMobile = (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth || 0) <= 900;
+      var onVoiceWave = Boolean(e.target && e.target.closest && e.target.closest('.dm-voice-wave'));
+      if (isCoarseMobile && !onVoiceWave && !row.querySelector('.dm-msg-decrypt-err')) {
+        swipeRow = row;
+        swipeStack = row.querySelector('.dm-msg-stack');
+        swipeStartX = t0.clientX;
+        swipeStartY = t0.clientY;
+        swipeLocked = false;
+        swipeCancelled = false;
+        swipeTriggered = false;
+      }
+      if (bubble && reactionPicker) {
+        msgLongPressTimer = setTimeout(function() {
+          msgLongPressTimer = null;
+          if (swipeLocked) return;
+          resetSwipeReply(false);
+          msgLongPressDidFire = true;
+          suppressNextMsgClickUntil = Date.now() + 1000;
+          if (navigator.vibrate) {
+            try { navigator.vibrate(15); } catch (ve) {}
+          }
+          openReactionPicker(row, msgLongPressStartX, msgLongPressStartY);
+        }, 450);
+      }
+    }
+
+    function handleMsgTouchMove(e) {
+      if (e.__dmSwipeHandled) return;
+      e.__dmSwipeHandled = true;
       if (!e.touches || !e.touches.length) return;
       var t0 = e.touches[0];
       if (msgLongPressTimer && (Math.abs(t0.clientX - msgLongPressStartX) > 10 || Math.abs(t0.clientY - msgLongPressStartY) > 10)) {
@@ -3233,22 +3255,37 @@ export function messagesPage(
       } else if (swipeTriggered && dist < SWIPE_REPLY_THRESHOLD - 10) {
         swipeTriggered = false;
       }
-    }, { passive: false });
+    }
 
-    listEl.addEventListener('touchend', function() {
+    function handleMsgTouchEnd(e) {
+      if (e.__dmSwipeHandled) return;
+      e.__dmSwipeHandled = true;
       clearMsgLongPressTimer();
       resetSwipeReply(true);
       if (msgLongPressDidFire) {
         suppressNextMsgClickUntil = Date.now() + 500;
         msgLongPressDidFire = false;
       }
-    }, { passive: true });
+    }
 
-    listEl.addEventListener('touchcancel', function() {
+    function handleMsgTouchCancel(e) {
+      if (e.__dmSwipeHandled) return;
+      e.__dmSwipeHandled = true;
       clearMsgLongPressTimer();
       resetSwipeReply(false);
       msgLongPressDidFire = false;
-    }, { passive: true });
+    }
+
+    listEl.addEventListener('touchstart', handleMsgTouchStart, { passive: true });
+    listEl.addEventListener('touchmove', handleMsgTouchMove, { passive: false });
+    listEl.addEventListener('touchend', handleMsgTouchEnd, { passive: true });
+    listEl.addEventListener('touchcancel', handleMsgTouchCancel, { passive: true });
+    if (scrollEl && scrollEl !== listEl) {
+      scrollEl.addEventListener('touchstart', handleMsgTouchStart, { passive: true });
+      scrollEl.addEventListener('touchmove', handleMsgTouchMove, { passive: false });
+      scrollEl.addEventListener('touchend', handleMsgTouchEnd, { passive: true });
+      scrollEl.addEventListener('touchcancel', handleMsgTouchCancel, { passive: true });
+    }
 
     listEl.addEventListener('click', function(e) {
       if (Date.now() < suppressNextMsgClickUntil) {
