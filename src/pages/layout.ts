@@ -34,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v47';
+const APP_STYLE_VERSION = '20261126-v49';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -1566,8 +1566,150 @@ ${script || ''}</script>
 (function() {
   var origDocAdd = document.addEventListener.bind(document);
   var origWinAdd = window.addEventListener.bind(window);
+  var origFetch = window.fetch.bind(window);
   var pageAbort = null;
   var navAbort = null;
+  var navSeq = 0;
+  var pageCleanups = [];
+  var overlayStack = [];
+  var ignorePopCount = 0;
+  var lastSpaPath = window.location.pathname;
+  var spaCache = new Map();
+  var inflightPrefetch = new Map();
+  var prefetchCooldown = new Map();
+  var MAX_CACHE_ENTRIES = 12;
+  var CACHE_TTL_MS = 25000;
+  var progressTimer = null;
+  var progressEl = null;
+
+  function ensureProgressEl() {
+    if (progressEl && document.body.contains(progressEl)) return progressEl;
+    progressEl = document.getElementById('pgNavProgress');
+    if (!progressEl) {
+      progressEl = document.createElement('div');
+      progressEl.id = 'pgNavProgress';
+      progressEl.className = 'pg-nav-progress';
+      document.body.appendChild(progressEl);
+    }
+    return progressEl;
+  }
+
+  function startProgressBar() {
+    if (progressTimer) clearTimeout(progressTimer);
+    progressTimer = setTimeout(function() {
+      var el = ensureProgressEl();
+      el.classList.add('is-active');
+    }, 120);
+  }
+
+  function stopProgressBar() {
+    if (progressTimer) {
+      clearTimeout(progressTimer);
+      progressTimer = null;
+    }
+    if (progressEl) {
+      progressEl.classList.remove('is-active');
+    }
+  }
+
+  window.__pgClearSpaCache = function() {
+    spaCache.clear();
+    inflightPrefetch.clear();
+  };
+
+  window.fetch = function(input, init) {
+    try {
+      var method = init && init.method
+        ? String(init.method).toUpperCase()
+        : (input && typeof input === 'object' && input.method ? String(input.method).toUpperCase() : 'GET');
+      if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+        var reqUrl = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+        if (
+          reqUrl.indexOf('/api/telemetry') === -1 &&
+          reqUrl.indexOf('/api/messages/read') === -1 &&
+          reqUrl.indexOf('/api/messages/listened') === -1
+        ) {
+          spaCache.clear();
+          inflightPrefetch.clear();
+        }
+      }
+    } catch (e) {}
+    return origFetch(input, init);
+  };
+
+  window.__pgRegisterCleanup = function(fn) {
+    if (typeof fn === 'function') pageCleanups.push(fn);
+  };
+
+  function runPageCleanups() {
+    var fns = pageCleanups;
+    pageCleanups = [];
+    for (var i = 0; i < fns.length; i++) {
+      try { fns[i](); } catch (e) {}
+    }
+  }
+
+  window.__pgPushOverlay = function(id, closeFn) {
+    if (!id || typeof closeFn !== 'function') return;
+    for (var i = 0; i < overlayStack.length; i++) {
+      if (overlayStack[i].id === id) {
+        overlayStack[i].closeFn = closeFn;
+        return;
+      }
+    }
+    overlayStack.push({ id: id, closeFn: closeFn });
+    try {
+      history.pushState(
+        { spa: true, pgOverlay: id, pgDepth: overlayStack.length },
+        '',
+        window.location.pathname + window.location.search + window.location.hash
+      );
+    } catch (e) {}
+  };
+
+  window.__pgPopOverlay = function(id) {
+    var idx = -1;
+    for (var i = overlayStack.length - 1; i >= 0; i--) {
+      if (overlayStack[i].id === id) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx === -1) return;
+    overlayStack.splice(idx, 1);
+    ignorePopCount++;
+    try {
+      history.back();
+    } catch (e) {
+      ignorePopCount = Math.max(0, ignorePopCount - 1);
+    }
+  };
+
+  function closeAllOverlaysImmediate() {
+    var ids = [
+      'viewPostModal',
+      'picsModal',
+      'appCommentsSheet',
+      'dmPhotoLightbox',
+      'appPostMenuModal',
+      'menuModal',
+      'activityConfirmModal',
+      'dmDeleteChatModal',
+      'deletePostModal'
+    ];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (!el) continue;
+      el.classList.add('pg-no-transition');
+      el.classList.remove('visible');
+      if (ids[i] === 'appCommentsSheet') {
+        el.style.display = 'none';
+      }
+      void el.offsetWidth;
+      el.classList.remove('pg-no-transition');
+    }
+    document.body.style.overflow = '';
+  }
 
   function makeSignalOpts(opts, signal) {
     if (!signal) return opts;
@@ -1577,6 +1719,7 @@ ${script || ''}</script>
   }
 
   function runScopedPageScript(code) {
+    runPageCleanups();
     if (pageAbort) {
       try { pageAbort.abort(); } catch (e) {}
     }
@@ -1612,7 +1755,181 @@ ${script || ''}</script>
     return true;
   }
 
-  async function spaNavigate(targetHref, pushHistory) {
+  function isCacheableUrl(url) {
+    if (!isSoftNavigable(url)) return false;
+    var p = url.pathname;
+    if (p === '/feed' || p === '/explore' || p === '/profile' || p === '/settings' || p === '/activity') {
+      return !url.search;
+    }
+    if (p.startsWith('/u/') && !url.search) {
+      return true;
+    }
+    return false;
+  }
+
+  function isPrefetchableUrl(url) {
+    if (isCacheableUrl(url)) return true;
+    if (!isSoftNavigable(url)) return false;
+    return url.pathname === '/messages' && !url.search;
+  }
+
+  function cacheKeyFor(url) {
+    return url.pathname + url.search;
+  }
+
+  function setCacheEntry(key, entry) {
+    if (!key || !entry) return;
+    if (spaCache.has(key)) spaCache.delete(key);
+    spaCache.set(key, entry);
+    while (spaCache.size > MAX_CACHE_ENTRIES) {
+      var oldestKey = spaCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      spaCache.delete(oldestKey);
+    }
+  }
+
+  function getFreshCacheEntry(key) {
+    var entry = spaCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > CACHE_TTL_MS) {
+      spaCache.delete(key);
+      return null;
+    }
+    var curStyle = document.getElementById('appMainStyles');
+    if (!curStyle || curStyle.getAttribute('data-app-v') !== entry.appV) {
+      spaCache.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function parseSpaHtml(htmlText, finalUrl) {
+    var doc = new DOMParser().parseFromString(htmlText, 'text/html');
+    var curStyle = document.getElementById('appMainStyles');
+    var nextStyle = doc.getElementById('appMainStyles');
+    if (!curStyle || !nextStyle || curStyle.getAttribute('data-app-v') !== nextStyle.getAttribute('data-app-v')) {
+      return null;
+    }
+    var nextRoot = doc.getElementById('appPageRoot');
+    if (!nextRoot) return null;
+    nextRoot.querySelectorAll('script').forEach(function(sc) { sc.remove(); });
+    var nextScripts = doc.querySelectorAll('body > script#appPageScript[data-page-script="true"]');
+    var nextScriptCode = '';
+    nextScripts.forEach(function(sc) {
+      if (!nextRoot.contains(sc)) {
+        nextScriptCode += (sc.textContent || '') + '\\n';
+      }
+      sc.remove();
+    });
+    return {
+      html: nextRoot.innerHTML,
+      script: nextScriptCode,
+      title: doc.title || document.title,
+      appV: nextStyle.getAttribute('data-app-v') || '',
+      finalUrl: finalUrl.pathname + finalUrl.search + finalUrl.hash,
+      finalPathname: finalUrl.pathname,
+      finalSearch: finalUrl.search,
+      ts: Date.now()
+    };
+  }
+
+  function updateBottomNavActive(pathname) {
+    var nav = document.querySelector('.bottom-nav');
+    if (!nav) return;
+    var activeHref = '';
+    if (pathname === '/feed') activeHref = '/feed';
+    else if (pathname === '/explore') activeHref = '/explore';
+    else if (pathname === '/publishpost') activeHref = '/publishpost';
+    else if (pathname === '/messages' || pathname.startsWith('/messages/')) activeHref = '/messages';
+    else if (pathname === '/profile' || pathname.startsWith('/u/') || pathname === '/settings' || pathname === '/activity') activeHref = '/profile';
+    if (!activeHref) return;
+    nav.querySelectorAll('.bottom-nav-item').forEach(function(item) {
+      var href = item.getAttribute('href') || '';
+      item.classList.toggle('active', href === activeHref);
+    });
+  }
+
+  async function fetchParsedPage(targetUrl, signal) {
+    var res = await origFetch(targetUrl.href, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'X-Requested-With': 'photogram-spa' },
+      signal: signal
+    });
+    var finalUrl = new URL(res.url || targetUrl.href, window.location.href);
+    var contentType = res.headers.get('Content-Type') || '';
+    if (!res.ok || contentType.indexOf('text/html') === -1 || !isSoftNavigable(finalUrl)) {
+      if (finalUrl.pathname === '/login' || res.status === 401) {
+        spaCache.clear();
+        inflightPrefetch.clear();
+      }
+      return { redirect: finalUrl.href };
+    }
+    var htmlText = await res.text();
+    var parsed = parseSpaHtml(htmlText, finalUrl);
+    if (!parsed) {
+      return { redirect: finalUrl.href };
+    }
+    if (isCacheableUrl(finalUrl)) {
+      var finalKey = cacheKeyFor(finalUrl);
+      setCacheEntry(finalKey, parsed);
+      var reqKey = cacheKeyFor(targetUrl);
+      if (reqKey !== finalKey && isCacheableUrl(targetUrl)) {
+        setCacheEntry(reqKey, parsed);
+      }
+    }
+    return { parsed: parsed };
+  }
+
+  function prefetchUrl(href) {
+    var url;
+    try { url = new URL(href, window.location.href); } catch (e) { return; }
+    if (!isPrefetchableUrl(url)) return;
+    var key = cacheKeyFor(url);
+    if (key === window.location.pathname + window.location.search) return;
+    if (getFreshCacheEntry(key)) return;
+    if (inflightPrefetch.has(key) || inflightPrefetch.size >= 2) return;
+    var lastTry = prefetchCooldown.get(key) || 0;
+    if (Date.now() - lastTry < 800) return;
+    prefetchCooldown.set(key, Date.now());
+
+    var p = fetchParsedPage(url, undefined)
+      .catch(function() { return null; })
+      .finally(function() {
+        inflightPrefetch.delete(key);
+      });
+    inflightPrefetch.set(key, p);
+  }
+
+  function commitParsedPage(parsed, pushHistory, replaceOverlay) {
+    var root = document.getElementById('appPageRoot');
+    if (!root) return false;
+    closeAllOverlaysImmediate();
+    document.title = parsed.title || document.title;
+    if (pushHistory) {
+      if (replaceOverlay) {
+        history.replaceState({ spa: true }, '', parsed.finalUrl);
+      } else {
+        history.pushState({ spa: true }, '', parsed.finalUrl);
+      }
+    }
+    lastSpaPath = parsed.finalPathname || window.location.pathname;
+    root.innerHTML = parsed.html;
+    root.style.opacity = '1';
+    window.scrollTo(0, 0);
+    runScopedPageScript(parsed.script);
+
+    if (window.syncThemeButtons) window.syncThemeButtons();
+    if (window.initTelemetryObserver) window.initTelemetryObserver();
+    if (window.PhotogramRealtime) window.PhotogramRealtime.ensureConnected();
+    if (!window.PhotogramRealtime || !window.PhotogramRealtime.isConnected()) {
+      if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+      if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+    }
+    return true;
+  }
+
+  async function spaNavigate(targetHref, pushHistory, forceFresh) {
     var targetUrl;
     try {
       targetUrl = new URL(targetHref, window.location.href);
@@ -1627,6 +1944,11 @@ ${script || ''}</script>
       window.location.href = targetUrl.href;
       return;
     }
+
+    var mySeq = ++navSeq;
+    var hadOverlay = overlayStack.length > 0;
+    overlayStack = [];
+    closeAllOverlaysImmediate();
 
     if (navAbort) {
       try { navAbort.abort(); } catch (e) {}
@@ -1650,78 +1972,50 @@ ${script || ''}</script>
     document.documentElement.classList.remove('dm-lock-scroll');
     document.body.classList.remove('dm-lock-scroll');
 
-    var root = document.getElementById('appPageRoot');
-    if (root) root.style.opacity = '0.35';
+    updateBottomNavActive(targetUrl.pathname);
+
+    var reqKey = cacheKeyFor(targetUrl);
+    if (!forceFresh && isCacheableUrl(targetUrl)) {
+      var cached = getFreshCacheEntry(reqKey);
+      if (cached) {
+        stopProgressBar();
+        if (mySeq !== navSeq) return;
+        commitParsedPage(cached, pushHistory, hadOverlay);
+        return;
+      }
+    }
+
+    startProgressBar();
 
     try {
-      var res = await fetch(targetUrl.href, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: { 'X-Requested-With': 'photogram-spa' },
-        signal: navAbort ? navAbort.signal : undefined
-      });
-
-      var finalUrl = new URL(res.url || targetUrl.href, window.location.href);
-      var contentType = res.headers.get('Content-Type') || '';
-      if (!res.ok || contentType.indexOf('text/html') === -1 || !isSoftNavigable(finalUrl)) {
-        window.location.href = finalUrl.href;
+      var result = null;
+      var inflight = !forceFresh ? inflightPrefetch.get(reqKey) : null;
+      if (inflight) {
+        result = await inflight;
+        if (mySeq !== navSeq) return;
+      }
+      if (!result) {
+        result = await fetchParsedPage(targetUrl, navAbort ? navAbort.signal : undefined);
+      }
+      if (mySeq !== navSeq) return;
+      stopProgressBar();
+      if (!result || result.redirect) {
+        window.location.href = (result && result.redirect) || targetUrl.href;
         return;
       }
-
-      var htmlText = await res.text();
-      var doc = new DOMParser().parseFromString(htmlText, 'text/html');
-      var curStyle = document.getElementById('appMainStyles');
-      var nextStyle = doc.getElementById('appMainStyles');
-      if (!curStyle || !nextStyle || curStyle.getAttribute('data-app-v') !== nextStyle.getAttribute('data-app-v')) {
-        window.location.href = finalUrl.href;
-        return;
+      if (!commitParsedPage(result.parsed, pushHistory, hadOverlay)) {
+        window.location.href = targetUrl.href;
       }
-      var nextRoot = doc.getElementById('appPageRoot');
-      if (!nextRoot || !root) {
-        window.location.href = finalUrl.href;
-        return;
-      }
-
-      nextRoot.querySelectorAll('script').forEach(function(sc) { sc.remove(); });
-      var nextScripts = doc.querySelectorAll('body > script#appPageScript[data-page-script="true"]');
-      var nextScriptCode = '';
-      nextScripts.forEach(function(sc) {
-        if (!nextRoot.contains(sc)) {
-          nextScriptCode += (sc.textContent || '') + '\\n';
-        }
-        sc.remove();
-      });
-
-      document.body.style.overflow = '';
-      document.title = doc.title || document.title;
-
-      if (pushHistory) {
-        history.pushState({ spa: true }, '', finalUrl.pathname + finalUrl.search + finalUrl.hash);
-      }
-
-      root.innerHTML = nextRoot.innerHTML;
-      window.scrollTo(0, 0);
-      runScopedPageScript(nextScriptCode);
-
-      if (window.syncThemeButtons) window.syncThemeButtons();
-      if (window.initTelemetryObserver) window.initTelemetryObserver();
-      if (window.PhotogramRealtime) window.PhotogramRealtime.ensureConnected();
-      if (!window.PhotogramRealtime || !window.PhotogramRealtime.isConnected()) {
-        if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
-        if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
-      }
-
-      requestAnimationFrame(function() {
-        if (root) root.style.opacity = '1';
-      });
     } catch (err) {
+      if (mySeq !== navSeq) return;
+      stopProgressBar();
       if (err && err.name === 'AbortError') return;
       window.location.href = targetUrl.href;
     }
   }
 
   window.spaNavigate = function(url) {
-    spaNavigate(url, true);
+    return spaNavigate(url, true, false);
   };
 
   window.softReloadAuthLanguage = async function(langCode) {
@@ -1742,7 +2036,7 @@ ${script || ''}</script>
     var wasTermsOpen = Boolean(oldTermsModal && oldTermsModal.classList.contains('visible'));
 
     try {
-      var res = await fetch(window.location.href, {
+      var res = await origFetch(window.location.href, {
         credentials: 'same-origin',
         cache: 'no-store',
         headers: { 'X-Requested-With': 'photogram-spa' }
@@ -1825,6 +2119,20 @@ ${script || ''}</script>
     }
   };
 
+  function onPrefetchIntent(e) {
+    var link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!link || link.hasAttribute('download')) return;
+    var href = link.getAttribute('href') || '';
+    if (!href || href.charAt(0) === '#') return;
+    prefetchUrl(link.href);
+  }
+
+  origDocAdd('pointerdown', onPrefetchIntent, { passive: true });
+  origDocAdd('mouseover', function(e) {
+    var link = e.target && e.target.closest ? e.target.closest('.bottom-nav a[href]') : null;
+    if (link) prefetchUrl(link.href);
+  }, { passive: true });
+
   origDocAdd('click', function(e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
@@ -1844,20 +2152,69 @@ ${script || ''}</script>
     if (!isSoftNavigable(url)) return;
 
     e.preventDefault();
-    if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash === window.location.hash) {
+    var isSameLoc = url.pathname === window.location.pathname && url.search === window.location.search && url.hash === window.location.hash;
+    if (isSameLoc) {
+      if (link.closest('.bottom-nav')) {
+        if (window.scrollY > 40) {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          spaNavigate(url.href, false, true);
+        }
+      }
       return;
     }
-    spaNavigate(url.href, true);
+    spaNavigate(url.href, true, false);
   });
 
   origWinAdd('popstate', function() {
-    spaNavigate(window.location.href, false);
+    if (ignorePopCount > 0) {
+      ignorePopCount--;
+      return;
+    }
+    if (overlayStack.length > 0) {
+      var top = overlayStack.pop();
+      if (top && typeof top.closeFn === 'function') {
+        try { top.closeFn(true); } catch (e) {}
+      }
+      return;
+    }
+    if (window.location.pathname === '/activity' && lastSpaPath === '/activity') {
+      return;
+    }
+    closeAllOverlaysImmediate();
+    spaNavigate(window.location.href, false, false);
+  });
+
+  origWinAdd('pageshow', function(e) {
+    if (e && e.persisted) {
+      spaCache.clear();
+      inflightPrefetch.clear();
+      overlayStack = [];
+      closeAllOverlaysImmediate();
+    }
   });
 
   var initialScript = document.querySelector('script[data-initial-page-script="true"]');
   if (initialScript) {
     var initialCode = initialScript.textContent || '';
     initialScript.remove();
+    try {
+      var initRoot = document.getElementById('appPageRoot');
+      var initStyle = document.getElementById('appMainStyles');
+      var initUrl = new URL(window.location.href);
+      if (initRoot && initStyle && isCacheableUrl(initUrl)) {
+        setCacheEntry(cacheKeyFor(initUrl), {
+          html: initRoot.innerHTML,
+          script: initialCode,
+          title: document.title,
+          appV: initStyle.getAttribute('data-app-v') || '',
+          finalUrl: initUrl.pathname + initUrl.search + initUrl.hash,
+          finalPathname: initUrl.pathname,
+          finalSearch: initUrl.search,
+          ts: Date.now()
+        });
+      }
+    } catch (e) {}
     runScopedPageScript(initialCode);
   }
 })();

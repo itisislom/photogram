@@ -1071,16 +1071,33 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
     viewModal.classList.add('visible');
     syncBodyOverflow();
+    if (window.__pgPushOverlay) {
+      window.__pgPushOverlay('profile-post', function(fromPop) {
+        closePostView(fromPop);
+      });
+    }
   }
 
-  function closePostView() {
+  function closePostView(fromPop) {
     if (window.endModalDwell) window.endModalDwell();
     cancelReplyMode();
-    if (viewModal) viewModal.classList.remove('visible');
+    if (viewModal) {
+      if (fromPop) {
+        viewModal.classList.add('pg-no-transition');
+        viewModal.classList.remove('visible');
+        void viewModal.offsetWidth;
+        viewModal.classList.remove('pg-no-transition');
+      } else {
+        viewModal.classList.remove('visible');
+      }
+    }
     var scrollBody = viewModal ? viewModal.querySelector('.post-view-scroll-body') : null;
     if (scrollBody) scrollBody.scrollTop = 0;
     activePostId = null;
     syncBodyOverflow();
+    if (!fromPop && window.__pgPopOverlay) {
+      window.__pgPopOverlay('profile-post');
+    }
   }
 
   document.querySelectorAll('.post-item-btn').forEach(function(btn) {
@@ -1093,7 +1110,10 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     var deepPostId = new URLSearchParams(window.location.search).get('post');
     if (deepPostId && /^\d+$/.test(deepPostId)) {
       var targetPostBtn = document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deepPostId + '"]');
-      if (targetPostBtn) openPost(targetPostBtn);
+      if (targetPostBtn) {
+        try { history.replaceState({ spa: true }, '', window.location.pathname); } catch (he) {}
+        openPost(targetPostBtn);
+      }
     }
   } catch (e) {}
 
@@ -1125,13 +1145,15 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   }
 
   if (closeViewBtn && viewModal) {
-    closeViewBtn.addEventListener('click', closePostView);
+    closeViewBtn.addEventListener('click', function() {
+      closePostView(false);
+    });
   }
 
   if (viewModal) {
     viewModal.addEventListener('click', function(e) {
       if (e.target === viewModal) {
-        closePostView();
+        closePostView(false);
       }
     });
   }
@@ -1140,7 +1162,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     if (e.key === 'Escape' && viewModal && viewModal.classList.contains('visible')) {
       var postMenu = document.getElementById('appPostMenuModal');
       if (postMenu && postMenu.classList.contains('visible')) return;
-      closePostView();
+      closePostView(false);
     }
   });
 

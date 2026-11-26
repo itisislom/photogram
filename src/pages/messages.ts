@@ -3306,23 +3306,41 @@ export function messagesPage(
       if (imgBtn && lightbox && lightboxImg) {
         lightboxImg.src = imgBtn.getAttribute('data-dm-lightbox') || '';
         lightbox.classList.add('visible');
+        if (window.__pgPushOverlay) {
+          window.__pgPushOverlay('dm-lightbox', function(fromPop) {
+            closeDmLightbox(fromPop);
+          });
+        }
         return;
       }
     });
   }
 
+  function closeDmLightbox(fromPop) {
+    if (!lightbox) return;
+    if (fromPop) {
+      lightbox.classList.add('pg-no-transition');
+      lightbox.classList.remove('visible');
+      void lightbox.offsetWidth;
+      lightbox.classList.remove('pg-no-transition');
+    } else {
+      lightbox.classList.remove('visible');
+      if (window.__pgPopOverlay) window.__pgPopOverlay('dm-lightbox');
+    }
+  }
+
   if (lightbox) {
     if (lightboxCloseBtn) {
       lightboxCloseBtn.addEventListener('click', function() {
-        lightbox.classList.remove('visible');
+        closeDmLightbox(false);
       });
     }
     lightbox.addEventListener('click', function(e) {
-      if (e.target === lightbox) lightbox.classList.remove('visible');
+      if (e.target === lightbox) closeDmLightbox(false);
     });
     function onLightboxKeydown(e) {
       if (e.key === 'Escape' && lightbox.classList.contains('visible')) {
-        lightbox.classList.remove('visible');
+        closeDmLightbox(false);
       }
     }
     document.addEventListener('keydown', onLightboxKeydown);

@@ -508,15 +508,41 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
       if (sheet) sheet.classList.add('visible');
     });
     document.body.style.overflow = 'hidden';
+    if (window.__pgPushOverlay) {
+      window.__pgPushOverlay('comments-sheet', function(fromPop) {
+        window.closeCommentsSheet(false, fromPop);
+      });
+    }
 
     loadComments(postId);
   };
 
-  window.closeCommentsSheet = function(fromSwipe) {
+  window.closeCommentsSheet = function(fromSwipe, fromPop) {
     closeCommentCtxMenu();
     if (!sheet) return;
     isDraggingSheet = false;
     sheetCurrentY = 0;
+    if (sheetResetTimer) {
+      clearTimeout(sheetResetTimer);
+      sheetResetTimer = null;
+    }
+    if (fromPop) {
+      sheet.classList.add('pg-no-transition');
+      sheet.classList.remove('visible');
+      sheet.style.display = 'none';
+      sheet.style.transition = '';
+      sheet.style.opacity = '';
+      if (panel) {
+        panel.style.transition = '';
+        panel.style.transform = '';
+      }
+      void sheet.offsetWidth;
+      sheet.classList.remove('pg-no-transition');
+      document.body.style.overflow = '';
+      currentPostId = null;
+      currentOptions = null;
+      return;
+    }
     sheet.style.transition = '';
     sheet.style.opacity = '';
     if (fromSwipe !== true && panel) {
@@ -524,7 +550,9 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
       panel.style.transform = '';
     }
     sheet.classList.remove('visible');
-    if (sheetResetTimer) clearTimeout(sheetResetTimer);
+    if (window.__pgPopOverlay) {
+      window.__pgPopOverlay('comments-sheet');
+    }
     sheetResetTimer = setTimeout(function() {
       sheet.style.display = 'none';
       sheet.style.transition = '';

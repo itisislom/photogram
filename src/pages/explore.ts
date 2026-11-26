@@ -361,17 +361,34 @@ ${renderCommentsSheetScript(t)}
     if (window.initTelemetryObserver) {
       window.initTelemetryObserver();
     }
+    if (window.__pgPushOverlay) {
+      window.__pgPushOverlay('explore-pics', function(fromPop) {
+        closePics(fromPop);
+      });
+    }
   }
 
-  function closePics() {
+  function closePics(fromPop) {
     if (!picsModal) return;
     if (window.flushActivePostDwell) window.flushActivePostDwell();
-    picsModal.classList.remove('visible');
+    if (fromPop) {
+      picsModal.classList.add('pg-no-transition');
+      picsModal.classList.remove('visible');
+      void picsModal.offsetWidth;
+      picsModal.classList.remove('pg-no-transition');
+    } else {
+      picsModal.classList.remove('visible');
+    }
     document.body.style.overflow = '';
+    if (!fromPop && window.__pgPopOverlay) {
+      window.__pgPopOverlay('explore-pics');
+    }
   }
 
   if (closePicsBtn) {
-    closePicsBtn.addEventListener('click', closePics);
+    closePicsBtn.addEventListener('click', function() {
+      closePics(false);
+    });
   }
 
   function getActivePicsSlide() {

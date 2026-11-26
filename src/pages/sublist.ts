@@ -13,7 +13,7 @@ function renderUserRows(list: FollowerUser[], currentUser: User | null, t: Trans
         <div class="sublist-user-row" data-username="${esc(u.username)}" data-name="${esc(u.display_name)}">
           <a href="/u/${encodeURIComponent(u.username)}" class="sublist-user-avatar">
             ${u.avatar_key
-      ? `<img src="/media/${esc(u.avatar_key)}" alt="${esc(u.username)}" loading="lazy">`
+      ? `<img src="/media/${encodeURIComponent(u.avatar_key)}" alt="${esc(u.username)}" loading="lazy">`
       : `<span>${esc((u.display_name || u.username).charAt(0).toUpperCase())}</span>`
     }
           </a>
@@ -222,7 +222,8 @@ export function followListPage(
     });
   }
 
-  if (pager && track) {
+  var swipeZone = document.querySelector('.app-layout') || pager;
+  if (swipeZone && pager && track) {
     var startX = 0;
     var startY = 0;
     var startTime = 0;
@@ -231,8 +232,12 @@ export function followListPage(
     var cancelled = false;
     var lastDx = 0;
 
-    pager.addEventListener('touchstart', function(e) {
+    swipeZone.addEventListener('touchstart', function(e) {
       if (!e.touches || e.touches.length !== 1 || !isTouchLayout()) {
+        dragging = false;
+        return;
+      }
+      if (e.target && e.target.closest && e.target.closest('.sublist-top-bar, .follow-tabs, .sublist-search-wrap, .bottom-nav, input, textarea')) {
         dragging = false;
         return;
       }
@@ -246,7 +251,7 @@ export function followListPage(
       lastDx = 0;
     }, { passive: true });
 
-    pager.addEventListener('touchmove', function(e) {
+    swipeZone.addEventListener('touchmove', function(e) {
       if (!dragging || cancelled || !e.touches || !e.touches.length) return;
       var t0 = e.touches[0];
       var dx = t0.clientX - startX;
@@ -293,8 +298,8 @@ export function followListPage(
       setActiveTab(target, true, true);
     }
 
-    pager.addEventListener('touchend', endDrag, { passive: true });
-    pager.addEventListener('touchcancel', function() {
+    swipeZone.addEventListener('touchend', endDrag, { passive: true });
+    swipeZone.addEventListener('touchcancel', function() {
       if (!dragging) return;
       dragging = false;
       if (locked) setActiveTab(activeIndex, true, false);

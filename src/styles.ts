@@ -4093,15 +4093,24 @@ body.is-mouse-dragging * {
   text-overflow: ellipsis;
 }
 
+.follow-container {
+  display: flex;
+  flex-direction: column;
+}
+
 .follow-pager {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   overflow: hidden;
   touch-action: pan-y;
 }
 
 .follow-track {
+  flex: 1;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   width: 200%;
   transform: translate3d(0, 0, 0);
   will-change: transform;
@@ -4119,6 +4128,7 @@ body.is-mouse-dragging * {
   flex: 0 0 50%;
   width: 50%;
   min-width: 0;
+  min-height: 100%;
 }
 
 .follow-panel.is-collapsed {
@@ -7223,6 +7233,29 @@ body.dm-lock-scroll {
     bottom: 0;
     padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   }
+}
+
+.pg-no-transition,
+.pg-no-transition * {
+  transition: none !important;
+  animation: none !important;
+}
+
+.pg-nav-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent-color, #0095f6);
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.pg-nav-progress.is-active {
+  opacity: 1;
 }
 
 `;
