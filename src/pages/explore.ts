@@ -151,7 +151,7 @@ export function explorePage(
   <div class="explore-search-wrap">
     <div class="search-input-box">
       <span class="search-icon">${SEARCH_ICON}</span>
-      <input type="search" id="searchInput" class="search-input" placeholder="${escapeHtml(t.explore.searchPlaceholder)}" inputmode="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" maxlength="50" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+      <div id="searchInput" class="search-input pg-ce-input" contenteditable="plaintext-only" role="searchbox" inputmode="search" enterkeyhint="search" spellcheck="false" data-placeholder="${escapeHtml(t.explore.searchPlaceholder)}" data-maxlength="50" aria-label="${escapeHtml(t.explore.searchPlaceholder)}"></div>
       <button type="button" id="clearSearchBtn" class="search-clear-btn" style="display:none;" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
   </div>
@@ -321,6 +321,9 @@ ${renderCommentsSheetScript(t)}
     clearTimeout(debounceTimer);
   }
 
+  if (searchInput && window.pgBindPlainEditable) {
+    window.pgBindPlainEditable(searchInput, {});
+  }
   if (searchInput) {
     searchInput.addEventListener('input', onSearchInput);
   }

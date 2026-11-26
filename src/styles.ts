@@ -1645,6 +1645,44 @@ body {
   color: var(--text-secondary);
 }
 
+.pg-ce-input {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+  touch-action: manipulation;
+}
+
+.pg-ce-input::-webkit-scrollbar {
+  display: none;
+}
+
+.pg-ce-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.dm-input.pg-ce-input {
+  line-height: 40px;
+}
+
+.comment-input.pg-ce-input {
+  min-height: 36px;
+  line-height: 18px;
+}
+
+.search-input.pg-ce-input,
+.dm-search-input.pg-ce-input {
+  min-height: 20px;
+  line-height: 20px;
+}
+
 .search-clear-btn {
   width: 20px;
   height: 20px;

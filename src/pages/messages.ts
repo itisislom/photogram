@@ -252,12 +252,12 @@ export function messagesPage(
       <button type="button" class="dm-attach-clear" id="dmAttachClearBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
 
-    <form class="dm-composer" id="dmComposeForm" autocomplete="off">
+    <div class="dm-composer" id="dmComposeForm">
       <input type="file" id="dmImageInput" accept="image/jpeg,image/png,image/webp" style="display:none;">
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
-      <input type="text" class="dm-input" id="dmMessageInput" placeholder="${escapeHtml(t.messages.inputPlaceholder)}" maxlength="2000" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
-      <button type="submit" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" disabled>${SEND_COMMENT_ICON}</button>
-    </form>`;
+      <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
+      <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" disabled>${SEND_COMMENT_ICON}</button>
+    </div>`;
   } else {
     threadHtml = `
     <div class="dm-thread-empty">
@@ -278,7 +278,7 @@ export function messagesPage(
       <div class="dm-search-wrap">
         <div class="dm-search-box">
           <span class="dm-search-icon">${SEARCH_ICON}</span>
-          <input type="search" id="dmSearchInput" class="dm-search-input" placeholder="${escapeHtml(t.messages.searchPlaceholder)}" inputmode="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" maxlength="50" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+          <div id="dmSearchInput" class="dm-search-input pg-ce-input" contenteditable="plaintext-only" role="searchbox" inputmode="search" enterkeyhint="search" spellcheck="false" data-placeholder="${escapeHtml(t.messages.searchPlaceholder)}" data-maxlength="50" aria-label="${escapeHtml(t.messages.searchPlaceholder)}"></div>
           <button type="button" id="dmSearchClearBtn" class="dm-search-clear" style="display:none;" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
         </div>
       </div>
@@ -1225,6 +1225,17 @@ export function messagesPage(
     });
   }
 
+  if (inputEl && window.pgBindPlainEditable) {
+    window.pgBindPlainEditable(inputEl, {
+      onEnter: function() {
+        if (typeof submitDmMessage === 'function') submitDmMessage();
+      }
+    });
+  }
+  if (searchInput && window.pgBindPlainEditable) {
+    window.pgBindPlainEditable(searchInput, {});
+  }
+
   if (inputEl) {
     inputEl.addEventListener('input', syncSendState);
     inputEl.addEventListener('focus', function() {
@@ -1284,9 +1295,8 @@ export function messagesPage(
     editCancelBtn.addEventListener('click', cancelEditMode);
   }
 
-  if (formEl) {
-    formEl.addEventListener('submit', async function(e) {
-      e.preventDefault();
+  async function submitDmMessage(e) {
+      if (e && e.preventDefault) e.preventDefault();
       if (isSending) return;
       var text = inputEl ? inputEl.value.trim() : '';
 
@@ -1503,7 +1513,10 @@ export function messagesPage(
         isSending = false;
         syncSendState();
       }
-    });
+  }
+
+  if (sendBtn) {
+    sendBtn.addEventListener('click', submitDmMessage);
   }
 
   if (loadOlderBtn && listEl && scrollEl) {

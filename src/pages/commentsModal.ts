@@ -36,10 +36,10 @@ export function renderCommentsSheetHtml(t: Translations = ru): string {
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
       </button>
     </div>
-    <form class="comments-sheet-form" id="appCommentsSheetForm" autocomplete="off">
-      <input type="text" class="comment-input" id="appCommentsSheetInput" placeholder="${t.comments.inputPlaceholder}" maxlength="500" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
-      <button type="submit" class="comment-submit-btn" id="appCommentsSheetSubmitBtn" aria-label="${esc(t.comments.send)}" title="${esc(t.comments.send)}" disabled>${SEND_COMMENT_ICON}</button>
-    </form>
+    <div class="comments-sheet-form" id="appCommentsSheetForm">
+      <div class="comment-input pg-ce-input" id="appCommentsSheetInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${esc(t.comments.inputPlaceholder)}" data-maxlength="500" aria-label="${esc(t.comments.inputPlaceholder)}"></div>
+      <button type="button" class="comment-submit-btn" id="appCommentsSheetSubmitBtn" aria-label="${esc(t.comments.send)}" title="${esc(t.comments.send)}" disabled>${SEND_COMMENT_ICON}</button>
+    </div>
   </div>
 </div>`;
 }
@@ -522,6 +522,14 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
     }
   });
 
+  if (input && window.pgBindPlainEditable) {
+    window.pgBindPlainEditable(input, {
+      onEnter: function() {
+        submitComment();
+      }
+    });
+  }
+
   if (input) {
     input.addEventListener('input', function() {
       var val = (this.value || '').trim();
@@ -537,9 +545,8 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
     });
   }
 
-  if (form) {
-    form.addEventListener('submit', async function(e) {
-      e.preventDefault();
+  async function submitComment(e) {
+      if (e && e.preventDefault) e.preventDefault();
       if (!currentPostId || isSubmitting) return;
       var text = input ? (input.value || '').trim() : '';
       if (!text || text.length > 500) return;
@@ -632,7 +639,10 @@ export function renderCommentsSheetScript(t: Translations = ru): string {
           }
         }
       }
-    });
+  }
+
+  if (submitBtn) {
+    submitBtn.addEventListener('click', submitComment);
   }
 
   if (list) {
