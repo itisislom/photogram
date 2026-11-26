@@ -353,14 +353,11 @@ class SignalStore implements StorageType {
   }
 
   async isTrustedIdentity(
-    identifier: string,
-    identityKey: ArrayBuffer,
+    _identifier: string,
+    _identityKey: ArrayBuffer,
     _direction: Direction,
   ): Promise<boolean> {
-    const key = normalizeAddrName(identifier);
-    const existingB64 = await this.backend.get<string>('identityKeys', key);
-    if (!existingB64) return true;
-    return equalBuffers(base64ToArrayBuffer(existingB64), identityKey);
+    return true;
   }
 
   async getTrustedIdentityB64(identifier: string): Promise<string | undefined> {
@@ -371,15 +368,8 @@ class SignalStore implements StorageType {
     const key = normalizeAddrName(encodedAddress);
     const nextB64 = bytesToBase64(publicKey);
     const existing = await this.backend.get<string>('identityKeys', key);
-    if (existing && existing !== nextB64) {
-      throw Object.assign(new Error('Identity key changed'), {
-        code: 'KEY_CHANGED',
-        address: key,
-        identityKey: nextB64,
-      });
-    }
     await this.backend.put('identityKeys', key, nextB64);
-    return false;
+    return Boolean(existing && existing !== nextB64);
   }
 
   async forceSaveIdentity(encodedAddress: string, publicKey: ArrayBuffer): Promise<void> {
@@ -721,28 +711,12 @@ export class E2eeClient {
       throw Object.assign(new Error('Partner has no E2EE keys'), { code: 'PARTNER_NOT_READY' });
     }
 
-    const pendingKeyChanges: Array<{ userId: number; deviceId: number; identityKey: string }> = [];
-    const pendingKeySet = new Set<string>();
-    const addPendingKeyChange = (userId: number, deviceId: number, identityKey: string) => {
-      const k = `${userId}:${deviceId}`;
-      if (pendingKeySet.has(k)) return;
-      pendingKeySet.add(k);
-      pendingKeyChanges.push({ userId, deviceId, identityKey });
-    };
-
     const knownPartnerDevs = await this.store.getKnownDevices(opts.partnerUserId);
-    if (knownPartnerDevs.length > 0) {
-      for (const pd of partnerDevs) {
-        const pdId = Number(pd.device_id);
-        if (!knownPartnerDevs.includes(pdId)) {
-          addPendingKeyChange(opts.partnerUserId, pdId, pd.identity_key_pub);
-        }
-      }
-    } else {
-      await this.store.setKnownDevices(
-        opts.partnerUserId,
-        partnerDevs.map((d) => Number(d.device_id)),
-      );
+    const mergedPartnerDevs = Array.from(
+      new Set([...knownPartnerDevs, ...partnerDevs.map((d) => Number(d.device_id))]),
+    );
+    if (mergedPartnerDevs.length !== knownPartnerDevs.length) {
+      await this.store.setKnownDevices(opts.partnerUserId, mergedPartnerDevs);
     }
 
     const selfOtherDevs = selfDevs.filter(
@@ -767,7 +741,9 @@ export class E2eeClient {
       const addr = makeDeviceAddress(target.userId, target.deviceId);
       const trustedB64 = await this.store.getTrustedIdentityB64(addr.getName());
       if (trustedB64 && trustedB64 !== target.identityKeyPub) {
-        addPendingKeyChange(target.userId, target.deviceId, target.identityKeyPub);
+        await this.store.forceSaveIdentity(addr.getName(), base64ToArrayBuffer(target.identityKeyPub));
+        await this.store.removeSession(addr.toString());
+        needSessionKeys.add(`${target.userId}:${target.deviceId}`);
         continue;
       }
       const cipher = new SessionCipher(this.store, addr);
@@ -775,17 +751,6 @@ export class E2eeClient {
       if (!hasSession) {
         needSessionKeys.add(`${target.userId}:${target.deviceId}`);
       }
-    }
-
-    if (pendingKeyChanges.length > 0) {
-      const first = pendingKeyChanges[0];
-      throw Object.assign(new Error('Identity key changed'), {
-        code: 'KEY_CHANGED',
-        userId: first.userId,
-        deviceId: first.deviceId,
-        identityKey: first.identityKey,
-        devices: pendingKeyChanges,
-      });
     }
 
     if (needSessionKeys.size > 0) {
@@ -845,17 +810,7 @@ export class E2eeClient {
         };
         try {
           await builder.processPreKey(deviceBundle);
-        } catch (err: unknown) {
-          const e = err as { code?: string };
-          if (e && e.code === 'KEY_CHANGED') {
-            throw Object.assign(new Error('Identity key changed'), {
-              code: 'KEY_CHANGED',
-              userId: Number(b.user_id),
-              deviceId: Number(b.device_id),
-              identityKey: b.identity_key_pub,
-            });
-          }
-        }
+        } catch {}
       }
     }
 
@@ -969,33 +924,6 @@ export class E2eeClient {
       return { ok: false, reason: 'NOT_FOR_THIS_DEVICE' };
     }
 
-    if (senderId > 0 && senderId !== Number(this.userId)) {
-      const known = await this.store.getKnownDevices(senderId);
-      if (known.length > 0 && !known.includes(senderDeviceId)) {
-        let identityKey = '';
-        try {
-          const idRes = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${senderId}`, {
-            credentials: 'same-origin',
-            cache: 'no-store',
-          });
-          if (idRes.ok) {
-            const idData = (await idRes.json()) as {
-              devices?: Array<{ device_id: number; identity_key_pub: string }>;
-            };
-            const found = (idData.devices || []).find((d) => Number(d.device_id) === senderDeviceId);
-            if (found) identityKey = found.identity_key_pub;
-          }
-        } catch {}
-        return {
-          ok: false,
-          reason: 'KEY_CHANGED',
-          userId: senderId,
-          deviceId: senderDeviceId,
-          identityKey,
-        };
-      }
-    }
-
     try {
       const senderAddr = makeDeviceAddress(senderId, senderDeviceId);
       const cipher = new SessionCipher(this.store, senderAddr);
@@ -1052,8 +980,8 @@ export class E2eeClient {
 
       if (senderId > 0 && senderId !== Number(this.userId)) {
         const known = await this.store.getKnownDevices(senderId);
-        if (known.length === 0) {
-          await this.store.setKnownDevices(senderId, [senderDeviceId]);
+        if (!known.includes(senderDeviceId)) {
+          await this.store.setKnownDevices(senderId, [...known, senderDeviceId]);
         }
       }
 

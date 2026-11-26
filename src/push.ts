@@ -236,7 +236,7 @@ export async function sendPushToUser(
           const authHeader = await buildVapidAuthHeader(sub.endpoint, pubKey, privKey, subject);
           const res = await fetch(sub.endpoint, {
             method: 'POST',
-            redirect: 'error',
+            redirect: 'manual',
             signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
               ? AbortSignal.timeout(4000)
               : undefined,
