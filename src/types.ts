@@ -130,6 +130,9 @@ export interface ConversationItem {
   last_message_image: boolean;
   last_message_encrypted?: boolean;
   last_message_sender_id: number | null;
+  last_message_sender_device_id?: number;
+  last_message_ciphertext_envelope?: string;
+  last_message_edit_version?: number;
   last_message_at: string;
   unread_count: number;
 }

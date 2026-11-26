@@ -70,7 +70,10 @@ function filterEnvelopeForUser(rawEnvelope: string | undefined, userId: number):
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'private, no-store',
+    },
   });
 }
 
@@ -140,6 +143,9 @@ export async function getUserConversations(env: Env, userId: number): Promise<Co
        lm.image_key AS last_message_image_key,
        lm.is_encrypted AS last_message_encrypted,
        lm.sender_id AS last_message_sender_id,
+       lm.sender_device_id AS last_message_sender_device_id,
+       lm.ciphertext_envelope AS last_message_ciphertext_envelope,
+       lm.edit_version AS last_message_edit_version,
        (
          SELECT COUNT(*)
          FROM messages um
@@ -182,24 +188,35 @@ export async function getUserConversations(env: Env, userId: number): Promise<Co
       last_message_image_key: string | null;
       last_message_encrypted?: number | boolean | null;
       last_message_sender_id: number | null;
+      last_message_sender_device_id?: number | null;
+      last_message_ciphertext_envelope?: string | null;
+      last_message_edit_version?: number | null;
       unread_count: number;
     }>();
 
-  return (res.results || []).map((r) => ({
-    id: Number(r.id),
-    other_user_id: Number(r.other_user_id),
-    other_username: r.other_username,
-    other_display_name: r.other_display_name || r.other_username,
-    other_avatar_key: r.other_avatar_key || '',
-    other_is_verified: r.other_is_verified,
-    last_message_id: r.last_message_id ? Number(r.last_message_id) : null,
-    last_message_body: r.last_message_body || '',
-    last_message_image: Boolean(r.last_message_image_key),
-    last_message_encrypted: Boolean(r.last_message_encrypted),
-    last_message_sender_id: r.last_message_sender_id !== null ? Number(r.last_message_sender_id) : null,
-    last_message_at: r.last_message_at,
-    unread_count: Number(r.unread_count || 0),
-  }));
+  return (res.results || []).map((r) => {
+    const encrypted = Boolean(r.last_message_encrypted);
+    return {
+      id: Number(r.id),
+      other_user_id: Number(r.other_user_id),
+      other_username: r.other_username,
+      other_display_name: r.other_display_name || r.other_username,
+      other_avatar_key: r.other_avatar_key || '',
+      other_is_verified: r.other_is_verified,
+      last_message_id: r.last_message_id ? Number(r.last_message_id) : null,
+      last_message_body: encrypted ? '' : (r.last_message_body || ''),
+      last_message_image: Boolean(r.last_message_image_key),
+      last_message_encrypted: encrypted,
+      last_message_sender_id: r.last_message_sender_id !== null ? Number(r.last_message_sender_id) : null,
+      last_message_sender_device_id: encrypted ? Number(r.last_message_sender_device_id || 0) : 0,
+      last_message_ciphertext_envelope: encrypted
+        ? filterEnvelopeForUser(r.last_message_ciphertext_envelope || '', userId)
+        : '',
+      last_message_edit_version: Number(r.last_message_edit_version || 0),
+      last_message_at: r.last_message_at,
+      unread_count: Number(r.unread_count || 0),
+    };
+  });
 }
 
 export async function getOrCreateConversation(
@@ -571,6 +588,9 @@ export async function handleGetConversations(request: Request, env: Env): Promis
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `dm:convs:user:${user.id}`, 120, 60);
+  if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
   const conversations = await getUserConversations(env, user.id);
   const unreadTotal = conversations.reduce((sum, c) => sum + c.unread_count, 0);

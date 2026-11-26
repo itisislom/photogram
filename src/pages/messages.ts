@@ -99,7 +99,7 @@ export function messagesPage(
             : '';
 
           return `
-          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}">
+          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}" data-last-edit-version="${c.last_message_edit_version || 0}">
             <div class="dm-avatar">${avatarHtml}</div>
             <div class="dm-conv-meta">
               <div class="dm-conv-top">
@@ -120,6 +120,27 @@ export function messagesPage(
         <div class="dm-empty-title">${escapeHtml(t.messages.emptyListTitle)}</div>
         <div class="dm-empty-desc">${escapeHtml(t.messages.emptyListDesc)}</div>
       </div>`;
+
+  const initialConvLastMessages: Record<string, {
+    id: number;
+    sender_id: number;
+    sender_device_id: number;
+    is_encrypted: number;
+    ciphertext_envelope: string;
+    edit_version: number;
+  }> = {};
+  for (const c of conversations) {
+    if (c.last_message_encrypted && c.last_message_id && c.last_message_ciphertext_envelope) {
+      initialConvLastMessages[String(c.id)] = {
+        id: Number(c.last_message_id),
+        sender_id: Number(c.last_message_sender_id || 0),
+        sender_device_id: Number(c.last_message_sender_device_id || 0),
+        is_encrypted: 1,
+        ciphertext_envelope: c.last_message_ciphertext_envelope,
+        edit_version: Number(c.last_message_edit_version || 0),
+      };
+    }
+  }
 
   const initialEncryptedMessages = messages
     .filter((m) => Boolean(m.is_encrypted))
@@ -335,6 +356,7 @@ export function messagesPage(
     lastReadOwnId,
     timeZone,
     initialEncrypted: initialEncryptedMessages,
+    initialConvLastMessages,
     langCode: t.code,
     compactUnits: getCompactCountUnits(t.code),
     dateFmt: getClientDateFormat(t.code),
@@ -377,6 +399,10 @@ export function messagesPage(
   if (window.__dmPollTimer) {
     clearInterval(window.__dmPollTimer);
     window.__dmPollTimer = null;
+  }
+  if (window.__dmConvPollTimer) {
+    clearInterval(window.__dmConvPollTimer);
+    window.__dmConvPollTimer = null;
   }
   if (window.__dmViewportCleanup) {
     try { window.__dmViewportCleanup(); } catch (e) {}
@@ -615,6 +641,41 @@ export function messagesPage(
     } catch (e) {
       return '';
     }
+  }
+
+  function formatDmShortTimeClient(dateStr) {
+    try {
+      var d = parseDateClient(dateStr);
+      if (isNaN(d.getTime())) return '';
+      var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diff < 60) return state.justNow;
+      if (diff < 3600) return Math.floor(diff / 60) + ' ' + state.minShort;
+      if (diff < 86400) return Math.floor(diff / 3600) + ' ' + state.hoursShort;
+      if (diff < 7 * 86400) return Math.floor(diff / 86400) + ' ' + state.daysShort;
+      var cfg = state.dateFmt || { monthsShort: [], fullPattern: 'dmy' };
+      var day = d.getDate();
+      var monthIdx = d.getMonth();
+      try {
+        var parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: activeTimeZone,
+          month: 'numeric',
+          day: 'numeric'
+        }).formatToParts(d);
+        for (var i = 0; i < parts.length; i++) {
+          if (parts[i].type === 'month') monthIdx = Math.max(0, Math.min(11, parseInt(parts[i].value, 10) - 1));
+          if (parts[i].type === 'day') day = parseInt(parts[i].value, 10);
+        }
+      } catch (e2) {}
+      var mon = (cfg.monthsShort && cfg.monthsShort[monthIdx]) || '';
+      if (cfg.fullPattern === 'mdy') return mon + ' ' + day;
+      return day + ' ' + mon;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function cleanPreviewText(txt) {
+    return String(txt || '').replace(/\\s+/g, ' ').trim();
   }
 
   function renderMsgTimeEl(timeEl, ts, isEdited) {
@@ -1028,19 +1089,74 @@ export function messagesPage(
     convListEl.prepend(item);
   }
 
+  var convEncryptedMeta = {};
+  if (state.initialConvLastMessages && typeof state.initialConvLastMessages === 'object') {
+    Object.keys(state.initialConvLastMessages).forEach(function(k) {
+      convEncryptedMeta[k] = state.initialConvLastMessages[k];
+    });
+  }
+  var sidebarDecryptFailed = {};
+  var isHydratingSidebar = false;
+  var needSidebarRehydrate = false;
+
   async function hydrateSidebarEncryptedPreviews() {
-    if (!convListEl || !e2eeClient) return;
-    var items = convListEl.querySelectorAll('.dm-conv-item[data-last-encrypted="1"]');
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var lastId = parseInt(item.getAttribute('data-last-msg-id') || '0', 10);
-      if (!lastId) continue;
-      var cached = await e2eeClient.getCachedMessage(lastId);
-      if (!cached) continue;
-      var previewEl = item.querySelector('.dm-conv-preview');
-      if (!previewEl) continue;
-      var prefix = item.getAttribute('data-last-mine') === '1' ? state.youPrefix : '';
-      previewEl.textContent = cached.text ? (prefix + cached.text) : (cached.media ? (prefix + state.photoLabel) : (prefix + state.encryptedPreview));
+    if (!convListEl) return;
+    if (isHydratingSidebar) {
+      needSidebarRehydrate = true;
+      return;
+    }
+    var c = e2eeClient || await ensureE2eeReady();
+    if (!c) return;
+    isHydratingSidebar = true;
+    try {
+      do {
+        needSidebarRehydrate = false;
+        var items = convListEl.querySelectorAll('.dm-conv-item[data-last-encrypted="1"]');
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          var convId = item.getAttribute('data-conv-id') || '';
+          var lastId = parseInt(item.getAttribute('data-last-msg-id') || '0', 10);
+          var editVer = parseInt(item.getAttribute('data-last-edit-version') || '0', 10);
+          if (!lastId) continue;
+          var verKey = lastId + ':' + editVer;
+          if (item.getAttribute('data-preview-hydrated') === verKey) continue;
+          var payload = null;
+          var cached = await c.getCachedMessage(lastId);
+          if (cached && Number(cached.editVersion || 0) >= editVer) {
+            payload = cached;
+          } else {
+            var meta = convEncryptedMeta[convId];
+            if (meta && Number(meta.id) === lastId && meta.ciphertext_envelope && !sidebarDecryptFailed[verKey]) {
+              try {
+                var decRes = await c.decryptMessage(meta);
+                if (decRes && decRes.ok && decRes.payload) {
+                  payload = decRes.payload;
+                } else {
+                  sidebarDecryptFailed[verKey] = true;
+                }
+              } catch (de) {
+                sidebarDecryptFailed[verKey] = true;
+              }
+            }
+          }
+          var previewEl = item.querySelector('.dm-conv-preview');
+          if (!previewEl) continue;
+          var prefix = item.getAttribute('data-last-mine') === '1' ? state.youPrefix : '';
+          if (!payload) {
+            if (sidebarDecryptFailed[verKey]) {
+              previewEl.textContent = prefix + state.encryptedPreview;
+            }
+            continue;
+          }
+          var cleanTxt = cleanPreviewText(payload.text);
+          previewEl.textContent = cleanTxt
+            ? (prefix + cleanTxt)
+            : (payload.media ? (prefix + state.photoLabel) : (prefix + state.encryptedPreview));
+          item.setAttribute('data-preview-hydrated', verKey);
+        }
+      } while (needSidebarRehydrate);
+    } finally {
+      isHydratingSidebar = false;
     }
   }
 
@@ -1048,7 +1164,6 @@ export function messagesPage(
     try {
       var c = await ensureE2eeReady();
       if (!c) return;
-      await hydrateSidebarEncryptedPreviews();
 
       var list = Array.isArray(state.initialEncrypted) ? state.initialEncrypted : [];
       for (var i = 0; i < list.length; i++) {
@@ -1077,6 +1192,7 @@ export function messagesPage(
           if (slot) slot.textContent = state.e2eeDecryptFailed;
         }
       }
+      await hydrateSidebarEncryptedPreviews();
       if (scrollEl) scrollToBottom();
     } catch (e) {}
   }
@@ -2311,8 +2427,240 @@ export function messagesPage(
     }
   }
 
+  var isPollingConvs = false;
+
+  function buildConvItemEl(c) {
+    var isCurrent = Number(state.activeConversationId) > 0 && Number(state.activeConversationId) === Number(c.id);
+    var isUnread = Number(c.unread_count || 0) > 0 && !isCurrent;
+    var isMine = Number(c.last_message_sender_id || 0) === Number(state.currentUserId);
+    var prefix = isMine ? state.youPrefix : '';
+    var a = document.createElement('a');
+    a.setAttribute('href', '/messages/' + encodeURIComponent(c.other_username || ''));
+    a.className = 'dm-conv-item' + (isCurrent ? ' active' : '') + (isUnread ? ' unread' : '');
+    a.setAttribute('data-conv-id', String(c.id));
+    a.setAttribute('data-partner-id', String(c.other_user_id || 0));
+    a.setAttribute('data-partner-username', String(c.other_username || ''));
+    a.setAttribute('data-last-msg-id', String(c.last_message_id || 0));
+    a.setAttribute('data-last-encrypted', c.last_message_encrypted ? '1' : '0');
+    a.setAttribute('data-last-mine', isMine ? '1' : '0');
+    a.setAttribute('data-last-edit-version', String(c.last_message_edit_version || 0));
+
+    var avatarDiv = document.createElement('div');
+    avatarDiv.className = 'dm-avatar';
+    var avKey = typeof c.other_avatar_key === 'string' ? c.other_avatar_key : '';
+    if (avKey && avKey.indexOf('..') === -1 && avKey.indexOf('\\\\') === -1) {
+      var img = document.createElement('img');
+      img.src = '/media/' + encodeURIComponent(avKey);
+      img.alt = String(c.other_username || '');
+      avatarDiv.appendChild(img);
+    } else {
+      var initSpan = document.createElement('span');
+      var baseName = String(c.other_display_name || c.other_username || '?');
+      initSpan.textContent = baseName.charAt(0).toUpperCase();
+      avatarDiv.appendChild(initSpan);
+    }
+    a.appendChild(avatarDiv);
+
+    var metaDiv = document.createElement('div');
+    metaDiv.className = 'dm-conv-meta';
+
+    var topDiv = document.createElement('div');
+    topDiv.className = 'dm-conv-top';
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'dm-conv-name';
+    nameSpan.appendChild(document.createTextNode(String(c.other_username || '')));
+    if (c.other_is_verified && typeof window.renderVerifiedBadge === 'function') {
+      var vbWrap = document.createElement('span');
+      vbWrap.innerHTML = window.renderVerifiedBadge(13);
+      if (vbWrap.firstChild) nameSpan.appendChild(vbWrap.firstChild);
+    }
+    var timeSpan = document.createElement('span');
+    timeSpan.className = 'dm-conv-time';
+    timeSpan.textContent = formatDmShortTimeClient(c.last_message_at || '');
+    topDiv.appendChild(nameSpan);
+    topDiv.appendChild(timeSpan);
+    metaDiv.appendChild(topDiv);
+
+    var botDiv = document.createElement('div');
+    botDiv.className = 'dm-conv-bottom';
+    var prevSpan = document.createElement('span');
+    prevSpan.className = 'dm-conv-preview';
+    if (c.last_message_encrypted) {
+      prevSpan.textContent = prefix + state.encryptedPreview;
+    } else if (c.last_message_body) {
+      prevSpan.textContent = prefix + cleanPreviewText(c.last_message_body);
+    } else if (c.last_message_image) {
+      prevSpan.textContent = prefix + state.photoLabel;
+    } else {
+      prevSpan.textContent = '';
+    }
+    botDiv.appendChild(prevSpan);
+
+    if (isUnread) {
+      var dot = document.createElement('span');
+      dot.className = 'dm-conv-unread';
+      dot.textContent = c.unread_count > 99 ? '99+' : String(c.unread_count);
+      botDiv.appendChild(dot);
+    }
+    metaDiv.appendChild(botDiv);
+    a.appendChild(metaDiv);
+    return a;
+  }
+
+  async function syncConversationListDom(convs) {
+    if (!convListEl || !Array.isArray(convs)) return;
+    if (convs.length === 0) {
+      convListEl.querySelectorAll('.dm-conv-item').forEach(function(el) { el.remove(); });
+      renderEmptyConvListIfNeeded();
+      return;
+    }
+    var emptyEl = document.getElementById('dmEmptyList');
+    if (emptyEl) emptyEl.remove();
+
+    var aliveIds = {};
+    var needHydrate = false;
+    for (var i = 0; i < convs.length; i++) {
+      var c = convs[i];
+      if (!c || !c.id) continue;
+      var cidStr = String(c.id);
+      aliveIds[cidStr] = true;
+      var lastId = Number(c.last_message_id || 0);
+      var editVer = Number(c.last_message_edit_version || 0);
+      var isEnc = Boolean(c.last_message_encrypted);
+      var isMine = Number(c.last_message_sender_id || 0) === Number(state.currentUserId);
+      var prefix = isMine ? state.youPrefix : '';
+
+      if (isEnc && lastId > 0 && c.last_message_ciphertext_envelope) {
+        convEncryptedMeta[cidStr] = {
+          id: lastId,
+          sender_id: Number(c.last_message_sender_id || 0),
+          sender_device_id: Number(c.last_message_sender_device_id || 0),
+          is_encrypted: 1,
+          ciphertext_envelope: c.last_message_ciphertext_envelope,
+          edit_version: editVer
+        };
+      } else {
+        delete convEncryptedMeta[cidStr];
+      }
+
+      var item = convListEl.querySelector('.dm-conv-item[data-conv-id="' + cidStr + '"]');
+      if (!item) {
+        item = buildConvItemEl(c);
+        var refNode = convListEl.children[i] || null;
+        convListEl.insertBefore(item, refNode);
+        if (isEnc && lastId > 0) needHydrate = true;
+      } else {
+        var prevLastId = parseInt(item.getAttribute('data-last-msg-id') || '0', 10);
+        var prevEditVer = parseInt(item.getAttribute('data-last-edit-version') || '0', 10);
+        var prevEnc = item.getAttribute('data-last-encrypted') === '1';
+        var changedMsg = (prevLastId !== lastId) || (prevEditVer !== editVer) || (prevEnc !== isEnc);
+
+        item.setAttribute('data-last-msg-id', String(lastId));
+        item.setAttribute('data-last-encrypted', isEnc ? '1' : '0');
+        item.setAttribute('data-last-mine', isMine ? '1' : '0');
+        item.setAttribute('data-last-edit-version', String(editVer));
+
+        var isCurrent = Number(state.activeConversationId) > 0 && Number(state.activeConversationId) === Number(c.id);
+        var isUnread = Number(c.unread_count || 0) > 0 && !isCurrent;
+        if (isUnread) item.classList.add('unread');
+        else item.classList.remove('unread');
+
+        var timeEl = item.querySelector('.dm-conv-time');
+        if (timeEl) timeEl.textContent = formatDmShortTimeClient(c.last_message_at || '');
+
+        var botEl = item.querySelector('.dm-conv-bottom');
+        var dotEl = item.querySelector('.dm-conv-unread');
+        if (isUnread) {
+          var badgeTxt = c.unread_count > 99 ? '99+' : String(c.unread_count);
+          if (dotEl) {
+            dotEl.textContent = badgeTxt;
+          } else if (botEl) {
+            dotEl = document.createElement('span');
+            dotEl.className = 'dm-conv-unread';
+            dotEl.textContent = badgeTxt;
+            botEl.appendChild(dotEl);
+          }
+        } else if (dotEl) {
+          dotEl.remove();
+        }
+
+        var prevEl = item.querySelector('.dm-conv-preview');
+        if (prevEl) {
+          if (!isEnc) {
+            item.removeAttribute('data-preview-hydrated');
+            if (c.last_message_body) prevEl.textContent = prefix + cleanPreviewText(c.last_message_body);
+            else if (c.last_message_image) prevEl.textContent = prefix + state.photoLabel;
+            else prevEl.textContent = '';
+          } else if (changedMsg) {
+            item.removeAttribute('data-preview-hydrated');
+            needHydrate = true;
+          } else if (item.getAttribute('data-preview-hydrated') !== (lastId + ':' + editVer)) {
+            needHydrate = true;
+          }
+        }
+
+        if (convListEl.children[i] !== item) {
+          convListEl.insertBefore(item, convListEl.children[i] || null);
+        }
+      }
+    }
+
+    convListEl.querySelectorAll('.dm-conv-item[data-conv-id]').forEach(function(el) {
+      var id = el.getAttribute('data-conv-id') || '';
+      if (id && !aliveIds[id]) el.remove();
+    });
+
+    if (needHydrate) {
+      await hydrateSidebarEncryptedPreviews();
+    }
+  }
+
+  async function pollConversationList() {
+    if (isPollingConvs || document.visibilityState === 'hidden' || isDeletingChat || !convListEl) return;
+    isPollingConvs = true;
+    try {
+      var r = await fetch('/api/messages/conversations', { credentials: 'same-origin', cache: 'no-store' });
+      if (r.status === 401) {
+        if (window.__dmConvPollTimer) {
+          clearInterval(window.__dmConvPollTimer);
+          window.__dmConvPollTimer = null;
+        }
+        return;
+      }
+      if (!r.ok) return;
+      var d = await r.json();
+      if (d && d.success && Array.isArray(d.conversations)) {
+        await syncConversationListDom(d.conversations);
+        if (typeof d.unread_total === 'number' && window.updateUnreadMessagesBadge) {
+          window.updateUnreadMessagesBadge(d.unread_total);
+        }
+      }
+    } catch (e) {
+    } finally {
+      isPollingConvs = false;
+    }
+  }
+
+  function onDmVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      if (state.activeConversationId > 0) pollActiveChat();
+      pollConversationList();
+    }
+  }
+  document.addEventListener('visibilitychange', onDmVisibilityChange);
+  extraCleanups.push(function() {
+    document.removeEventListener('visibilitychange', onDmVisibilityChange);
+    if (window.__dmConvPollTimer) {
+      clearInterval(window.__dmConvPollTimer);
+      window.__dmConvPollTimer = null;
+    }
+  });
+
   if (state.activeConversationId > 0) {
     window.__dmPollTimer = setInterval(pollActiveChat, 2500);
+  }
+  if (convListEl) {
+    window.__dmConvPollTimer = setInterval(pollConversationList, state.activeConversationId > 0 ? 5000 : 2500);
   }
 })();
 `;

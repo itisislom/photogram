@@ -34,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v19';
+const APP_STYLE_VERSION = '20261126-v20';
 
 export function renderVerifiedBadge(size: number = 13.5): string {
   return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>`;
@@ -1219,6 +1219,10 @@ ${script || ''}</script>
     if (window.__dmPollTimer) {
       clearInterval(window.__dmPollTimer);
       window.__dmPollTimer = null;
+    }
+    if (window.__dmConvPollTimer) {
+      clearInterval(window.__dmConvPollTimer);
+      window.__dmConvPollTimer = null;
     }
     if (window.__dmViewportCleanup) {
       try { window.__dmViewportCleanup(); } catch (e) {}
