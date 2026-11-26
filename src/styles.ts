@@ -1669,7 +1669,12 @@ body {
 }
 
 .dm-input.pg-ce-input {
-  line-height: 40px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
+  line-height: 20px;
 }
 
 .comment-input.pg-ce-input {
@@ -5728,7 +5733,7 @@ body.dm-lock-scroll {
 
 .dm-composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border-color);
@@ -5762,13 +5767,16 @@ body.dm-lock-scroll {
 .dm-input {
   flex: 1;
   min-width: 0;
-  height: 42px;
-  padding: 0 14px;
-  border-radius: 999px;
+  height: auto;
+  min-height: 42px;
+  max-height: 128px;
+  padding: 10px 14px;
+  border-radius: 21px;
   border: 1px solid var(--border-color);
   background: var(--input-bg);
   color: var(--text-primary);
   font-size: 14px;
+  line-height: 20px;
   font-family: inherit;
   outline: none;
 }
@@ -6029,6 +6037,63 @@ body.dm-lock-scroll {
 
 .dm-msg-row.mine .dm-mention-link {
   color: #FFFFFF;
+}
+
+.dm-reply-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  margin-bottom: 5px;
+  border-radius: 8px;
+  border-left: 2.5px solid var(--accent-color, #0095f6);
+  background: rgba(128, 128, 128, 0.14);
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+  text-align: left;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  color: inherit;
+  font-family: inherit;
+}
+
+.dm-msg-row.mine .dm-reply-quote {
+  border-left-color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.dm-reply-quote-author {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--accent-color, #0095f6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dm-msg-row.mine .dm-reply-quote-author {
+  color: #FFFFFF;
+}
+
+.dm-reply-quote-text {
+  font-size: 12px;
+  line-height: 1.25;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dm-msg-bubble.is-jump-highlight {
+  outline: 2px solid var(--accent-color, #0095f6);
+  outline-offset: 2px;
+}
+
+.dm-msg-row.mine .dm-msg-bubble.is-jump-highlight {
+  outline-color: #FFFFFF;
 }
 
 .dm-lightbox-backdrop {

@@ -2,7 +2,7 @@ import { ConversationItem, DirectMessage, MessageReaction, User } from '../types
 import { ALLOWED_DM_REACTIONS } from '../messages';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
-import { SEND_COMMENT_ICON } from './commentsModal';
+import { SEND_COMMENT_ICON, REPLY_ARROW_ICON } from './commentsModal';
 import { Translations, LangCode, ru, formatLocalizedShortDate, formatLocalizedTime, getClientDateFormat, formatCompactCount, getCompactCountUnits } from '../languages';
 
 const BACK_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>`;
@@ -307,6 +307,15 @@ export function messagesPage(
       <div class="dm-seen-indicator ${seenVisible ? 'visible' : ''}" id="dmSeenIndicator">${escapeHtml(t.messages.seen)}</div>
     </div>
 
+    <div class="dm-edit-bar" id="dmReplyBar" style="display:none;">
+      <div class="dm-edit-bar-icon">${REPLY_ARROW_ICON}</div>
+      <div class="dm-edit-bar-meta">
+        <div class="dm-edit-bar-title" id="dmReplyBarTitle"></div>
+        <div class="dm-edit-bar-preview" id="dmReplyBarPreview"></div>
+      </div>
+      <button type="button" class="dm-edit-bar-close" id="dmReplyCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+    </div>
+
     <div class="dm-edit-bar" id="dmEditBar" style="display:none;">
       <div class="dm-edit-bar-icon">${EDIT_SM_ICON}</div>
       <div class="dm-edit-bar-meta">
@@ -324,7 +333,7 @@ export function messagesPage(
     <div class="dm-composer" id="dmComposeForm">
       <input type="file" id="dmImageInput" style="display:none;">
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
-      <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
+      <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="true" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
       <div class="dm-voice-rec-bar" id="dmVoiceRecBar" aria-live="polite">
         <span class="dm-voice-rec-dot"></span>
         <span class="dm-voice-rec-timer" id="dmVoiceRecTimer">0:00</span>
@@ -404,6 +413,10 @@ export function messagesPage(
       ${ALLOWED_DM_REACTIONS.map((em) => `<button type="button" class="dm-reaction-pick-btn" data-pick-emoji="${escapeHtml(em)}" role="menuitem" aria-label="${escapeHtml(em)}">${escapeHtml(em)}</button>`).join('')}
     </div>
     <div class="dm-msg-action-list" id="dmMsgActionList">
+      <button type="button" class="dm-msg-action-btn" id="dmMsgReplyBtn" role="menuitem">
+        ${REPLY_ARROW_ICON}
+        <span>${escapeHtml(t.messages.replyMessage)}</span>
+      </button>
       <button type="button" class="dm-msg-action-btn" id="dmMsgCopyBtn" role="menuitem" style="display:none;">
         ${COPY_SM_ICON}
         <span>${escapeHtml(t.messages.copyMessage)}</span>
@@ -444,6 +457,7 @@ export function messagesPage(
   const clientState = safeJsonForScript({
     currentUserId: currentUser.id,
     currentUsername: currentUser.username,
+    replyingToLabel: t.messages.replyingToLabel,
     activeConversationId: activeConversationId || 0,
     activePartnerId: activePartner ? activePartner.id : 0,
     activePartnerUsername: activePartner ? activePartner.username : '',
@@ -700,9 +714,14 @@ export function messagesPage(
   var deleteChatConfirmBtn = document.getElementById('dmDeleteChatConfirmBtn');
   var reactionPicker = document.getElementById('dmReactionPicker');
   var msgActionList = document.getElementById('dmMsgActionList');
+  var msgReplyBtn = document.getElementById('dmMsgReplyBtn');
   var msgCopyBtn = document.getElementById('dmMsgCopyBtn');
   var msgEditBtn = document.getElementById('dmMsgEditBtn');
   var msgDeleteBtn = document.getElementById('dmMsgDeleteBtn');
+  var replyBar = document.getElementById('dmReplyBar');
+  var replyBarTitle = document.getElementById('dmReplyBarTitle');
+  var replyBarPreview = document.getElementById('dmReplyBarPreview');
+  var replyCancelBtn = document.getElementById('dmReplyCancelBtn');
   var editBar = document.getElementById('dmEditBar');
   var editBarPreview = document.getElementById('dmEditBarPreview');
   var editCancelBtn = document.getElementById('dmEditCancelBtn');
@@ -710,6 +729,8 @@ export function messagesPage(
   var pendingFile = null;
   var pendingPreviewUrl = '';
   var editingMsg = null;
+  var replyingMsg = null;
+  var jumpHighlightTimer = null;
   var isSending = false;
   var isPolling = false;
   var isDeletingChat = false;
@@ -1083,6 +1104,102 @@ export function messagesPage(
     }
   }
 
+  function cancelReplyMode() {
+    replyingMsg = null;
+    if (replyBar) replyBar.style.display = 'none';
+    if (replyBarTitle) replyBarTitle.textContent = '';
+    if (replyBarPreview) replyBarPreview.textContent = '';
+  }
+
+  function startReplyMode(msgId, row) {
+    if (!msgId || !row) return;
+    if (editingMsg) cancelEditMode();
+    var isMine = row.classList.contains('mine');
+    var senderName = isMine ? (state.currentUsername || '') : (state.activePartnerUsername || '');
+    var senderId = isMine ? Number(state.currentUserId || 0) : Number(state.activePartnerId || 0);
+    var kind = 'text';
+    var preview = '';
+    if (row.getAttribute('data-msg-kind') === 'voice') {
+      kind = 'voice';
+      preview = state.voiceLabel;
+    } else {
+      var txtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
+      var rawTxt = txtEl ? (txtEl.getAttribute('data-raw-text') || txtEl.textContent || '').trim() : '';
+      if (rawTxt) {
+        kind = 'text';
+        preview = rawTxt.replace(/\\s+/g, ' ').slice(0, 120);
+      } else if (row.querySelector('.dm-msg-img-btn') || row.getAttribute('data-image-key')) {
+        kind = 'image';
+        preview = state.photoLabel;
+      } else {
+        preview = state.encryptedPreview;
+      }
+    }
+    replyingMsg = {
+      id: Number(msgId),
+      senderId: senderId,
+      senderName: senderName,
+      preview: preview,
+      kind: kind
+    };
+    if (replyBarTitle) {
+      replyBarTitle.textContent = String(state.replyingToLabel || '{username}').replace('{username}', '@' + senderName);
+    }
+    if (replyBarPreview) {
+      replyBarPreview.textContent = preview;
+    }
+    if (replyBar) replyBar.style.display = 'flex';
+    if (inputEl) inputEl.focus();
+  }
+
+  function jumpToRepliedMessage(targetMsgId) {
+    if (!targetMsgId || !listEl) return;
+    var targetRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + String(targetMsgId) + '"]');
+    if (!targetRow) return;
+    var targetBubble = targetRow.querySelector('.dm-msg-bubble');
+    try {
+      targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      targetRow.scrollIntoView(true);
+    }
+    if (targetBubble) {
+      listEl.querySelectorAll('.dm-msg-bubble.is-jump-highlight').forEach(function(b) {
+        b.classList.remove('is-jump-highlight');
+      });
+      targetBubble.classList.add('is-jump-highlight');
+      if (jumpHighlightTimer) clearTimeout(jumpHighlightTimer);
+      jumpHighlightTimer = setTimeout(function() {
+        targetBubble.classList.remove('is-jump-highlight');
+        jumpHighlightTimer = null;
+      }, 1300);
+    }
+  }
+
+  function buildReplyQuoteEl(replyMeta) {
+    if (!replyMeta || !replyMeta.id) return null;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dm-reply-quote';
+    btn.setAttribute('data-jump-msg-id', String(replyMeta.id));
+    var authorEl = document.createElement('span');
+    authorEl.className = 'dm-reply-quote-author';
+    var authorLabel = replyMeta.senderName ? ('@' + replyMeta.senderName) : '';
+    authorEl.textContent = authorLabel;
+    var previewEl = document.createElement('span');
+    previewEl.className = 'dm-reply-quote-text';
+    var fallbackLabel = replyMeta.kind === 'voice'
+      ? state.voiceLabel
+      : (replyMeta.kind === 'image' ? state.photoLabel : '');
+    previewEl.textContent = replyMeta.preview || fallbackLabel;
+    if (authorLabel) btn.appendChild(authorEl);
+    btn.appendChild(previewEl);
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      jumpToRepliedMessage(replyMeta.id);
+    });
+    return btn;
+  }
+
   function cancelEditMode() {
     editingMsg = null;
     if (editBar) editBar.style.display = 'none';
@@ -1094,8 +1211,10 @@ export function messagesPage(
 
   async function startEditMode(msgId, row) {
     if (!msgId || !row || !inputEl) return;
+    cancelReplyMode();
     var currentText = '';
     var existingMedia = null;
+    var existingReply = null;
     var isEncrypted = row.getAttribute('data-encrypted') === '1';
     var imageKey = row.getAttribute('data-image-key') || '';
     if (isEncrypted) {
@@ -1106,6 +1225,7 @@ export function messagesPage(
           if (cached) {
             currentText = cached.text || '';
             existingMedia = cached.media || null;
+            existingReply = cached.reply || null;
           }
         }
       } catch (e) {}
@@ -1120,6 +1240,7 @@ export function messagesPage(
       isEncrypted: isEncrypted,
       imageKey: imageKey,
       existingMedia: existingMedia,
+      existingReply: existingReply,
       originalText: currentText
     };
     if (attachBtn) attachBtn.style.display = 'none';
@@ -1428,6 +1549,7 @@ export function messagesPage(
     var isVoice = Boolean(payload && payload.media && payload.media.kind === 'voice' && (imageKey || localMediaUrl));
     var hasImg = !isVoice && Boolean((payload && payload.media && imageKey) || localMediaUrl);
     var hasText = Boolean(payload && payload.text);
+    var replyQuoteEl = (payload && payload.reply) ? buildReplyQuoteEl(payload.reply) : null;
     var parentRow = bubble.closest ? bubble.closest('.dm-msg-row') : null;
     if (parentRow) {
       if (isVoice) parentRow.setAttribute('data-msg-kind', 'voice');
@@ -1441,13 +1563,15 @@ export function messagesPage(
       };
       bubble.classList.remove('img-only');
       bubble.classList.add('voice-bubble');
+      if (replyQuoteEl) bubble.appendChild(replyQuoteEl);
       bubble.appendChild(buildVoicePlayerEl(payload.media, imageKey, localMediaUrl, resolvedVoiceOpts));
       bubble.appendChild(timeEl);
       return;
     }
     bubble.classList.remove('voice-bubble');
-    if (hasImg && !hasText) bubble.classList.add('img-only');
+    if (hasImg && !hasText && !replyQuoteEl) bubble.classList.add('img-only');
     else bubble.classList.remove('img-only');
+    if (replyQuoteEl) bubble.appendChild(replyQuoteEl);
 
     if (hasImg) {
       var imgBtn = document.createElement('button');
@@ -1846,6 +1970,7 @@ export function messagesPage(
 
   if (inputEl && window.pgBindPlainEditable) {
     window.pgBindPlainEditable(inputEl, {
+      multiline: true,
       onEnter: function() {
         if (typeof submitDmMessage === 'function') submitDmMessage();
       }
@@ -1978,6 +2103,10 @@ export function messagesPage(
     editCancelBtn.addEventListener('click', cancelEditMode);
   }
 
+  if (replyCancelBtn) {
+    replyCancelBtn.addEventListener('click', cancelReplyMode);
+  }
+
   async function submitDmMessage(e) {
       if (e && e.preventDefault) e.preventDefault();
       if (isSending) return;
@@ -2035,6 +2164,7 @@ export function messagesPage(
               partnerUserId: state.activePartnerId,
               text: text,
               existingMedia: editTarget.existingMedia,
+              reply: editTarget.existingReply || null,
               editOf: editTarget.id
             });
           } catch (encEditErr) {
@@ -2122,13 +2252,15 @@ export function messagesPage(
           }
         }
 
+        var replySnap = replyingMsg ? Object.assign({}, replyingMsg) : null;
         var enc;
         try {
           enc = await c.encryptMessage({
             partnerUserId: state.activePartnerId,
             text: text,
             fileBytes: fileBytes,
-            fileMime: fileMime
+            fileMime: fileMime,
+            reply: replySnap
           });
         } catch (encErr) {
           if (sentLocalPreview) { try { URL.revokeObjectURL(sentLocalPreview); } catch (e2) {} }
@@ -2189,6 +2321,7 @@ export function messagesPage(
           await c.cacheSentMessage(Number(data.message.id), enc.payload);
           if (inputEl) inputEl.value = '';
           clearPendingFile();
+          cancelReplyMode();
           appendMessageIfNew(data.message, true, enc.payload, sentLocalPreview);
           updateSidebarPreview(state.activeConversationId, state.currentUserId, enc.payload.text, Boolean(enc.payload.media));
         } else {
@@ -2373,6 +2506,7 @@ export function messagesPage(
       if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
         sentLocalUrl = URL.createObjectURL(audioBlob);
       }
+      var voiceReplySnap = replyingMsg ? Object.assign({}, replyingMsg) : null;
       var enc;
       try {
         enc = await c.encryptMessage({
@@ -2382,7 +2516,8 @@ export function messagesPage(
           fileMime: fileMime,
           mediaKind: 'voice',
           voiceDurationMs: durationMs,
-          voiceWaveform: waveform
+          voiceWaveform: waveform,
+          reply: voiceReplySnap
         });
       } catch (encErr) {
         if (sentLocalUrl) { try { URL.revokeObjectURL(sentLocalUrl); } catch (e2) {} }
@@ -2419,6 +2554,7 @@ export function messagesPage(
         hideBanner();
         if (data.conversation_id) state.activeConversationId = Number(data.conversation_id);
         await c.cacheSentMessage(Number(data.message.id), enc.payload);
+        cancelReplyMode();
         appendMessageIfNew(data.message, true, enc.payload, sentLocalUrl);
         updateSidebarPreview(state.activeConversationId, state.currentUserId, '', true, 'voice');
       } else {
@@ -2774,6 +2910,10 @@ export function messagesPage(
         b.classList.remove('is-selected');
       }
     });
+    if (msgReplyBtn) {
+      var canReplyMsg = !row.querySelector('.dm-msg-decrypt-err');
+      msgReplyBtn.style.display = canReplyMsg ? 'flex' : 'none';
+    }
     if (msgCopyBtn) {
       var copyTxtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
       var canCopyMsg = Boolean(copyTxtEl && copyTxtEl.textContent && copyTxtEl.textContent.trim());
@@ -2867,6 +3007,19 @@ export function messagesPage(
     } finally {
       if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
     }
+  }
+
+  if (msgReplyBtn) {
+    msgReplyBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var targetId = reactTargetMsgId;
+      var targetRow = reactActiveRow;
+      closeReactionPicker();
+      if (targetId && targetRow) {
+        startReplyMode(targetId, targetRow);
+      }
+    });
   }
 
   if (msgCopyBtn) {
@@ -2968,7 +3121,7 @@ export function messagesPage(
         clearMsgLongPressTimer();
         return;
       }
-      if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link')) return;
+      if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link, .dm-reply-quote')) return;
       var bubble = e.target && e.target.closest ? e.target.closest('.dm-msg-bubble') : null;
       var row = bubble && bubble.closest ? bubble.closest('.dm-msg-row[data-msg-id]') : null;
       if (!row || !reactionPicker) return;

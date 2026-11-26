@@ -322,6 +322,8 @@ export const en: Translations = {
     deleteChatSuccess: 'Chat deleted',
     copyMessage: 'Copy',
     copiedToast: 'Copied',
+    replyMessage: 'Reply',
+    replyingToLabel: 'Replying to {username}',
     editMessage: 'Edit message',
     editingMessage: 'Editing message',
     editedLabel: 'Edited',

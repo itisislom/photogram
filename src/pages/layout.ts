@@ -34,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v41';
+const APP_STYLE_VERSION = '20261126-v43';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -157,9 +157,14 @@ window.pgBindPlainEditable = function(el, opts) {
   el.__pgCeBound = true;
   opts = opts || {};
   var maxLen = parseInt(el.getAttribute('data-maxlength') || '0', 10) || 0;
+  var multiline = Boolean(opts.multiline);
   var composing = false;
   if (!el.isContentEditable) {
     el.setAttribute('contenteditable', 'true');
+  }
+  function cleanText(rawStr) {
+    var s = String(rawStr == null ? '' : rawStr);
+    return multiline ? s.replace(/\\r\\n?/g, '\\n') : s.replace(/\\r?\\n/g, ' ');
   }
   function moveCaretToEnd() {
     try {
@@ -174,15 +179,15 @@ window.pgBindPlainEditable = function(el, opts) {
     } catch (e) {}
   }
   function normalize() {
-    var raw = (el.textContent || '').replace(/\\r?\\n/g, ' ');
-    if (!raw) {
+    var raw = cleanText(el.textContent || '');
+    if (!raw || (multiline && raw === '\\n' && !el.textContent.replace(/\\n/g, ''))) {
       if (el.innerHTML !== '') el.innerHTML = '';
       return;
     }
     if (maxLen > 0 && raw.length > maxLen) {
       el.textContent = raw.slice(0, maxLen);
       moveCaretToEnd();
-    } else if (el.childNodes.length > 1 || (el.firstChild && el.firstChild.nodeType !== 3)) {
+    } else if (!multiline && (el.childNodes.length > 1 || (el.firstChild && el.firstChild.nodeType !== 3))) {
       el.textContent = raw;
       moveCaretToEnd();
     }
@@ -191,10 +196,10 @@ window.pgBindPlainEditable = function(el, opts) {
     Object.defineProperty(el, 'value', {
       configurable: true,
       get: function() {
-        return (el.textContent || '').replace(/\\r?\\n/g, ' ');
+        return cleanText(el.textContent || '');
       },
       set: function(v) {
-        var s = String(v == null ? '' : v).replace(/\\r?\\n/g, ' ');
+        var s = cleanText(v);
         if (maxLen > 0 && s.length > maxLen) s = s.slice(0, maxLen);
         if (!s) el.innerHTML = '';
         else el.textContent = s;
@@ -223,7 +228,7 @@ window.pgBindPlainEditable = function(el, opts) {
       var clip = e.clipboardData || window.clipboardData;
       if (!clip) return;
       e.preventDefault();
-      var txt = (clip.getData('text/plain') || '').replace(/\\r?\\n/g, ' ');
+      var txt = cleanText(clip.getData('text/plain') || '');
       if (!txt) return;
       if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
         document.execCommand('insertText', false, txt);

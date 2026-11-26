@@ -322,6 +322,8 @@ export const uz: Translations = {
     deleteChatSuccess: 'Chat o‘chirildi',
     copyMessage: 'Nusxalash',
     copiedToast: 'Nusxalandi',
+    replyMessage: 'Javob berish',
+    replyingToLabel: '{username} ga javob',
     editMessage: 'Xabarni tahrirlash',
     editingMessage: 'Tahrirlanmoqda',
     editedLabel: 'Tahrirlangan',

@@ -327,6 +327,8 @@ export const ru: Translations = {
     deleteChatSuccess: 'Чат удалён',
     copyMessage: 'Скопировать',
     copiedToast: 'Скопировано',
+    replyMessage: 'Ответить',
+    replyingToLabel: 'Ответ для {username}',
     editMessage: 'Изменить сообщение',
     editingMessage: 'Редактирование',
     editedLabel: 'Изменено',

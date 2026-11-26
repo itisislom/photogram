@@ -259,6 +259,8 @@ export interface Translations {
     deleteChatSuccess: string;
     copyMessage: string;
     copiedToast: string;
+    replyMessage: string;
+    replyingToLabel: string;
     editMessage: string;
     editingMessage: string;
     editedLabel: string;

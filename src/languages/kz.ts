@@ -322,6 +322,8 @@ export const kz: Translations = {
     deleteChatSuccess: 'Чат жойылды',
     copyMessage: 'Көшіру',
     copiedToast: 'Көшірілді',
+    replyMessage: 'Жауап беру',
+    replyingToLabel: '{username} пайдаланушысына жауап',
     editMessage: 'Хабарламаны өзгерту',
     editingMessage: 'Өзгерту',
     editedLabel: 'Өзгертілді',

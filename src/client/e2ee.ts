@@ -19,6 +19,8 @@ const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 const MAX_VOICE_BYTES = 1536 * 1024;
 const MAX_VOICE_DURATION_MS = 120_000;
 const MAX_WAVEFORM_BARS = 40;
+const MAX_REPLY_NAME_LEN = 40;
+const MAX_REPLY_PREVIEW_LEN = 120;
 const ALLOWED_MEDIA_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ALLOWED_VOICE_MIMES = new Set([
   'audio/webm',
@@ -54,10 +56,38 @@ export interface DecryptedMediaMeta {
   waveform?: number[];
 }
 
+export interface DecryptedReplyMeta {
+  id: number;
+  senderId: number;
+  senderName: string;
+  preview: string;
+  kind?: 'text' | 'image' | 'voice';
+}
+
+function sanitizeReplyMeta(raw: unknown): DecryptedReplyMeta | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const id = Math.floor(Number(r.id || 0));
+  if (!Number.isFinite(id) || id <= 0) return undefined;
+  const senderId = Math.max(0, Math.floor(Number(r.senderId || 0)));
+  const senderName = typeof r.senderName === 'string' ? r.senderName.trim().slice(0, MAX_REPLY_NAME_LEN) : '';
+  const preview = typeof r.preview === 'string' ? r.preview.replace(/\s+/g, ' ').trim().slice(0, MAX_REPLY_PREVIEW_LEN) : '';
+  const rawKind = r.kind === 'image' || r.kind === 'voice' ? r.kind : 'text';
+  if (!senderName && !preview) return undefined;
+  return {
+    id,
+    senderId,
+    senderName,
+    preview,
+    kind: rawKind,
+  };
+}
+
 export interface DecryptedPayload {
   v: number;
   text: string;
   media?: DecryptedMediaMeta | null;
+  reply?: DecryptedReplyMeta | null;
   editOf?: number;
   editVersion?: number;
 }
@@ -638,6 +668,7 @@ export class E2eeClient {
     voiceDurationMs?: number;
     voiceWaveform?: number[];
     existingMedia?: DecryptedMediaMeta | null;
+    reply?: DecryptedReplyMeta | null;
     editOf?: number;
   }): Promise<{
     senderDeviceId: number;
@@ -678,6 +709,10 @@ export class E2eeClient {
     const payload: DecryptedPayload = mediaMeta
       ? { v: 1, text: cleanText, media: mediaMeta }
       : { v: 1, text: cleanText };
+    const cleanReply = sanitizeReplyMeta(opts.reply);
+    if (cleanReply) {
+      payload.reply = cleanReply;
+    }
     if (opts.editOf && Number(opts.editOf) > 0) {
       payload.editOf = Number(opts.editOf);
     }
@@ -971,10 +1006,12 @@ export class E2eeClient {
           if (wf) safeMedia.waveform = wf;
         }
       }
+      const safeReply = sanitizeReplyMeta(parsed?.reply) || null;
       const payload: DecryptedPayload = {
         v: Number(parsed?.v || 1),
         text: typeof parsed?.text === 'string' ? parsed.text.slice(0, MAX_PLAIN_TEXT_LEN) : '',
         media: safeMedia,
+        reply: safeReply,
         editVersion: expectedVersion,
       };
 
