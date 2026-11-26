@@ -65,7 +65,7 @@ import { createPostgresClient } from './db/client';
 import {
   consumeRateLimitAtomic,
   getClientIp,
-  isAdminUser,
+  hasAdminPermission,
   parsePositiveId,
   readJsonWithLimit,
 } from './security';
@@ -246,7 +246,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const feedData = await getPersonalizedFeed(env, user.id);
-      return html(feedPage(feedData, user, t, userTheme), setLangCookie, isHttps);
+      return html(feedPage(feedData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
     }
 
     if (pathname === '/explore' && method === 'GET') {
@@ -254,7 +254,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       if (!user) return redirect('/login', request, setLangCookie);
       const tagParam = url.searchParams.get('tag') || 'all';
       const exploreData = await getPersonalizedExplore(env, user.id, tagParam);
-      return html(explorePage(exploreData, user, t, userTheme), setLangCookie, isHttps);
+      return html(explorePage(exploreData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
     }
 
     if (pathname === '/profile' && method === 'GET') {
@@ -373,7 +373,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       if (!profile) {
         return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
       }
-      profile.is_admin = isAdminUser(currentUser);
+      profile.is_admin = hasAdminPermission(currentUser, env, 'posts.delete');
       return html(profilePage(profile, t, userTheme), setLangCookie, isHttps);
     }
 

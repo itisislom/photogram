@@ -6,7 +6,6 @@ import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { formatLocalizedFullDate, formatLocalizedShortDate } from '../languages';
 import { PersonalizedFeedResult } from '../recommendations';
-import { isAdminUser } from '../security';
 
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="80" height="80" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -115,7 +114,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
   </article>`;
 }
 
-export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], currentUser: User, t: Translations = ru, theme?: string): string {
+export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], currentUser: User, t: Translations = ru, theme?: string, isAdmin: boolean = false): string {
   let followedPosts: FeedPost[] = [];
   let suggestedPosts: FeedPost[] = [];
   let allCaughtUp = false;
@@ -130,7 +129,6 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
     recommendedUsers = feedInput.recommendedUsers || [];
   }
 
-  const isAdmin = isAdminUser(currentUser);
   const hasAnyPosts = followedPosts.length > 0 || suggestedPosts.length > 0;
 
   const caughtUpBannerHtml = (allCaughtUp && hasAnyPosts)

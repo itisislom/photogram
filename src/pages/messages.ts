@@ -253,7 +253,7 @@ export function messagesPage(
     </div>
 
     <div class="dm-composer" id="dmComposeForm">
-      <input type="file" id="dmImageInput" accept="image/jpeg,image/png,image/webp" style="display:none;">
+      <input type="file" id="dmImageInput" style="display:none;">
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
       <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
       <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" disabled>${SEND_COMMENT_ICON}</button>
@@ -1271,6 +1271,12 @@ export function messagesPage(
     fileInput.addEventListener('change', function() {
       var f = this.files && this.files[0];
       if (!f) return;
+      var allowedMime = ['image/jpeg', 'image/png', 'image/webp'];
+      if (f.type && allowedMime.indexOf(f.type) === -1) {
+        if (window.showAppToast) window.showAppToast(state.errInvalidImage);
+        this.value = '';
+        return;
+      }
       if (f.size > 5 * 1024 * 1024) {
         if (window.showAppToast) window.showAppToast(state.errImageTooLarge);
         this.value = '';

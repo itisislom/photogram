@@ -33,7 +33,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
   const editBadgeHtml = is_owner
     ? `<label class="profile-avatar-edit-badge" for="avatarFileInput" title="${escapeHtml(t.profile.changePhoto)}">${CAMERA_ICON}</label>
-       <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp" style="display:none">`
+       <input type="file" id="avatarFileInput" style="display:none">`
     : '';
 
   let hintText = '';

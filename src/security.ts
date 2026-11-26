@@ -3,14 +3,82 @@ import { Env } from './types';
 export const MAX_INT32 = 2147483647;
 export const MAX_IMAGE_DIM = 8192;
 export const MAX_IMAGE_PIXELS = 40_000_000;
-export const ADMIN_USERNAME = 'islom';
 
-export function isAdminUser(user?: { username?: string | null } | null): boolean {
-  return Boolean(
-    user &&
-      typeof user.username === 'string' &&
-      user.username.trim().toLowerCase() === ADMIN_USERNAME,
-  );
+export type AdminPermission = '*' | 'posts.delete' | 'comments.delete' | 'users.verify' | 'users.ban';
+
+function parseAdminPermissionsMap(raw?: string): Map<number, Set<string>> {
+  const map = new Map<number, Set<string>>();
+  if (typeof raw !== 'string') return map;
+  const trimmed = raw.trim();
+  if (!trimmed) return map;
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          const uid = parsePositiveId(k);
+          if (!uid) continue;
+          const perms = new Set<string>();
+          if (Array.isArray(v)) {
+            for (const item of v) {
+              if (typeof item === 'string' && item.trim()) perms.add(item.trim().toLowerCase());
+            }
+          } else if (v === true || v === '*') {
+            perms.add('*');
+          }
+          if (perms.size > 0) map.set(uid, perms);
+        }
+      }
+      return map;
+    } catch {
+      return map;
+    }
+  }
+
+  for (const part of trimmed.split(/[,;\n]+/)) {
+    const entry = part.trim();
+    if (!entry) continue;
+    const colonIdx = entry.indexOf(':');
+    if (colonIdx === -1) {
+      const uid = parsePositiveId(entry);
+      if (!uid) continue;
+      const existing = map.get(uid) || new Set<string>();
+      existing.add('*');
+      map.set(uid, existing);
+      continue;
+    }
+    const uid = parsePositiveId(entry.slice(0, colonIdx));
+    if (!uid) continue;
+    const permsRaw = entry.slice(colonIdx + 1).trim();
+    if (!permsRaw) continue;
+    const existing = map.get(uid) || new Set<string>();
+    for (const perm of permsRaw.split(/[|+]/)) {
+      const p = perm.trim().toLowerCase();
+      if (p) existing.add(p);
+    }
+    if (existing.size > 0) map.set(uid, existing);
+  }
+  return map;
+}
+
+export function hasAdminPermission(
+  user: { id?: number | null } | null | undefined,
+  env: Pick<Env, 'ADMIN_PERMISSIONS'> | null | undefined,
+  permission: AdminPermission = '*',
+): boolean {
+  const uid = parsePositiveId(user?.id);
+  if (!uid || !env?.ADMIN_PERMISSIONS) return false;
+  const perms = parseAdminPermissionsMap(env.ADMIN_PERMISSIONS).get(uid);
+  if (!perms || perms.size === 0) return false;
+  return perms.has('*') || perms.has(permission.toLowerCase());
+}
+
+export function isAdminUser(
+  user: { id?: number | null } | null | undefined,
+  env: Pick<Env, 'ADMIN_PERMISSIONS'> | null | undefined,
+): boolean {
+  return hasAdminPermission(user, env, '*');
 }
 
 export function isValidPositiveId(n: unknown): n is number {

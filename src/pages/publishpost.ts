@@ -41,7 +41,7 @@ export function publishPostPage(
           <span class="publishpost-dropzone-text">${esc(t.post.selectPhotoDropzone)}</span>
           <span class="publishpost-select-btn">${esc(t.post.selectPhotoBtn)}</span>
         </label>
-        <input type="file" id="postFileInput" accept="image/jpeg,image/png,image/webp" style="display:none">
+        <input type="file" id="postFileInput" style="display:none">
 
         <div class="post-crop-wrap publishpost-crop-wrap" id="postCropWrap" style="display:none;">
           <div class="crop-viewport publishpost-crop-viewport" id="cropViewport">

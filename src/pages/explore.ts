@@ -5,7 +5,6 @@ import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderComment
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { formatLocalizedFullDate, formatLocalizedTime, getClientDateFormat } from '../languages';
-import { isAdminUser } from '../security';
 
 const SEARCH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -54,9 +53,9 @@ export function explorePage(
   data: { posts: any[]; tags?: string[]; activeTag?: string } | ExploreData,
   currentUser: User,
   t: Translations = ru,
-  theme?: string
+  theme?: string,
+  isAdmin: boolean = false
 ): string {
-  const isAdmin = isAdminUser(currentUser);
   const postList = data.posts || [];
   const tagsList = (data as any).tags || [];
   const activeTag = ((data as any).activeTag || 'all').toLowerCase().trim();

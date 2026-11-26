@@ -7,7 +7,7 @@ import {
   checkContentLength,
   consumeBurstWithLockoutAtomic,
   consumeRateLimitAtomic,
-  isAdminUser,
+  hasAdminPermission,
   parsePositiveId,
   readJsonWithLimit,
   validateImageBytes,
@@ -147,7 +147,7 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
     return jsonError('Публикация не найдена', 404);
   }
 
-  if (post.user_id !== currentUser.id && !isAdminUser(currentUser)) {
+  if (post.user_id !== currentUser.id && !hasAdminPermission(currentUser, env, 'posts.delete')) {
     return jsonError('Нет прав на удаление этой публикации', 403);
   }
 

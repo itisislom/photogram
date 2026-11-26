@@ -61,7 +61,7 @@ export function editProfilePage(
     <label for="avatarFileInput" class="editprofile-change-photo-btn">
       ${esc(t.profile.changePhoto)}
     </label>
-    <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp" style="display: none;">
+    <input type="file" id="avatarFileInput" style="display: none;">
   </div>
 
   <div class="auth-error" id="editProfileError"></div>
