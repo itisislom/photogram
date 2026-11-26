@@ -458,6 +458,7 @@ export function messagesPage(
     currentUserId: currentUser.id,
     currentUsername: currentUser.username,
     replyingToLabel: t.messages.replyingToLabel,
+    replyArrowIcon: REPLY_ARROW_ICON,
     activeConversationId: activeConversationId || 0,
     activePartnerId: activePartner ? activePartner.id : 0,
     activePartnerUsername: activePartner ? activePartner.username : '',
@@ -3130,8 +3131,22 @@ export function messagesPage(
       var t0 = e.touches[0];
       msgLongPressStartX = t0.clientX;
       msgLongPressStartY = t0.clientY;
+      resetSwipeReply(false);
+      var isCoarseMobile = (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth || 0) <= 900;
+      var onVoiceWave = Boolean(e.target && e.target.closest && e.target.closest('.dm-voice-wave'));
+      if (isCoarseMobile && !onVoiceWave && !row.querySelector('.dm-msg-decrypt-err')) {
+        swipeRow = row;
+        swipeStack = row.querySelector('.dm-msg-stack');
+        swipeStartX = t0.clientX;
+        swipeStartY = t0.clientY;
+        swipeLocked = false;
+        swipeCancelled = false;
+        swipeTriggered = false;
+      }
       msgLongPressTimer = setTimeout(function() {
         msgLongPressTimer = null;
+        if (swipeLocked) return;
+        resetSwipeReply(false);
         msgLongPressDidFire = true;
         suppressNextMsgClickUntil = Date.now() + 1000;
         if (navigator.vibrate) {
@@ -3141,16 +3156,88 @@ export function messagesPage(
       }, 450);
     }, { passive: true });
 
+    var swipeRow = null;
+    var swipeStack = null;
+    var swipeHintEl = null;
+    var swipeStartX = 0;
+    var swipeStartY = 0;
+    var swipeLocked = false;
+    var swipeCancelled = false;
+    var swipeTriggered = false;
+    var SWIPE_REPLY_THRESHOLD = 46;
+    var SWIPE_REPLY_MAX = 68;
+
+    function resetSwipeReply(fireReply) {
+      var targetRow = swipeRow;
+      var shouldReply = Boolean(fireReply && swipeTriggered && targetRow);
+      if (swipeStack) {
+        swipeStack.style.transform = '';
+      }
+      if (swipeHintEl && swipeHintEl.parentNode) {
+        swipeHintEl.parentNode.removeChild(swipeHintEl);
+      }
+      swipeHintEl = null;
+      swipeRow = null;
+      swipeStack = null;
+      swipeLocked = false;
+      swipeCancelled = false;
+      swipeTriggered = false;
+      if (shouldReply) {
+        suppressNextMsgClickUntil = Date.now() + 350;
+        var rid = parseInt(targetRow.getAttribute('data-msg-id') || '0', 10);
+        if (rid) startReplyMode(rid, targetRow);
+      }
+    }
+
     listEl.addEventListener('touchmove', function(e) {
-      if (!msgLongPressTimer || !e.touches || !e.touches.length) return;
+      if (!e.touches || !e.touches.length) return;
       var t0 = e.touches[0];
-      if (Math.abs(t0.clientX - msgLongPressStartX) > 10 || Math.abs(t0.clientY - msgLongPressStartY) > 10) {
+      if (msgLongPressTimer && (Math.abs(t0.clientX - msgLongPressStartX) > 10 || Math.abs(t0.clientY - msgLongPressStartY) > 10)) {
         clearMsgLongPressTimer();
       }
-    }, { passive: true });
+      if (!swipeRow || !swipeStack || swipeCancelled) return;
+      var dx = t0.clientX - swipeStartX;
+      var dy = t0.clientY - swipeStartY;
+      if (!swipeLocked) {
+        if (dx > 8 || (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 0.85)) {
+          swipeCancelled = true;
+          return;
+        }
+        if (dx < -14 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+          swipeLocked = true;
+          clearMsgLongPressTimer();
+          swipeHintEl = document.createElement('span');
+          swipeHintEl.className = 'dm-swipe-reply-hint';
+          swipeHintEl.setAttribute('aria-hidden', 'true');
+          swipeHintEl.innerHTML = state.replyArrowIcon || '';
+          swipeRow.appendChild(swipeHintEl);
+        } else {
+          return;
+        }
+      }
+      if (e.cancelable) e.preventDefault();
+      var rawDist = Math.max(0, -dx);
+      var dist = rawDist <= 54 ? rawDist : 54 + (rawDist - 54) * 0.35;
+      if (dist > SWIPE_REPLY_MAX) dist = SWIPE_REPLY_MAX;
+      swipeStack.style.transform = 'translate3d(' + (-Math.round(dist)) + 'px, 0, 0)';
+      if (swipeHintEl) {
+        swipeHintEl.style.opacity = String(Math.min(1, dist / SWIPE_REPLY_THRESHOLD));
+        if (dist >= SWIPE_REPLY_THRESHOLD) swipeHintEl.classList.add('is-ready');
+        else swipeHintEl.classList.remove('is-ready');
+      }
+      if (!swipeTriggered && dist >= SWIPE_REPLY_THRESHOLD) {
+        swipeTriggered = true;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(14); } catch (ve2) {}
+        }
+      } else if (swipeTriggered && dist < SWIPE_REPLY_THRESHOLD - 10) {
+        swipeTriggered = false;
+      }
+    }, { passive: false });
 
     listEl.addEventListener('touchend', function() {
       clearMsgLongPressTimer();
+      resetSwipeReply(true);
       if (msgLongPressDidFire) {
         suppressNextMsgClickUntil = Date.now() + 500;
         msgLongPressDidFire = false;
@@ -3159,6 +3246,7 @@ export function messagesPage(
 
     listEl.addEventListener('touchcancel', function() {
       clearMsgLongPressTimer();
+      resetSwipeReply(false);
       msgLongPressDidFire = false;
     }, { passive: true });
 

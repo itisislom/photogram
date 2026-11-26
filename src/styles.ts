@@ -6096,6 +6096,34 @@ body.dm-lock-scroll {
   outline-color: #FFFFFF;
 }
 
+.dm-msg-row {
+  position: relative;
+}
+
+.dm-swipe-reply-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  margin-top: -15px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.dm-swipe-reply-hint.is-ready {
+  background: var(--accent-color, #0095f6);
+  border-color: var(--accent-color, #0095f6);
+  color: #FFFFFF;
+}
+
 .dm-lightbox-backdrop {
   z-index: 21500;
 }
