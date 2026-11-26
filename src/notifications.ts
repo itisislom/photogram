@@ -185,20 +185,24 @@ export async function createNotification(
     });
 
     if (actor?.username && notifyAllowed) {
-      let bodyText = '';
-      if (opts.type === 'like') bodyText = `@${actor.username} понравилась ваша публикация`;
-      else if (opts.type === 'comment_like') bodyText = `@${actor.username} понравился ваш комментарий${preview ? `: ${preview}` : ''}`;
-      else if (opts.type === 'comment_reply') bodyText = `@${actor.username} ответил(а): ${preview || 'на ваш комментарий'}`;
-      else if (opts.type === 'follow') bodyText = `@${actor.username} подписался(ась) на вас`;
-      else if (opts.type === 'mention') bodyText = `@${actor.username} упомянул(а) вас${preview ? `: ${preview}` : ''}`;
-      else bodyText = `@${actor.username}: ${preview || 'прокомментировал(а) вашу публикацию'}`;
-
-      await sendPushToUser(env, opts.userId, {
-        kind: opts.type,
-        title: 'Photogram',
-        body: bodyText.slice(0, 140),
-        url: '/notifications',
-        tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
+      const actorName = actor.username;
+      const withPreview = (label: string): string =>
+        preview ? `${label} ${preview}` : label.replace(/[:\s]+$/, '');
+      await sendPushToUser(env, opts.userId, (rt) => {
+        let bodyText = '';
+        if (opts.type === 'like') bodyText = `@${actorName} ${rt.notifications.likedYourPost}`;
+        else if (opts.type === 'comment_like') bodyText = `@${actorName} ${withPreview(rt.notifications.likedYourComment)}`;
+        else if (opts.type === 'comment_reply') bodyText = `@${actorName} ${withPreview(rt.notifications.repliedYourComment)}`;
+        else if (opts.type === 'follow') bodyText = `@${actorName} ${rt.notifications.startedFollowingYou}`;
+        else if (opts.type === 'mention') bodyText = `@${actorName} ${withPreview(rt.notifications.mentionedYou)}`;
+        else bodyText = `@${actorName} ${withPreview(rt.notifications.commentedYourPost)}`;
+        return {
+          kind: opts.type,
+          title: 'Photogram',
+          body: bodyText.slice(0, 140),
+          url: '/notifications',
+          tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
+        };
       });
     }
   } catch {}

@@ -235,6 +235,12 @@ export function renderLangScript(): string {
     } catch(e) {}
 
     try {
+      if (typeof window.ensurePushSubscription === 'function' && 'Notification' in window && Notification.permission === 'granted') {
+        await window.ensurePushSubscription(false);
+      }
+    } catch(e) {}
+
+    try {
       if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
         navigator.serviceWorker.controller.postMessage({ type: 'REFRESH_OFFLINE' });
       }

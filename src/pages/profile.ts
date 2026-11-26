@@ -1089,6 +1089,14 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     });
   });
 
+  try {
+    var deepPostId = new URLSearchParams(window.location.search).get('post');
+    if (deepPostId && /^\d+$/.test(deepPostId)) {
+      var targetPostBtn = document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deepPostId + '"]');
+      if (targetPostBtn) openPost(targetPostBtn);
+    }
+  } catch (e) {}
+
   if (viewLikeBtn) {
     viewLikeBtn.addEventListener('click', function(e) {
       e.stopPropagation();

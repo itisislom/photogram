@@ -6,6 +6,14 @@ import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
 import { profilePage, userNotFoundPage } from './pages/profile';
 import { settingsPage } from './pages/settings';
+import { activityPage } from './pages/activity';
+import {
+  ActivitySection,
+  getActivitySummary,
+  handleGetActivity,
+  handleActivityUnlike,
+  handleActivityDeleteComments,
+} from './activity';
 import { accountListPage } from './pages/accountlist';
 import { messagesPage } from './pages/messages';
 import { notificationsPage } from './pages/notifications';
@@ -272,6 +280,23 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return html(settingsPage(user, t, userTheme), setLangCookie, isHttps);
     }
 
+    if ((pathname === '/activity' || pathname === '/activity.ts') && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) return redirect('/login', request, setLangCookie);
+      const summary = await getActivitySummary(env, user.id);
+      const rawSec = (url.searchParams.get('section') || '').trim();
+      const validSec: ActivitySection | null =
+        rawSec === 'likes' ||
+        rawSec === 'comment_likes' ||
+        rawSec === 'comments' ||
+        rawSec === 'follows' ||
+        rawSec === 'posts' ||
+        rawSec === 'history'
+          ? rawSec
+          : null;
+      return html(activityPage(user, summary, validSec, t, userTheme), setLangCookie, isHttps);
+    }
+
     if ((pathname === '/accountlist' || pathname === '/accountlist.ts') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
@@ -328,8 +353,11 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
         if (!targetUser) {
           return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
-        const followers = await getFollowersList(env, targetUser.id, currentUser?.id);
-        return html(sublistPage(targetUser, followers, currentUser, t, userTheme), setLangCookie, isHttps);
+        const [followers, followingUsers] = await Promise.all([
+          getFollowersList(env, targetUser.id, currentUser?.id),
+          getFollowingList(env, targetUser.id, currentUser?.id),
+        ]);
+        return html(sublistPage(targetUser, followers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
       }
       const subslistMatch = /^([^\/]+)\/subslist(?:\.ts)?$/i.exec(rest);
       if (subslistMatch) {
@@ -345,8 +373,11 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
         if (!targetUser) {
           return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
-        const followingUsers = await getFollowingList(env, targetUser.id, currentUser?.id);
-        return html(subslistPage(targetUser, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
+        const [subsFollowers, followingUsers] = await Promise.all([
+          getFollowersList(env, targetUser.id, currentUser?.id),
+          getFollowingList(env, targetUser.id, currentUser?.id),
+        ]);
+        return html(subslistPage(targetUser, subsFollowers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
       }
 
       const editprofileMatch = /^([^\/]+)\/editprofile(?:\.ts)?$/i.exec(rest);
@@ -759,6 +790,18 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return handleToggleNotificationsSetting(request, env);
     }
 
+    if (pathname === '/api/activity' && method === 'GET') {
+      return handleGetActivity(request, env, url);
+    }
+
+    if (pathname === '/api/activity/unlike' && method === 'POST') {
+      return handleActivityUnlike(request, env);
+    }
+
+    if (pathname === '/api/activity/delete-comments' && method === 'POST') {
+      return handleActivityDeleteComments(request, env);
+    }
+
     if (pathname === '/api/push/vapid-key' && method === 'GET') {
       return handleGetVapidKey(env);
     }
@@ -810,6 +853,14 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      try {
+        const langUser = await getUserFromRequest(env, request);
+        if (langUser) {
+          await env.DB.prepare('UPDATE push_subscriptions SET lang = ? WHERE user_id = ?')
+            .bind(valid, langUser.id)
+            .run();
+        }
+      } catch {}
       return new Response(JSON.stringify({ success: true, lang: valid }), {
         headers: {
           'Content-Type': 'application/json',

@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint   TEXT    NOT NULL UNIQUE,
     p256dh     TEXT    NOT NULL,
     auth       TEXT    NOT NULL,
+    lang       TEXT    NOT NULL DEFAULT 'ru',
     created_at TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

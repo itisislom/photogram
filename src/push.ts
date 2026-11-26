@@ -1,6 +1,6 @@
 import { Env } from './types';
 import { getUserFromRequest, getDeviceSessionUserIds } from './auth';
-import { detectLanguage, getTranslations } from './languages';
+import { detectLanguage, getTranslations, normalizeLang, Translations } from './languages';
 import { consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
@@ -199,10 +199,12 @@ export interface PushPayload {
   tag: string;
 }
 
+export type PushPayloadSource = PushPayload | ((t: Translations) => PushPayload);
+
 export async function sendPushToUser(
   env: Env,
   recipientUserId: number,
-  payload: PushPayload,
+  payload: PushPayloadSource,
 ): Promise<void> {
   try {
     const pubKey = (env.VAPID_PUBLIC_KEY || '').trim();
@@ -219,19 +221,30 @@ export async function sendPushToUser(
     }
 
     const subsRes = await env.DB.prepare(
-      'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
+      'SELECT id, endpoint, p256dh, auth, lang FROM push_subscriptions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
     )
       .bind(recipientUserId, MAX_SUBSCRIPTIONS_PER_USER)
-      .all<{ id: number; endpoint: string; p256dh: string; auth: string }>();
+      .all<{ id: number; endpoint: string; p256dh: string; auth: string; lang?: string | null }>();
 
     const subs = subsRes.results || [];
     if (subs.length === 0) return;
 
-    const payloadJson = JSON.stringify(payload);
+    const jsonByLang = new Map<string, string>();
+    const payloadJsonFor = (rawLang: string | null | undefined): string => {
+      const lang = normalizeLang(rawLang) || 'ru';
+      const cached = jsonByLang.get(lang);
+      if (cached) return cached;
+      const resolved = typeof payload === 'function' ? payload(getTranslations(lang)) : payload;
+      const json = JSON.stringify(resolved);
+      jsonByLang.set(lang, json);
+      return json;
+    };
+
     await Promise.all(
       subs.map(async (sub) => {
         if (!isAllowedPushEndpoint(sub.endpoint)) return;
         try {
+          const payloadJson = payloadJsonFor(sub.lang);
           const encrypted = await encryptWebPushPayload(payloadJson, sub.p256dh, sub.auth);
           const authHeader = await buildVapidAuthHeader(sub.endpoint, pubKey, privKey, subject);
           const res = await fetch(sub.endpoint, {
@@ -315,12 +328,13 @@ export async function handlePushSubscribe(request: Request, env: Env): Promise<R
     }
   }
 
+  const subLang = detectLanguage(request);
   await env.DB.prepare(
-    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(endpoint) DO UPDATE SET user_id = ?, p256dh = ?, auth = ?, updated_at = datetime('now')`,
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, lang, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(endpoint) DO UPDATE SET user_id = ?, p256dh = ?, auth = ?, lang = ?, updated_at = datetime('now')`,
   )
-    .bind(user.id, endpoint, p256dh, auth, user.id, p256dh, auth)
+    .bind(user.id, endpoint, p256dh, auth, subLang, user.id, p256dh, auth, subLang)
     .run();
 
   const allSubs = await env.DB.prepare(

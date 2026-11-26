@@ -1113,13 +1113,13 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
 
       const dmPushAllowed = await acquireCooldownAtomic(env, `push:dm:${recipientUserId}:${user.id}`, 5);
       if (dmPushAllowed) {
-        await sendPushToUser(env, recipientUserId, {
+        await sendPushToUser(env, recipientUserId, (rt) => ({
           kind: 'dm',
           title: 'Photogram',
-          body: `@${user.username}: ${t.messages.encryptedPushBody}`,
+          body: `@${user.username}: ${rt.messages.encryptedPushBody}`,
           url: `/messages/${encodeURIComponent(user.username)}`,
           tag: `dm-${resolvedConvId}`,
-        });
+        }));
       }
     });
   }

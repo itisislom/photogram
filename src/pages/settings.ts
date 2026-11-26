@@ -14,6 +14,7 @@ const TERMS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" 
 const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
 const PALETTE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`;
 const GLOBE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+const ACTIVITY_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>`;
 
 export function settingsPage(currentUser: User, t: Translations = ru, theme?: string): string {
   const usernameSafe = escapeHtml(currentUser.username);
@@ -50,6 +51,20 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
         ${CHEVRON_RIGHT_ICON}
       </div>
     </a>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.activity.title)}</div>
+      <a href="/activity" class="settings-row settings-row-interactive" id="settingsYourActivityLink">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${ACTIVITY_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.activity.title)}</span>
+            <span class="settings-row-sub">${escapeHtml(t.activity.settingsRowDesc)}</span>
+          </div>
+        </div>
+        <div class="settings-account-arrow">${CHEVRON_RIGHT_ICON}</div>
+      </a>
+    </section>
 
     <section class="settings-group">
       <div class="settings-group-header">${escapeHtml(t.common.theme)}</div>
