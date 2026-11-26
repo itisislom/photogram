@@ -358,6 +358,7 @@ export const ru: Translations = {
     likedYourComment: 'понравился ваш комментарий:',
     repliedYourComment: 'ответил(-а) на ваш комментарий:',
     startedFollowingYou: 'подписался(-ась) на вас',
+    mentionedYou: 'упомянул(-а) вас:',
     settingTitle: 'Уведомления',
     settingDesc: 'Лайки, комментарии и новые подписчики',
     enabledToast: 'Уведомления включены',

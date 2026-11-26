@@ -1081,7 +1081,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
 
     await runBackground(ctx, async () => {
       const recipientUnread = await getTotalUnreadCount(env, recipientUserId);
-      const [deliveredSockets] = await Promise.all([
+      await Promise.all([
         emitUserEvent(env, recipientUserId, {
           type: 'message.new',
           conversation_id: resolvedConvId,
@@ -1108,17 +1108,15 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
         authorizeRealtimeConversation(env, recipientUserId, resolvedConvId, user.id),
       ]);
 
-      if (deliveredSockets <= 0) {
-        const dmPushAllowed = await acquireCooldownAtomic(env, `push:dm:${recipientUserId}:${user.id}`, 5);
-        if (dmPushAllowed) {
-          await sendPushToUser(env, recipientUserId, {
-            kind: 'dm',
-            title: `@${user.username}`,
-            body: t.messages.encryptedPushBody,
-            url: `/messages/${encodeURIComponent(user.username)}`,
-            tag: `dm-${resolvedConvId}`,
-          });
-        }
+      const dmPushAllowed = await acquireCooldownAtomic(env, `push:dm:${recipientUserId}:${user.id}`, 5);
+      if (dmPushAllowed) {
+        await sendPushToUser(env, recipientUserId, {
+          kind: 'dm',
+          title: 'Photogram',
+          body: `@${user.username}: ${t.messages.encryptedPushBody}`,
+          url: `/messages/${encodeURIComponent(user.username)}`,
+          tag: `dm-${resolvedConvId}`,
+        });
       }
     });
   }
@@ -1554,6 +1552,22 @@ export async function handleToggleReaction(request: Request, env: Env, ctx?: Exe
         { excludeSession: senderSessionKey },
       ),
     ]);
+    if (action === 'set' && partnerId > 0) {
+      const reactPushAllowed = await acquireCooldownAtomic(
+        env,
+        `push:dm_react:${partnerId}:${user.id}:${msgId}`,
+        5,
+      );
+      if (reactPushAllowed) {
+        await sendPushToUser(env, partnerId, {
+          kind: 'dm_reaction',
+          title: 'Photogram',
+          body: `@${user.username} ${emoji}`,
+          url: `/messages/${encodeURIComponent(user.username)}`,
+          tag: `dm-react-${msg.conversation_id}`,
+        });
+      }
+    }
   });
   return jsonResponse({ success: true, message_id: msgId, action, reactions }, 200);
 }

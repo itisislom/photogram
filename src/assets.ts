@@ -62,7 +62,7 @@ export function getManifestJson(theme?: string): string {
 
 export const MANIFEST_JSON = getManifestJson('dark');
 
-export const SW_JS = `const CACHE_NAME = 'photogram-v9';
+export const SW_JS = `const CACHE_NAME = 'photogram-v10';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
@@ -210,7 +210,9 @@ self.addEventListener('push', function(event) {
       icon: '/icon.jpg',
       badge: '/icon.svg',
       tag: data.tag || 'photogram-notif',
-      renotify: Boolean(data.kind === 'dm'),
+      renotify: true,
+      timestamp: Date.now(),
+      vibrate: [120, 60, 120],
       data: { url: data.url || '/' }
     });
   })());

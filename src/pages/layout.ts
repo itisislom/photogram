@@ -34,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v36';
+const APP_STYLE_VERSION = '20261126-v37';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -394,7 +394,8 @@ window.showAppConfirm = function(opts) {
     comment: t.notifications.commentedYourPost,
     comment_like: t.notifications.likedYourComment,
     comment_reply: t.notifications.repliedYourComment,
-    follow: t.notifications.startedFollowingYou
+    follow: t.notifications.startedFollowingYou,
+    mention: t.notifications.mentionedYou
   })};
 
   function showNotifToastIfNew(latest) {
@@ -405,7 +406,7 @@ window.showAppConfirm = function(opts) {
     if (prevId > 0 && nextId > prevId && window.showAppToast) {
       var label = notifToastLabels[latest.type] || '';
       var msg = '@' + latest.actor_username + ' ' + label;
-      if ((latest.type === 'comment' || latest.type === 'comment_like' || latest.type === 'comment_reply') && latest.comment_preview) {
+      if ((latest.type === 'comment' || latest.type === 'comment_like' || latest.type === 'comment_reply' || latest.type === 'mention') && latest.comment_preview) {
         msg += ' «' + latest.comment_preview.slice(0, 48) + '»';
       }
       window.showAppToast(msg);
@@ -741,13 +742,30 @@ window.showAppConfirm = function(opts) {
       var keyData = await keyRes.json();
       if (!keyData || !keyData.public_key) return false;
 
+      var expectedKey = urlBase64ToUint8Array(keyData.public_key);
       var reg = await navigator.serviceWorker.ready;
       if (!reg || !reg.pushManager) return false;
       var sub = await reg.pushManager.getSubscription();
+      if (sub && sub.options && sub.options.applicationServerKey) {
+        var curKey = new Uint8Array(sub.options.applicationServerKey);
+        var mismatch = curKey.length !== expectedKey.length;
+        if (!mismatch) {
+          for (var ki = 0; ki < curKey.length; ki++) {
+            if (curKey[ki] !== expectedKey[ki]) {
+              mismatch = true;
+              break;
+            }
+          }
+        }
+        if (mismatch) {
+          try { await sub.unsubscribe(); } catch (e) {}
+          sub = null;
+        }
+      }
       if (!sub) {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(keyData.public_key)
+          applicationServerKey: expectedKey
         });
       }
       var subJson = sub && typeof sub.toJSON === 'function' ? sub.toJSON() : null;

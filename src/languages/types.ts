@@ -291,6 +291,7 @@ export interface Translations {
     likedYourComment: string;
     repliedYourComment: string;
     startedFollowingYou: string;
+    mentionedYou: string;
     settingTitle: string;
     settingDesc: string;
     enabledToast: string;

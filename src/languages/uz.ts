@@ -353,6 +353,7 @@ export const uz: Translations = {
     likedYourComment: 'izohingizga layk bosdi:',
     repliedYourComment: 'izohingizga javob yozdi:',
     startedFollowingYou: 'sizga obuna bo‘ldi',
+    mentionedYou: 'sizni eslatib o‘tdi:',
     settingTitle: 'Bildirishnomalar',
     settingDesc: 'Layklar, izohlar va yangi obunachilar',
     enabledToast: 'Bildirishnomalar yoqildi',

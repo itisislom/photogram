@@ -16,7 +16,70 @@ function jsonError(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
-export type NotificationType = 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow';
+export type NotificationType = 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow' | 'mention';
+
+const MAX_MENTION_TARGETS = 10;
+
+export function extractMentionUsernames(text: string): string[] {
+  if (!text || text.indexOf('@') === -1) return [];
+  const re = /(^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{3,24})(?![a-zA-Z0-9_])/g;
+  const set = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const uname = m[2].toLowerCase();
+    set.add(uname);
+    if (set.size >= MAX_MENTION_TARGETS) break;
+  }
+  return Array.from(set);
+}
+
+export async function notifyMentionedUsers(
+  env: Env,
+  opts: {
+    text: string;
+    actorId: number;
+    postId?: number | null;
+    commentId?: number | null;
+    excludeUserIds?: number[];
+  },
+): Promise<void> {
+  try {
+    const names = extractMentionUsernames(opts.text);
+    if (names.length === 0) return;
+
+    const placeholders = names.map((_, idx) => `?${idx + 1}`).join(', ');
+    const rows = await env.DB.prepare(
+      `SELECT id FROM users WHERE LOWER(username) IN (${placeholders})`,
+    )
+      .bind(...names)
+      .all<{ id: number }>();
+
+    const excluded = new Set<number>([Number(opts.actorId)]);
+    if (Array.isArray(opts.excludeUserIds)) {
+      for (const id of opts.excludeUserIds) {
+        if (id > 0) excluded.add(Number(id));
+      }
+    }
+
+    const targets = (rows.results || [])
+      .map((r) => Number(r.id))
+      .filter((id) => id > 0 && !excluded.has(id));
+    if (targets.length === 0) return;
+
+    await Promise.all(
+      targets.map((targetId) =>
+        createNotification(env, {
+          userId: targetId,
+          actorId: opts.actorId,
+          type: 'mention',
+          postId: opts.postId ?? null,
+          commentId: opts.commentId ?? null,
+          commentPreview: opts.text,
+        }),
+      ),
+    );
+  } catch {}
+}
 
 export async function createNotification(
   env: Env,
@@ -93,9 +156,8 @@ export async function createNotification(
     ]);
     const unreadCount = Number(cntRow?.cnt || 0);
 
-    let deliveredSockets = -1;
     if (actor?.username) {
-      deliveredSockets = await emitUserEvent(env, opts.userId, {
+      await emitUserEvent(env, opts.userId, {
         type: 'notification.new',
         unread_count: unreadCount,
         notification: {
@@ -111,19 +173,21 @@ export async function createNotification(
       notifications: unreadCount,
     });
 
-    if (actor?.username && deliveredSockets <= 0) {
+    if (actor?.username) {
+      const targetScope = opts.commentId || opts.postId || 0;
       const pushAllowed = await acquireCooldownAtomic(
         env,
-        `push:notif:${opts.userId}:${opts.actorId}:${opts.type}`,
-        30,
+        `push:notif:${opts.userId}:${opts.actorId}:${opts.type}:${targetScope}`,
+        5,
       );
       if (pushAllowed) {
         let bodyText = '';
-        if (opts.type === 'like') bodyText = `@${actor.username} liked your post`;
-        else if (opts.type === 'comment_like') bodyText = `@${actor.username} liked your comment${preview ? `: ${preview}` : ''}`;
-        else if (opts.type === 'comment_reply') bodyText = `@${actor.username} replied: ${preview || 'to your comment'}`;
-        else if (opts.type === 'follow') bodyText = `@${actor.username} started following you`;
-        else bodyText = `@${actor.username}: ${preview || 'commented on your post'}`;
+        if (opts.type === 'like') bodyText = `@${actor.username} понравилась ваша публикация`;
+        else if (opts.type === 'comment_like') bodyText = `@${actor.username} понравился ваш комментарий${preview ? `: ${preview}` : ''}`;
+        else if (opts.type === 'comment_reply') bodyText = `@${actor.username} ответил(а): ${preview || 'на ваш комментарий'}`;
+        else if (opts.type === 'follow') bodyText = `@${actor.username} подписался(ась) на вас`;
+        else if (opts.type === 'mention') bodyText = `@${actor.username} упомянул(а) вас${preview ? `: ${preview}` : ''}`;
+        else bodyText = `@${actor.username}: ${preview || 'прокомментировал(а) вашу публикацию'}`;
 
         await sendPushToUser(env, opts.userId, {
           kind: opts.type,

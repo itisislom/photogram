@@ -63,6 +63,9 @@ export function notificationsPage(
             actionText = `${escapeHtml(t.notifications.repliedYourComment)}${preview}`;
           } else if (n.type === 'follow') {
             actionText = escapeHtml(t.notifications.startedFollowingYou);
+          } else if (n.type === 'mention') {
+            const preview = n.comment_preview ? ` «${escapeHtml(n.comment_preview)}»` : '';
+            actionText = `${escapeHtml(t.notifications.mentionedYou)}${preview}`;
           } else {
             const preview = n.comment_preview ? ` «${escapeHtml(n.comment_preview)}»` : '';
             actionText = `${escapeHtml(t.notifications.commentedYourPost)}${preview}`;

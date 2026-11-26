@@ -174,7 +174,7 @@ export interface DirectMessage {
 
 export interface NotificationItem {
   id: number;
-  type: 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow';
+  type: 'like' | 'comment' | 'comment_like' | 'comment_reply' | 'follow' | 'mention';
   actor_id: number;
   actor_username: string;
   actor_display_name: string;

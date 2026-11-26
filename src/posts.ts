@@ -1,7 +1,7 @@
 import { Env, Post, FeedPost, Comment } from './types';
 import { getUserFromRequest } from './auth';
 import { savePostTags, adjustAffinity, adjustTagAffinity, adjustPostEngagementBatch, invalidateRecommendationCaches } from './recommendations';
-import { createNotification, removeNotification } from './notifications';
+import { createNotification, notifyMentionedUsers, removeNotification } from './notifications';
 import {
   acquireCooldownAtomic,
   checkContentLength,
@@ -181,7 +181,14 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
 
     const newPostId = result.meta?.last_row_id;
     if (newPostId && typeof newPostId === 'number' && caption) {
-      await savePostTags(env, newPostId, caption);
+      await Promise.all([
+        savePostTags(env, newPostId, caption),
+        notifyMentionedUsers(env, {
+          text: caption,
+          actorId: currentUser.id,
+          postId: newPostId,
+        }),
+      ]);
     }
     await invalidateRecommendationCaches({ postChanged: true });
 
@@ -539,7 +546,9 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
   const notifyPromises: Promise<unknown>[] = [
     adjustPostEngagementBatch(env, currentUser.id, postId, post.user_id, 5.0, 2.5),
   ];
+  const alreadyNotifiedIds: number[] = [Number(currentUser.id)];
   if (parentAuthorId > 0) {
+    alreadyNotifiedIds.push(parentAuthorId);
     notifyPromises.push(
       createNotification(env, {
         userId: parentAuthorId,
@@ -551,6 +560,7 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
       }),
     );
     if (Number(post.user_id) !== parentAuthorId) {
+      alreadyNotifiedIds.push(Number(post.user_id));
       notifyPromises.push(
         createNotification(env, {
           userId: post.user_id,
@@ -563,6 +573,7 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
       );
     }
   } else {
+    alreadyNotifiedIds.push(Number(post.user_id));
     notifyPromises.push(
       createNotification(env, {
         userId: post.user_id,
@@ -574,6 +585,15 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
       }),
     );
   }
+  notifyPromises.push(
+    notifyMentionedUsers(env, {
+      text: content,
+      actorId: currentUser.id,
+      postId,
+      commentId: commentId || null,
+      excludeUserIds: alreadyNotifiedIds,
+    }),
+  );
   await Promise.all(notifyPromises);
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')

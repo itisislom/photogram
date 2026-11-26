@@ -353,6 +353,7 @@ export const en: Translations = {
     likedYourComment: 'liked your comment:',
     repliedYourComment: 'replied to your comment:',
     startedFollowingYou: 'started following you',
+    mentionedYou: 'mentioned you:',
     settingTitle: 'Notifications',
     settingDesc: 'Likes, comments and new followers',
     enabledToast: 'Notifications enabled',

@@ -353,6 +353,7 @@ export const kz: Translations = {
     likedYourComment: 'пікіріңізді ұнатты:',
     repliedYourComment: 'пікіріңізге жауап берді:',
     startedFollowingYou: 'сізге жазылды',
+    mentionedYou: 'сізді атап өтті:',
     settingTitle: 'Хабарландырулар',
     settingDesc: 'Лайктар, пікірлер және жаңа жазылушылар',
     enabledToast: 'Хабарландырулар қосылды',
