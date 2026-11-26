@@ -1,6 +1,7 @@
 import { Env, User, SavedAccountItem } from './types';
 import { detectLanguage, getTranslations } from './languages';
 import { isBlockedUsername } from './blockedUsernames';
+import { revokeUserRealtimeSessions } from './realtime';
 import {
   checkContentLength,
   consumeRateLimitAtomic,
@@ -47,6 +48,13 @@ async function sha256(data: string): Promise<string> {
 function parseCookie(header: string, name: string): string | null {
   const m = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return m ? m[1] : null;
+}
+
+export async function getSessionHashFromRequest(request: Request): Promise<string | null> {
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const raw = parseCookie(cookieHeader, 'session');
+  if (!raw || !TOKEN_HEX_RE.test(raw)) return null;
+  return sha256(raw);
 }
 
 function jsonResponse(
@@ -300,6 +308,25 @@ export async function getUserFromRequest(env: Env, request: Request): Promise<Us
 
   const tokenHash = await sha256(raw);
 
+  if (env.DATABASE_URL) {
+    const row = await env.DB.prepare(
+      `SELECT s.expires_at, u.id, u.username, u.email, u.display_name, u.bio, u.avatar_key, u.is_verified, u.notifications_enabled, u.created_at
+       FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = ?`,
+    )
+      .bind(tokenHash)
+      .first<User & { expires_at: string }>();
+
+    if (!row) return null;
+    if (new Date(row.expires_at) < new Date()) {
+      await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(tokenHash).run();
+      return null;
+    }
+    const { expires_at: _expiresAt, ...user } = row;
+    return user;
+  }
+
   const session = await env.DB.prepare(
     'SELECT user_id, expires_at FROM sessions WHERE token_hash = ?',
   )
@@ -549,6 +576,9 @@ export async function handleLogout(request: Request, env: Env): Promise<Response
     if (raw) {
       const tokenHash = await sha256(raw);
       await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(tokenHash).run();
+      if (loggedOutUserId > 0) {
+        await revokeUserRealtimeSessions(env, loggedOutUserId, { sessionKey: tokenHash.slice(0, 32) });
+      }
     }
   }
 
@@ -649,7 +679,12 @@ export async function handleChangePassword(request: Request, env: Env): Promise<
     .bind(newHash, currentUser.id)
     .run();
 
+  const oldSessionHash = await getSessionHashFromRequest(request);
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(currentUser.id).run();
+  await revokeUserRealtimeSessions(env, currentUser.id, {
+    all: true,
+    refreshSessionKey: oldSessionHash ? oldSessionHash.slice(0, 32) : undefined,
+  });
 
   await env.DB.prepare('DELETE FROM auth_rate_limits WHERE key IN (?, ?, ?)')
     .bind(
@@ -740,6 +775,7 @@ export async function handleRemoveAccount(request: Request, env: Env): Promise<R
   await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?')
     .bind(target.tokenHash)
     .run();
+  await revokeUserRealtimeSessions(env, target.user.id, { sessionKey: target.tokenHash.slice(0, 32) });
 
   const remaining = resolved.entries.filter((e) => e.user.id !== targetId);
   const secure = isSecure(request);

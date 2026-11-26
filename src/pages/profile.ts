@@ -5,12 +5,12 @@ export function formatBioHtml(bio?: string | null): string {
 }
 
 import { ProfileData } from '../types';
-import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
-import { SEND_COMMENT_ICON } from './commentsModal';
+import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { getClientDateFormat } from '../languages';
+import { getClientDateFormat, getCompactCountUnits } from '../languages';
 
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>`;
 const MENU_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
@@ -74,8 +74,8 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     ? `
     <div class="profile-grid" id="profileGrid">
       ${postList.map(p => `
-        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-author-verified="${(p.is_verified ?? user.is_verified) ? '1' : '0'}" data-img="/media/${encodeURIComponent(p.image_key)}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
-          <img src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
+        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-author-verified="${(p.is_verified ?? user.is_verified) ? '1' : '0'}" data-img="${postMediaUrl(p.image_key, 'full')}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
+          <img src="${postMediaUrl(p.image_key, 'thumb')}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
           <div class="profile-grid-overlay">
             <div class="profile-grid-stat">${HEART_ICON} <span class="grid-likes-val">${p.likes_count ?? 0}</span></div>
             <div class="profile-grid-stat">${COMMENT_ICON} <span class="grid-comments-val">${p.comments_count ?? 0}</span></div>
@@ -198,10 +198,17 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
           <div class="post-related-grid" id="viewPostRelatedGrid"></div>
         </div>
       </div>
-      <form class="comment-input-form" id="viewPostCommentForm" autocomplete="off">
-        <input type="text" class="comment-input" id="viewPostCommentInput" placeholder="${escapeHtml(t.comments.inputPlaceholder)}" maxlength="500" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
-        <button type="submit" class="comment-submit-btn" id="viewPostCommentSubmitBtn" aria-label="${escapeHtml(t.comments.send)}" title="${escapeHtml(t.comments.send)}">${SEND_COMMENT_ICON}</button>
-      </form>
+      <div class="comments-reply-bar" id="viewPostReplyBar" style="display:none;">
+        <span class="comments-reply-bar-icon">${REPLY_ARROW_ICON}</span>
+        <span class="comments-reply-bar-text" id="viewPostReplyBarText"></span>
+        <button type="button" class="comments-reply-bar-close" id="viewPostReplyCancelBtn" aria-label="${escapeHtml(t.common.cancel)}">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="comment-input-form" id="viewPostCommentForm">
+        <div class="comment-input pg-ce-input" id="viewPostCommentInput" contenteditable="plaintext-only" role="textbox" aria-multiline="false" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.comments.inputPlaceholder)}" data-maxlength="500" aria-label="${escapeHtml(t.comments.inputPlaceholder)}"></div>
+        <button type="button" class="comment-submit-btn" id="viewPostCommentSubmitBtn" aria-label="${escapeHtml(t.comments.send)}" title="${escapeHtml(t.comments.send)}" disabled>${SEND_COMMENT_ICON}</button>
+      </div>
     </div>
   </div>
 
@@ -241,13 +248,20 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
   const clientI18n = safeJsonForScript({
     lang: t.code,
+    compactUnits: getCompactCountUnits(t.code),
     dateFmt: getClientDateFormat(t.code),
+    heartIcon: COMMENT_HEART_ICON,
+    chevronIcon: REPLY_CHEVRON_ICON,
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
     hoursShort: t.common.hoursShort,
     daysShort: t.common.daysShort,
     emptyComments: t.comments.firstCommentPrompt,
     deleteBtn: t.common.delete,
+    replyBtn: t.comments.reply,
+    replyingTo: t.comments.replyingTo,
+    showReplies: t.comments.showReplies,
+    hideReplies: t.comments.hideReplies,
     loading: t.comments.loading,
     networkError: t.common.networkError,
     sendBtn: t.comments.send,
@@ -299,6 +313,9 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   var viewCommentForm = document.getElementById('viewPostCommentForm');
   var viewCommentInput = document.getElementById('viewPostCommentInput');
   var viewCommentSubmitBtn = document.getElementById('viewPostCommentSubmitBtn');
+  var viewReplyBar = document.getElementById('viewPostReplyBar');
+  var viewReplyBarText = document.getElementById('viewPostReplyBarText');
+  var viewReplyCancelBtn = document.getElementById('viewPostReplyCancelBtn');
   var viewAuthorLink = document.getElementById('viewPostAuthorLink');
   var viewAuthorAvatar = document.getElementById('viewPostAuthorAvatar');
   var viewAuthorName = document.getElementById('viewPostAuthorName');
@@ -306,6 +323,9 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   var viewPostMoreBtn = document.getElementById('viewPostMoreBtn');
   var activePostId = null;
   var isLiking = false;
+  var isSubmittingComment = false;
+  var likingCommentIds = {};
+  var replyingTo = null;
   var likeBurstTimer = null;
 
   function getEventCoords(e, container) {
@@ -405,6 +425,136 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     }
   }
 
+  function formatCompactCountClient(count) {
+    var raw = Number(count);
+    if (!isFinite(raw) || raw <= 0) return '0';
+    var n = Math.floor(raw);
+    if (n < 1000) return String(n);
+    var u = i18n.compactUnits || { k: 'K', m: 'M', b: 'B' };
+    var sep = i18n.lang === 'en' ? '' : ' ';
+    function fmt(val, unit) {
+      var rounded = val >= 100 ? Math.floor(val) : Math.floor(val * 10) / 10;
+      var s = (rounded % 1 === 0) ? String(rounded) : rounded.toFixed(1).replace(/\\.0$/, '');
+      return s + sep + unit;
+    }
+    if (n >= 1000000000) return fmt(n / 1000000000, u.b);
+    if (n >= 1000000) return fmt(n / 1000000, u.m);
+    return fmt(n / 1000, u.k);
+  }
+
+  function renderCommentLikeBtn(commentId, isLiked, likesCount) {
+    var cnt = Number(likesCount) || 0;
+    var cntTxt = cnt > 0 ? escapeHtmlClient(formatCompactCountClient(cnt)) : '';
+    return '<button type="button" class="comment-like-btn' + (isLiked ? ' liked' : '') + '" data-like-comment-id="' + commentId + '" aria-pressed="' + (isLiked ? 'true' : 'false') + '">' +
+      i18n.heartIcon +
+      '<span class="comment-like-count">' + cntTxt + '</span>' +
+    '</button>';
+  }
+
+  function cancelReplyMode() {
+    replyingTo = null;
+    if (viewReplyBar) viewReplyBar.style.display = 'none';
+    if (viewReplyBarText) viewReplyBarText.textContent = '';
+  }
+
+  function startReplyMode(rootId, targetUsername, isNestedReply) {
+    if (!rootId || !targetUsername) return;
+    replyingTo = { rootId: Number(rootId), username: String(targetUsername) };
+    if (viewReplyBarText) {
+      viewReplyBarText.textContent = String(i18n.replyingTo || '@{username}').replace('{username}', targetUsername);
+    }
+    if (viewReplyBar) viewReplyBar.style.display = 'flex';
+    if (viewCommentInput) {
+      if (isNestedReply) {
+        var prefix = '@' + targetUsername + ' ';
+        var curVal = viewCommentInput.value || '';
+        if (curVal.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) {
+          viewCommentInput.value = prefix + curVal.replace(/^@[a-z0-9._]{3,24}\\s+/i, '');
+        }
+        if (viewCommentSubmitBtn) {
+          var v = viewCommentInput.value.trim();
+          viewCommentSubmitBtn.disabled = !(v.length > 0 && v.length <= 500);
+          if (!viewCommentSubmitBtn.disabled) viewCommentSubmitBtn.classList.add('active');
+        }
+      }
+      viewCommentInput.focus();
+      try {
+        viewCommentInput.setSelectionRange(viewCommentInput.value.length, viewCommentInput.value.length);
+      } catch (e) {}
+    }
+  }
+
+  function renderSingleCommentHtml(c, isReply, rootId) {
+    var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
+    var avatarHtml = c.avatar_key
+      ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
+      : '<span>' + initial + '</span>';
+
+    var deleteBtn = c.can_delete
+      ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
+      : '';
+
+    var replyBtn = '<button type="button" class="comment-reply-btn" data-reply-root-id="' + rootId + '" data-reply-username="' + escapeHtmlClient(c.username) + '" data-reply-nested="' + (isReply ? '1' : '0') + '">' + escapeHtmlClient(i18n.replyBtn) + '</button>';
+
+    var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
+    var timeTxt = c._justNow ? escapeHtmlClient(i18n.justNow) : formatCommentTime(c.created_at);
+    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="commentItem_' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '">' +
+      '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar' + (isReply ? ' is-reply-avatar' : '') + '">' + avatarHtml + '</a>' +
+      '<div class="comment-content-wrap">' +
+        '<div>' +
+          '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
+          '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
+        '</div>' +
+        '<div class="comment-meta">' +
+          '<span class="comment-time">' + timeTxt + '</span>' +
+          replyBtn +
+          deleteBtn +
+        '</div>' +
+      '</div>' +
+      renderCommentLikeBtn(c.id, Boolean(c.is_liked), c.likes_count || 0) +
+    '</div>';
+  }
+
+  function formatShowRepliesLabel(count) {
+    return String(i18n.showReplies || '({n})').replace('{n}', formatCompactCountClient(count));
+  }
+
+  function renderRepliesBlockHtml(rootId, replies, expanded) {
+    var cnt = replies.length;
+    var label = expanded ? i18n.hideReplies : formatShowRepliesLabel(cnt);
+    var repliesHtml = '';
+    for (var j = 0; j < cnt; j++) {
+      repliesHtml += renderSingleCommentHtml(replies[j], true, rootId);
+    }
+    return '<div class="comment-replies-block' + (expanded ? ' is-expanded' : '') + '" data-replies-for="' + rootId + '">' +
+      '<button type="button" class="comment-replies-toggle" data-toggle-replies="' + rootId + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
+        i18n.chevronIcon +
+        '<span class="comment-replies-toggle-label">' + escapeHtmlClient(label) + '</span>' +
+      '</button>' +
+      '<div class="comment-replies-list" data-replies-list="' + rootId + '"' + (expanded ? '' : ' style="display:none;"') + '>' +
+        repliesHtml +
+      '</div>' +
+    '</div>';
+  }
+
+  function updateThreadToggleLabel(threadEl) {
+    if (!threadEl) return;
+    var block = threadEl.querySelector('.comment-replies-block');
+    if (!block) return;
+    var listBox = block.querySelector('.comment-replies-list');
+    var count = listBox ? listBox.querySelectorAll('.comment-item.is-reply').length : 0;
+    if (count === 0) {
+      block.remove();
+      return;
+    }
+    var expanded = block.classList.contains('is-expanded');
+    var btn = block.querySelector('.comment-replies-toggle');
+    var lbl = block.querySelector('.comment-replies-toggle-label');
+    if (btn) btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (lbl) lbl.textContent = expanded ? i18n.hideReplies : formatShowRepliesLabel(count);
+    if (listBox) listBox.style.display = expanded ? 'flex' : 'none';
+  }
+
   function renderCommentsList(comments) {
     if (!viewCommentsList) return;
     if (!comments || comments.length === 0) {
@@ -412,31 +562,30 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
       return;
     }
 
-    var html = '';
+    var roots = [];
+    var repliesMap = {};
+    var knownIds = {};
+    for (var k = 0; k < comments.length; k++) {
+      knownIds[String(comments[k].id)] = true;
+    }
     for (var i = 0; i < comments.length; i++) {
       var c = comments[i];
-      var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
-      var avatarHtml = c.avatar_key
-        ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
-        : '<span>' + initial + '</span>';
+      var pid = c.parent_id ? Number(c.parent_id) : 0;
+      if (pid > 0 && knownIds[String(pid)]) {
+        if (!repliesMap[String(pid)]) repliesMap[String(pid)] = [];
+        repliesMap[String(pid)].push(c);
+      } else {
+        roots.push(c);
+      }
+    }
 
-      var deleteBtn = c.can_delete
-        ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
-        : '';
-
-      var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
-      html += '<div class="comment-item" id="commentItem_' + c.id + '">' +
-        '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
-        '<div class="comment-content-wrap">' +
-          '<div>' +
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
-            '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
-          '</div>' +
-          '<div class="comment-meta">' +
-            '<span class="comment-time">' + formatCommentTime(c.created_at) + '</span>' +
-            deleteBtn +
-          '</div>' +
-        '</div>' +
+    var html = '';
+    for (var r = 0; r < roots.length; r++) {
+      var root = roots[r];
+      var reps = repliesMap[String(root.id)] || [];
+      html += '<div class="comment-thread" data-thread-id="' + root.id + '">' +
+        renderSingleCommentHtml(root, false, root.id) +
+        (reps.length > 0 ? renderRepliesBlockHtml(root.id, reps, false) : '') +
       '</div>';
     }
 
@@ -761,8 +910,12 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
     var commentsCount = parseInt(btn.dataset.commentsCount, 10) || 0;
     updateCommentsCountUI(commentsCount);
+    cancelReplyMode();
     if (viewCommentInput) viewCommentInput.value = '';
-    if (viewCommentSubmitBtn) viewCommentSubmitBtn.classList.remove('active');
+    if (viewCommentSubmitBtn) {
+      viewCommentSubmitBtn.disabled = true;
+      viewCommentSubmitBtn.classList.remove('active');
+    }
     loadComments(activePostId);
     loadRelatedPosts(activePostId);
 
@@ -786,6 +939,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
   function closePostView() {
     if (window.endModalDwell) window.endModalDwell();
+    cancelReplyMode();
     if (viewModal) viewModal.classList.remove('visible');
     var scrollBody = viewModal ? viewModal.querySelector('.post-view-scroll-body') : null;
     if (scrollBody) scrollBody.scrollTop = 0;
@@ -846,6 +1000,18 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     }
   });
 
+  if (viewReplyCancelBtn) {
+    viewReplyCancelBtn.addEventListener('click', cancelReplyMode);
+  }
+
+  if (viewCommentInput && window.pgBindPlainEditable) {
+    window.pgBindPlainEditable(viewCommentInput, {
+      onEnter: function() {
+        submitProfileComment();
+      }
+    });
+  }
+
   if (viewCommentInput) {
     viewCommentInput.addEventListener('focus', function() {
       if (activePostId && this.dataset.commentOpenTracked !== String(activePostId)) {
@@ -858,86 +1024,178 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
       }
     });
     viewCommentInput.addEventListener('input', function() {
-      if (this.value.trim().length > 0) {
-        viewCommentSubmitBtn.classList.add('active');
-      } else {
-        viewCommentSubmitBtn.classList.remove('active');
+      var val = (this.value || '').trim();
+      if (viewCommentSubmitBtn) {
+        if (val.length > 0 && val.length <= 500) {
+          viewCommentSubmitBtn.disabled = false;
+          viewCommentSubmitBtn.classList.add('active');
+        } else {
+          viewCommentSubmitBtn.disabled = true;
+          viewCommentSubmitBtn.classList.remove('active');
+        }
       }
     });
   }
 
-  if (viewCommentForm) {
-    viewCommentForm.addEventListener('submit', async function(e) {
-      e.preventDefault();
-      if (!activePostId) return;
-      var text = (viewCommentInput.value || '').trim();
-      if (!text) return;
+  async function submitProfileComment(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!activePostId || isSubmittingComment) return;
+    var text = viewCommentInput ? (viewCommentInput.value || '').trim() : '';
+    if (!text || text.length > 500) return;
 
+    isSubmittingComment = true;
+    if (viewCommentSubmitBtn) {
       viewCommentSubmitBtn.disabled = true;
       viewCommentSubmitBtn.classList.add('sending');
+    }
 
-      try {
-        var res = await fetch('/api/posts/comment', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ post_id: parseInt(activePostId, 10), content: text })
-        });
-        var data = await res.json();
-        if (res.ok && data.success) {
-          viewCommentInput.value = '';
-          viewCommentSubmitBtn.classList.remove('active');
+    try {
+      var reqPayload = { post_id: parseInt(activePostId, 10), content: text };
+      if (replyingTo && replyingTo.rootId) {
+        reqPayload.parent_id = replyingTo.rootId;
+      }
+      var res = await fetch('/api/posts/comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqPayload)
+      });
+      var data = await res.json();
+      if (res.ok && data.success) {
+        if (viewCommentInput) viewCommentInput.value = '';
+        cancelReplyMode();
+        if (viewCommentSubmitBtn) viewCommentSubmitBtn.classList.remove('active');
 
-          var emptyEl = viewCommentsList.querySelector('.comment-empty-text');
-          if (emptyEl) viewCommentsList.innerHTML = '';
+        var emptyEl = viewCommentsList.querySelector('.comment-empty-text');
+        if (emptyEl) emptyEl.remove();
 
-          var c = data.comment;
-          var initial = escapeHtmlClient((c.display_name || c.username || '?').charAt(0).toUpperCase());
-          var avatarHtml = c.avatar_key
-            ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
-            : '<span>' + initial + '</span>';
-
-          var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
-          var itemDiv = document.createElement('div');
-          itemDiv.className = 'comment-item';
-          itemDiv.id = 'commentItem_' + c.id;
-          itemDiv.innerHTML =
-            '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar">' + avatarHtml + '</a>' +
-            '<div class="comment-content-wrap">' +
-              '<div>' +
-                '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
-                '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
-              '</div>' +
-              '<div class="comment-meta">' +
-                '<span class="comment-time">' + escapeHtmlClient(i18n.justNow) + '</span>' +
-                '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>' +
-              '</div>' +
-            '</div>';
-
-          viewCommentsList.appendChild(itemDiv);
-          viewCommentsList.scrollTop = viewCommentsList.scrollHeight;
-          updateCommentsCountUI(data.comments_count);
-        } else {
-          if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
-            if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
+        var c = data.comment;
+        c._justNow = true;
+        var pid = c.parent_id ? Number(c.parent_id) : 0;
+        if (pid > 0) {
+          var parentThread = viewCommentsList.querySelector('.comment-thread[data-thread-id="' + pid + '"]');
+          if (parentThread) {
+            var block = parentThread.querySelector('.comment-replies-block');
+            if (!block) {
+              var tmpBlock = document.createElement('div');
+              tmpBlock.innerHTML = renderRepliesBlockHtml(pid, [c], true);
+              if (tmpBlock.firstChild) parentThread.appendChild(tmpBlock.firstChild);
+            } else {
+              var listBox = block.querySelector('.comment-replies-list');
+              if (listBox) {
+                var tmpRep = document.createElement('div');
+                tmpRep.innerHTML = renderSingleCommentHtml(c, true, pid);
+                if (tmpRep.firstChild) listBox.appendChild(tmpRep.firstChild);
+              }
+              block.classList.add('is-expanded');
+              updateThreadToggleLabel(parentThread);
+            }
+            var insertedEl = document.getElementById('commentItem_' + c.id);
+            if (insertedEl && insertedEl.scrollIntoView) {
+              try { insertedEl.scrollIntoView({ block: 'nearest' }); } catch (se) {}
+            }
           } else {
-            if (window.showAppAlert) window.showAppAlert({ message: data ? data.error : escapeHtmlClient(i18n.networkError) });
+            var tmpFallback = document.createElement('div');
+            tmpFallback.innerHTML = '<div class="comment-thread" data-thread-id="' + c.id + '">' + renderSingleCommentHtml(c, false, c.id) + '</div>';
+            if (tmpFallback.firstChild) viewCommentsList.appendChild(tmpFallback.firstChild);
           }
+        } else {
+          var tmpThread = document.createElement('div');
+          tmpThread.innerHTML = '<div class="comment-thread" data-thread-id="' + c.id + '">' + renderSingleCommentHtml(c, false, c.id) + '</div>';
+          if (tmpThread.firstChild) viewCommentsList.appendChild(tmpThread.firstChild);
+          viewCommentsList.scrollTop = viewCommentsList.scrollHeight;
         }
-      } catch (err) {
-        if (window.showAppAlert) window.showAppAlert({ message: escapeHtmlClient(i18n.networkError) });
-      } finally {
-        viewCommentSubmitBtn.disabled = false;
-        viewCommentSubmitBtn.classList.remove('sending');
-        if ((viewCommentInput.value || '').trim()) {
-          viewCommentSubmitBtn.classList.add('active');
+        updateCommentsCountUI(data.comments_count);
+      } else {
+        if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
+          if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
+        } else {
+          if (window.showAppAlert) window.showAppAlert({ message: data ? data.error : escapeHtmlClient(i18n.networkError) });
         }
       }
-    });
+    } catch (err) {
+      if (window.showAppAlert) window.showAppAlert({ message: escapeHtmlClient(i18n.networkError) });
+    } finally {
+      isSubmittingComment = false;
+      if (viewCommentSubmitBtn) {
+        viewCommentSubmitBtn.classList.remove('sending');
+        if ((viewCommentInput.value || '').trim()) {
+          viewCommentSubmitBtn.disabled = false;
+          viewCommentSubmitBtn.classList.add('active');
+        } else {
+          viewCommentSubmitBtn.disabled = true;
+          viewCommentSubmitBtn.classList.remove('active');
+        }
+      }
+    }
+  }
+
+  if (viewCommentSubmitBtn) {
+    viewCommentSubmitBtn.addEventListener('click', submitProfileComment);
   }
 
   if (viewCommentsList) {
     viewCommentsList.addEventListener('click', async function(e) {
-      var delBtn = e.target.closest('.comment-delete-btn');
+      var likeBtn = e.target && e.target.closest ? e.target.closest('.comment-like-btn') : null;
+      if (likeBtn) {
+        var likeCommentId = parseInt(likeBtn.getAttribute('data-like-comment-id') || '0', 10);
+        if (!likeCommentId || isNaN(likeCommentId) || likingCommentIds[likeCommentId]) return;
+        likingCommentIds[likeCommentId] = true;
+        likeBtn.disabled = true;
+        try {
+          var lRes = await fetch('/api/posts/comment/like', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comment_id: likeCommentId })
+          });
+          var lData = await lRes.json();
+          if (lRes.ok && lData && lData.success) {
+            var isLikedNow = Boolean(lData.liked);
+            var cntNow = Number(lData.likes_count || 0);
+            if (isLikedNow) likeBtn.classList.add('liked');
+            else likeBtn.classList.remove('liked');
+            likeBtn.setAttribute('aria-pressed', isLikedNow ? 'true' : 'false');
+            var cntSpan = likeBtn.querySelector('.comment-like-count');
+            if (cntSpan) {
+              cntSpan.textContent = cntNow > 0 ? formatCompactCountClient(cntNow) : '';
+            }
+          } else if (lRes.status === 401 || (lData && lData.error && lData.error.includes('авториз'))) {
+            if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: lData ? lData.error : '' });
+          } else if (window.showAppAlert) {
+            window.showAppAlert({ message: (lData && lData.error) || i18n.networkError });
+          }
+        } catch (lErr) {
+          if (window.showAppAlert) window.showAppAlert({ message: i18n.networkError });
+        } finally {
+          delete likingCommentIds[likeCommentId];
+          likeBtn.disabled = false;
+        }
+        return;
+      }
+
+      var replyBtn = e.target && e.target.closest ? e.target.closest('.comment-reply-btn') : null;
+      if (replyBtn) {
+        var rRootId = parseInt(replyBtn.getAttribute('data-reply-root-id') || '0', 10);
+        var rUname = replyBtn.getAttribute('data-reply-username') || '';
+        var rNested = replyBtn.getAttribute('data-reply-nested') === '1';
+        if (rRootId && rUname) {
+          startReplyMode(rRootId, rUname, rNested);
+        }
+        return;
+      }
+
+      var toggleBtn = e.target && e.target.closest ? e.target.closest('.comment-replies-toggle') : null;
+      if (toggleBtn) {
+        var threadEl = toggleBtn.closest('.comment-thread');
+        var blockEl = toggleBtn.closest('.comment-replies-block');
+        if (threadEl && blockEl) {
+          blockEl.classList.toggle('is-expanded');
+          updateThreadToggleLabel(threadEl);
+        }
+        return;
+      }
+
+      var delBtn = e.target && e.target.closest ? e.target.closest('.comment-delete-btn') : null;
       if (!delBtn) return;
       var commentId = parseInt(delBtn.dataset.commentId, 10);
       if (!commentId || isNaN(commentId)) return;
@@ -955,9 +1213,23 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
           var data = await res.json();
           if (res.ok && data.success) {
             var item = document.getElementById('commentItem_' + commentId);
-            if (item) item.remove();
+            if (item) {
+              var parentIdAttr = parseInt(item.getAttribute('data-comment-parent-id') || '0', 10);
+              var parentThread = item.closest('.comment-thread');
+              if (parentIdAttr > 0) {
+                item.remove();
+                if (parentThread) updateThreadToggleLabel(parentThread);
+              } else if (parentThread) {
+                parentThread.remove();
+              } else {
+                item.remove();
+              }
+            }
+            if (replyingTo && Number(replyingTo.rootId) === Number(commentId)) {
+              cancelReplyMode();
+            }
             updateCommentsCountUI(data.comments_count);
-            if (viewCommentsList.children.length === 0) {
+            if (!viewCommentsList.querySelector('.comment-thread')) {
               viewCommentsList.innerHTML = '<div class="comment-empty-text">' + escapeHtmlClient(i18n.emptyComments) + '</div>';
             }
           } else {

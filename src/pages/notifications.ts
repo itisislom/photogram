@@ -1,5 +1,5 @@
 import { NotificationItem, User } from '../types';
-import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, postMediaUrl } from './layout';
 import { renderBottomNav } from './nav';
 import { Translations, ru, formatLocalizedShortDate } from '../languages';
 
@@ -80,7 +80,7 @@ export function notificationsPage(
             const targetUser = n.post_author_username || currentUser.username;
             rightHtml = `
               <a href="/u/${encodeURIComponent(targetUser)}" class="notif-thumb">
-                <img src="/media/${encodeURIComponent(n.post_image_key)}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
+                <img src="${postMediaUrl(n.post_image_key, 'thumb')}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
               </a>`;
           }
 

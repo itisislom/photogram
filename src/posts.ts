@@ -1,6 +1,6 @@
 import { Env, Post, FeedPost, Comment } from './types';
 import { getUserFromRequest } from './auth';
-import { savePostTags, adjustAffinity, adjustTagAffinity } from './recommendations';
+import { savePostTags, adjustAffinity, adjustTagAffinity, adjustPostEngagementBatch, invalidateRecommendationCaches } from './recommendations';
 import { createNotification, removeNotification } from './notifications';
 import {
   acquireCooldownAtomic,
@@ -14,7 +14,42 @@ import {
 } from './security';
 
 const MAX_POST_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_THUMB_IMAGE_SIZE = 300 * 1024;
+const MAX_FULL_IMAGE_SIZE = 2.5 * 1024 * 1024;
 const MAX_CAPTION_LEN = 1000;
+const PUBLIC_MEDIA_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+function derivePostVariantKeys(imageKey: string): { thumbKey: string | null; fullKey: string | null } {
+  if (
+    !imageKey ||
+    !imageKey.startsWith('posts/') ||
+    !imageKey.endsWith('.webp') ||
+    imageKey.endsWith('_thumb.webp') ||
+    imageKey.endsWith('_full.webp')
+  ) {
+    return { thumbKey: null, fullKey: null };
+  }
+  const base = imageKey.slice(0, -5);
+  return {
+    thumbKey: `${base}_thumb.webp`,
+    fullKey: `${base}_full.webp`,
+  };
+}
+
+async function purgePublicMediaEdgeCache(keys: string[]): Promise<void> {
+  try {
+    const edge = (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default;
+    if (!edge) return;
+    for (const k of keys) {
+      if (!k) continue;
+      for (const dl of ['0', '1']) {
+        try {
+          await edge.delete(`https://media-cache.photogram.internal/${encodeURIComponent(k)}?dl=${dl}`);
+        } catch {}
+      }
+    }
+  } catch {}
+}
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -66,6 +101,35 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
     return jsonError('Разрешены только форматы JPEG, PNG, WEBP', 400);
   }
 
+  let thumbBytes: Uint8Array | null = null;
+  let fullBytes: Uint8Array | null = null;
+  const thumbField = form.get('image_thumb');
+  const fullField = form.get('image_full');
+
+  if (thumbField && typeof thumbField !== 'string') {
+    if (thumbField.size <= 0 || thumbField.size > MAX_THUMB_IMAGE_SIZE) {
+      return jsonError('Неверный размер миниатюры изображения', 400);
+    }
+    const tb = new Uint8Array(await thumbField.arrayBuffer());
+    const detThumb = validateImageBytes(tb, 512);
+    if (!detThumb || detThumb.ext !== 'webp') {
+      return jsonError('Неверный формат миниатюры изображения', 400);
+    }
+    thumbBytes = tb;
+  }
+
+  if (fullField && typeof fullField !== 'string') {
+    if (fullField.size <= 0 || fullField.size > MAX_FULL_IMAGE_SIZE) {
+      return jsonError('Неверный размер полной версии изображения', 400);
+    }
+    const fb = new Uint8Array(await fullField.arrayBuffer());
+    const detFull = validateImageBytes(fb, 2048);
+    if (!detFull || detFull.ext !== 'webp') {
+      return jsonError('Неверный формат полной версии изображения', 400);
+    }
+    fullBytes = fb;
+  }
+
   const cdAllowed = await acquireCooldownAtomic(env, `post:cd:${currentUser.id}`, 10);
   if (!cdAllowed) {
     return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
@@ -79,11 +143,34 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
   const skinScore = 0;
 
   const keyExt = detected.ext;
-  const imageKey = `posts/${currentUser.id}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${keyExt}`;
+  const baseKey = `posts/${currentUser.id}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+  const imageKey = `${baseKey}.${keyExt}`;
+  const thumbKey = keyExt === 'webp' && thumbBytes ? `${baseKey}_thumb.webp` : null;
+  const fullKey = keyExt === 'webp' && fullBytes ? `${baseKey}_full.webp` : null;
 
-  await env.STORAGE.put(imageKey, bytes, {
-    httpMetadata: { contentType: detected.mime },
-  });
+  const uploadedKeys: string[] = [imageKey];
+  const putTasks: Promise<unknown>[] = [
+    env.STORAGE.put(imageKey, bytes, {
+      httpMetadata: { contentType: detected.mime, cacheControl: PUBLIC_MEDIA_CACHE_CONTROL },
+    }),
+  ];
+  if (thumbKey && thumbBytes) {
+    uploadedKeys.push(thumbKey);
+    putTasks.push(
+      env.STORAGE.put(thumbKey, thumbBytes, {
+        httpMetadata: { contentType: 'image/webp', cacheControl: PUBLIC_MEDIA_CACHE_CONTROL },
+      }),
+    );
+  }
+  if (fullKey && fullBytes) {
+    uploadedKeys.push(fullKey);
+    putTasks.push(
+      env.STORAGE.put(fullKey, fullBytes, {
+        httpMetadata: { contentType: 'image/webp', cacheControl: PUBLIC_MEDIA_CACHE_CONTROL },
+      }),
+    );
+  }
+  await Promise.all(putTasks);
 
   try {
     const result = await env.DB.prepare(
@@ -96,18 +183,23 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
     if (newPostId && typeof newPostId === 'number' && caption) {
       await savePostTags(env, newPostId, caption);
     }
+    await invalidateRecommendationCaches({ postChanged: true });
 
     return jsonResponse(
       {
         success: true,
         post_id: newPostId,
         image_key: imageKey,
+        variants: {
+          thumb: Boolean(thumbKey),
+          full: Boolean(fullKey),
+        },
       },
       201,
     );
   } catch (err) {
     try {
-      await env.STORAGE.delete(imageKey);
+      await Promise.all(uploadedKeys.map((k) => env.STORAGE.delete(k).catch(() => {})));
     } catch { }
     return jsonError('Ошибка сохранения публикации в базе данных', 500);
   }
@@ -159,9 +251,14 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
   await env.DB.prepare('DELETE FROM user_interactions WHERE post_id = ?').bind(postId).run();
   await env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
 
+  const { thumbKey, fullKey } = derivePostVariantKeys(post.image_key);
+  const keysToDelete = [post.image_key, thumbKey, fullKey].filter((k): k is string => Boolean(k));
   try {
-    await env.STORAGE.delete(post.image_key);
+    await Promise.all(keysToDelete.map((k) => env.STORAGE.delete(k).catch(() => {})));
   } catch { }
+  await purgePublicMediaEdgeCache(keysToDelete);
+
+  await invalidateRecommendationCaches({ postChanged: true });
 
   return jsonResponse({ success: true, deleted_id: postId }, 200);
 }
@@ -214,9 +311,10 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
       .first<{ post_id: number }>();
     liked = false;
     if (delRow) {
-      await adjustAffinity(env, currentUser.id, post.user_id, -3.5);
-      await adjustTagAffinity(env, currentUser.id, postId, -2.0);
-      await removeNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+      await Promise.all([
+        adjustPostEngagementBatch(env, currentUser.id, postId, post.user_id, -3.5, -2.0),
+        removeNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId }),
+      ]);
     }
   } else {
     const insRow = await env.DB.prepare(
@@ -226,9 +324,10 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
       .first<{ post_id: number }>();
     liked = true;
     if (insRow) {
-      await adjustAffinity(env, currentUser.id, post.user_id, 3.5);
-      await adjustTagAffinity(env, currentUser.id, postId, 2.0);
-      await createNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+      await Promise.all([
+        adjustPostEngagementBatch(env, currentUser.id, postId, post.user_id, 3.5, 2.0),
+        createNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId }),
+      ]);
     }
   }
 
@@ -437,37 +536,45 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
 
   const commentId = Number(insertResult.meta.last_row_id) || 0;
 
-  await adjustAffinity(env, currentUser.id, post.user_id, 5.0);
-  await adjustTagAffinity(env, currentUser.id, postId, 2.5);
+  const notifyPromises: Promise<unknown>[] = [
+    adjustPostEngagementBatch(env, currentUser.id, postId, post.user_id, 5.0, 2.5),
+  ];
   if (parentAuthorId > 0) {
-    await createNotification(env, {
-      userId: parentAuthorId,
-      actorId: currentUser.id,
-      type: 'comment_reply',
-      postId,
-      commentId: commentId || null,
-      commentPreview: content,
-    });
+    notifyPromises.push(
+      createNotification(env, {
+        userId: parentAuthorId,
+        actorId: currentUser.id,
+        type: 'comment_reply',
+        postId,
+        commentId: commentId || null,
+        commentPreview: content,
+      }),
+    );
     if (Number(post.user_id) !== parentAuthorId) {
-      await createNotification(env, {
+      notifyPromises.push(
+        createNotification(env, {
+          userId: post.user_id,
+          actorId: currentUser.id,
+          type: 'comment',
+          postId,
+          commentId: commentId || null,
+          commentPreview: content,
+        }),
+      );
+    }
+  } else {
+    notifyPromises.push(
+      createNotification(env, {
         userId: post.user_id,
         actorId: currentUser.id,
         type: 'comment',
         postId,
         commentId: commentId || null,
         commentPreview: content,
-      });
-    }
-  } else {
-    await createNotification(env, {
-      userId: post.user_id,
-      actorId: currentUser.id,
-      type: 'comment',
-      postId,
-      commentId: commentId || null,
-      commentPreview: content,
-    });
+      }),
+    );
   }
+  await Promise.all(notifyPromises);
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(postId)

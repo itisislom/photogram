@@ -34,7 +34,13 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v25';
+const APP_STYLE_VERSION = '20261126-v30';
+
+export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
+  const base = `/media/${encodeURIComponent(imageKey)}`;
+  if (!variant || !imageKey || !imageKey.endsWith('.webp')) return base;
+  return `${base}?v=${variant}`;
+}
 
 export function renderVerifiedBadge(size: number = 13.5): string {
   return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>`;
@@ -391,6 +397,24 @@ window.showAppConfirm = function(opts) {
     follow: t.notifications.startedFollowingYou
   })};
 
+  function showNotifToastIfNew(latest) {
+    if (!latest || !latest.id || window.location.pathname === '/notifications') return;
+    var prevId = 0;
+    try { prevId = parseInt(sessionStorage.getItem('pg_last_notif_id') || '0', 10) || 0; } catch (e) {}
+    var nextId = Number(latest.id);
+    if (prevId > 0 && nextId > prevId && window.showAppToast) {
+      var label = notifToastLabels[latest.type] || '';
+      var msg = '@' + latest.actor_username + ' ' + label;
+      if ((latest.type === 'comment' || latest.type === 'comment_like' || latest.type === 'comment_reply') && latest.comment_preview) {
+        msg += ' «' + latest.comment_preview.slice(0, 48) + '»';
+      }
+      window.showAppToast(msg);
+    }
+    if (nextId > prevId) {
+      try { sessionStorage.setItem('pg_last_notif_id', String(nextId)); } catch (e) {}
+    }
+  }
+
   window.refreshNotificationsBadge = function() {
     if (!document.getElementById('navMessagesBadge') && !document.getElementById('topNotificationsBadge')) return;
     if (document.visibilityState === 'hidden') return;
@@ -403,25 +427,291 @@ window.showAppConfirm = function(opts) {
           return;
         }
         window.updateNotificationsBadge(d.unread_count || 0);
-        if (d.latest && d.latest.id && window.location.pathname !== '/notifications') {
-          var prevId = 0;
-          try { prevId = parseInt(sessionStorage.getItem('pg_last_notif_id') || '0', 10) || 0; } catch (e) {}
-          var nextId = Number(d.latest.id);
-          if (prevId > 0 && nextId > prevId && window.showAppToast) {
-            var label = notifToastLabels[d.latest.type] || '';
-            var msg = '@' + d.latest.actor_username + ' ' + label;
-            if ((d.latest.type === 'comment' || d.latest.type === 'comment_like' || d.latest.type === 'comment_reply') && d.latest.comment_preview) {
-              msg += ' «' + d.latest.comment_preview.slice(0, 48) + '»';
-            }
-            window.showAppToast(msg);
-          }
-          if (nextId > prevId) {
-            try { sessionStorage.setItem('pg_last_notif_id', String(nextId)); } catch (e) {}
-          }
+        if (d.latest) {
+          showNotifToastIfNew(d.latest);
         }
       })
       .catch(function() {});
   };
+
+  if (!window.PhotogramRealtime) {
+    window.PhotogramRealtime = (function() {
+      var ws = null;
+      var listeners = [];
+      var connected = false;
+      var hadConnected = false;
+      var stopped = false;
+      var attempt = 0;
+      var failCount = 0;
+      var reconnectTimer = null;
+      var pingTimer = null;
+      var pongTimer = null;
+      var fallbackTimer = null;
+      var seenMap = {};
+      var seenOrder = [];
+      var MAX_SEEN = 300;
+
+      function isLoggedInDom() {
+        return Boolean(document.getElementById('navMessagesBadge') || document.getElementById('topNotificationsBadge'));
+      }
+
+      function markSeen(id) {
+        if (!id) return false;
+        var k = String(id);
+        if (seenMap[k]) return true;
+        seenMap[k] = true;
+        seenOrder.push(k);
+        if (seenOrder.length > MAX_SEEN) {
+          var oldest = seenOrder.shift();
+          if (oldest) delete seenMap[oldest];
+        }
+        return false;
+      }
+
+      function dispatch(ev) {
+        for (var i = 0; i < listeners.length; i++) {
+          try { listeners[i](ev); } catch (e) {}
+        }
+      }
+
+      function stopHeartbeat() {
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+        if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
+      }
+
+      function startHeartbeat() {
+        stopHeartbeat();
+        pingTimer = setInterval(function() {
+          if (!ws || ws.readyState !== 1) return;
+          try { ws.send('ping'); } catch (e) {}
+          if (pongTimer) clearTimeout(pongTimer);
+          pongTimer = setTimeout(function() {
+            if (ws && ws.readyState === 1) {
+              try { ws.close(); } catch (e) {}
+            }
+          }, 10000);
+        }, 25000);
+      }
+
+      function stopFallbackPoll() {
+        if (fallbackTimer) {
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
+        }
+      }
+
+      function startFallbackPoll() {
+        if (fallbackTimer) return;
+        fallbackTimer = setInterval(function() {
+          if (connected || stopped) {
+            stopFallbackPoll();
+            return;
+          }
+          if (document.visibilityState === 'visible' && isLoggedInDom()) {
+            if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+            if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+          }
+        }, 30000);
+      }
+
+      function scheduleReconnect() {
+        if (stopped || reconnectTimer || !isLoggedInDom()) return;
+        var base = Math.min(30000, 1000 * Math.pow(2, Math.min(attempt, 5)));
+        var jitter = Math.floor(Math.random() * 500);
+        attempt += 1;
+        reconnectTimer = setTimeout(function() {
+          reconnectTimer = null;
+          connect();
+        }, base + jitter);
+      }
+
+      function handleGlobalEvent(ev) {
+        if (!ev || typeof ev.type !== 'string') return;
+        if (ev.type === 'unread.updated') {
+          if (typeof ev.messages === 'number' && window.updateUnreadMessagesBadge) {
+            window.updateUnreadMessagesBadge(ev.messages);
+          }
+          if (typeof ev.notifications === 'number' && window.updateNotificationsBadge) {
+            window.updateNotificationsBadge(ev.notifications);
+          }
+          return;
+        }
+        if (ev.type === 'notification.new') {
+          if (typeof ev.unread_count === 'number' && window.updateNotificationsBadge) {
+            window.updateNotificationsBadge(ev.unread_count);
+          }
+          if (ev.notification) {
+            showNotifToastIfNew(ev.notification);
+          }
+          return;
+        }
+        if (ev.type === 'session.revoked') {
+          stopped = true;
+          stopHeartbeat();
+          stopFallbackPoll();
+          if (ws) {
+            try { ws.close(4003, 'Session revoked'); } catch (e) {}
+            ws = null;
+          }
+          var p = window.location.pathname;
+          if (p !== '/login' && p !== '/register') {
+            window.location.href = '/login';
+          }
+        }
+      }
+
+      function connect() {
+        if (stopped || !isLoggedInDom()) return;
+        if (typeof WebSocket === 'undefined') {
+          failCount = 3;
+          startFallbackPoll();
+          dispatch({ type: '__disconnected_fallback' });
+          return;
+        }
+        if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        var proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        var wsUrl = proto + window.location.host + '/api/realtime/ws';
+        var sock;
+        try {
+          sock = new WebSocket(wsUrl);
+        } catch (e) {
+          failCount += 1;
+          if (failCount >= 3) {
+            startFallbackPoll();
+            dispatch({ type: '__disconnected_fallback' });
+          }
+          scheduleReconnect();
+          return;
+        }
+        ws = sock;
+
+        sock.onopen = function() {
+          if (ws !== sock) return;
+          connected = true;
+          attempt = 0;
+          failCount = 0;
+          stopFallbackPoll();
+          startHeartbeat();
+          if (hadConnected) {
+            if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+            if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+            dispatch({ type: '__reconnected' });
+          } else {
+            hadConnected = true;
+            dispatch({ type: '__connected' });
+          }
+        };
+
+        sock.onmessage = function(e) {
+          if (ws !== sock) return;
+          if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
+          if (!e || typeof e.data !== 'string') return;
+          if (e.data === 'pong') return;
+          var ev;
+          try { ev = JSON.parse(e.data); } catch (err) { return; }
+          if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') return;
+          if (ev.id && markSeen(ev.id)) return;
+          handleGlobalEvent(ev);
+          dispatch(ev);
+        };
+
+        sock.onerror = function() {};
+
+        sock.onclose = function(e) {
+          if (ws !== sock) return;
+          ws = null;
+          connected = false;
+          stopHeartbeat();
+          var code = e && typeof e.code === 'number' ? e.code : 0;
+          if (code === 4003 || code === 4401) {
+            stopped = true;
+            stopFallbackPoll();
+            return;
+          }
+          failCount += 1;
+          if (failCount >= 3) {
+            startFallbackPoll();
+            dispatch({ type: '__disconnected_fallback' });
+          }
+          scheduleReconnect();
+        };
+      }
+
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible' && !stopped && !connected && isLoggedInDom()) {
+          attempt = 0;
+          connect();
+        }
+      });
+
+      window.addEventListener('online', function() {
+        if (!stopped && !connected && isLoggedInDom()) {
+          attempt = 0;
+          connect();
+        }
+      });
+
+      window.addEventListener('pagehide', function() {
+        stopHeartbeat();
+      });
+
+      return {
+        on: function(fn) {
+          if (typeof fn !== 'function') return function() {};
+          listeners.push(fn);
+          return function() {
+            var idx = listeners.indexOf(fn);
+            if (idx !== -1) listeners.splice(idx, 1);
+          };
+        },
+        off: function(fn) {
+          var idx = listeners.indexOf(fn);
+          if (idx !== -1) listeners.splice(idx, 1);
+        },
+        isConnected: function() {
+          return connected;
+        },
+        isFallback: function() {
+          return !connected && failCount >= 3;
+        },
+        sendTyping: function(convId, isTyping) {
+          if (!connected || !ws || ws.readyState !== 1) return false;
+          var cid = Number(convId);
+          if (!cid || cid <= 0) return false;
+          try {
+            ws.send(JSON.stringify({
+              type: isTyping ? 'typing.start' : 'typing.stop',
+              conversation_id: cid
+            }));
+            return true;
+          } catch (e) {
+            return false;
+          }
+        },
+        ensureConnected: function() {
+          if (stopped) return;
+          if (!connected && isLoggedInDom()) {
+            connect();
+          }
+        },
+        close: function() {
+          stopped = true;
+          stopHeartbeat();
+          stopFallbackPoll();
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          if (ws) {
+            try { ws.close(1000, 'Closed'); } catch (e) {}
+            ws = null;
+          }
+          connected = false;
+        }
+      };
+    })();
+  }
 
   function urlBase64ToUint8Array(base64String) {
     var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -593,17 +883,10 @@ window.showAppConfirm = function(opts) {
     });
   }
 
-  if (!window.__pgUnreadInterval) {
-    window.__pgUnreadInterval = setInterval(function() {
-      if (document.visibilityState === 'visible' && document.getElementById('navMessagesBadge')) {
-        window.refreshUnreadMessagesBadge();
-        window.refreshNotificationsBadge();
-      }
-    }, 12000);
-  }
   setTimeout(function() {
     if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
     if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+    if (window.PhotogramRealtime) window.PhotogramRealtime.ensureConnected();
   }, 150);
 
   var activePostMenuTarget = null;
@@ -1052,11 +1335,34 @@ if ('serviceWorker' in navigator) {
   var timerMap = new WeakMap();
   var activeVisibleMap = new Map();
   var activeModalDwell = null;
+  var telemetryBatchSeq = 0;
+  var telemetrySessionPrefix = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).slice(0, 12);
+  var TELEMETRY_FLUSH_DELAY_MS = 45000;
+  var TELEMETRY_BATCH_LIMIT = 30;
+
+  function makeTelemetryEventId() {
+    telemetryBatchSeq++;
+    return telemetrySessionPrefix + '_' + telemetryBatchSeq.toString(36) + '_' + (Date.now() & 0xfffff).toString(36);
+  }
+
+  function scheduleTelemetryFlush() {
+    if (flushTimer || telemetryQueue.length === 0) return;
+    flushTimer = setTimeout(function() {
+      flushTimer = null;
+      flushTelemetry();
+    }, TELEMETRY_FLUSH_DELAY_MS);
+  }
 
   function flushTelemetry() {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
     if (telemetryQueue.length === 0) return;
     while (telemetryQueue.length > 0) {
-      var batch = telemetryQueue.splice(0, 30);
+      var batch = telemetryQueue.splice(0, TELEMETRY_BATCH_LIMIT);
       var payload = JSON.stringify({ events: batch });
       try {
         if (navigator.sendBeacon) {
@@ -1084,9 +1390,15 @@ if ('serviceWorker' in navigator) {
 
   function queueEvent(ev) {
     if (!ev || !ev.type) return;
-    telemetryQueue.push(ev);
-    if (telemetryQueue.length >= 20) {
+    var item = Object.assign({}, ev);
+    if (!item.event_id) {
+      item.event_id = makeTelemetryEventId();
+    }
+    telemetryQueue.push(item);
+    if (telemetryQueue.length >= TELEMETRY_BATCH_LIMIT) {
       flushTelemetry();
+    } else {
+      scheduleTelemetryFlush();
     }
   }
 
@@ -1203,7 +1515,6 @@ if ('serviceWorker' in navigator) {
     });
   };
 
-  flushTimer = setInterval(flushTelemetry, 4000);
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') {
       window.endModalDwell();
@@ -1371,8 +1682,11 @@ ${script || ''}</script>
 
       if (window.syncThemeButtons) window.syncThemeButtons();
       if (window.initTelemetryObserver) window.initTelemetryObserver();
-      if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
-      if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+      if (window.PhotogramRealtime) window.PhotogramRealtime.ensureConnected();
+      if (!window.PhotogramRealtime || !window.PhotogramRealtime.isConnected()) {
+        if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
+        if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+      }
 
       requestAnimationFrame(function() {
         if (root) root.style.opacity = '1';

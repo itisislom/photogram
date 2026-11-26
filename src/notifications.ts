@@ -2,6 +2,7 @@ import { Env, NotificationItem } from './types';
 import { getUserFromRequest } from './auth';
 import { detectLanguage, getTranslations } from './languages';
 import { sendPushToUser } from './push';
+import { emitUserEvent } from './realtime';
 import { acquireCooldownAtomic, consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
@@ -59,7 +60,7 @@ export async function createNotification(
     }
 
     const preview = opts.commentPreview ? String(opts.commentPreview).trim().slice(0, 120) : '';
-    await env.DB.prepare(
+    const ins = await env.DB.prepare(
       'INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id, comment_preview, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)',
     )
       .bind(
@@ -72,11 +73,45 @@ export async function createNotification(
       )
       .run();
 
-    const actor = await env.DB.prepare('SELECT username FROM users WHERE id = ?')
-      .bind(opts.actorId)
-      .first<{ username: string }>();
+    let notifId = Number(ins.meta?.last_row_id || 0);
+    if (!notifId) {
+      const latestIns = await env.DB.prepare(
+        'SELECT id FROM notifications WHERE user_id = ? AND actor_id = ? ORDER BY id DESC LIMIT 1',
+      )
+        .bind(opts.userId, opts.actorId)
+        .first<{ id: number }>();
+      notifId = Number(latestIns?.id || 0);
+    }
 
+    const [actor, cntRow] = await Promise.all([
+      env.DB.prepare('SELECT username FROM users WHERE id = ?')
+        .bind(opts.actorId)
+        .first<{ username: string }>(),
+      env.DB.prepare('SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0')
+        .bind(opts.userId)
+        .first<{ cnt: number }>(),
+    ]);
+    const unreadCount = Number(cntRow?.cnt || 0);
+
+    let deliveredSockets = -1;
     if (actor?.username) {
+      deliveredSockets = await emitUserEvent(env, opts.userId, {
+        type: 'notification.new',
+        unread_count: unreadCount,
+        notification: {
+          id: notifId,
+          type: opts.type,
+          actor_username: actor.username,
+          comment_preview: preview,
+        },
+      });
+    }
+    await emitUserEvent(env, opts.userId, {
+      type: 'unread.updated',
+      notifications: unreadCount,
+    });
+
+    if (actor?.username && deliveredSockets <= 0) {
       const pushAllowed = await acquireCooldownAtomic(
         env,
         `push:notif:${opts.userId}:${opts.actorId}:${opts.type}`,
@@ -135,6 +170,17 @@ export async function removeNotification(
       await env.DB.prepare('DELETE FROM notifications WHERE comment_id = ?')
         .bind(opts.commentId)
         .run();
+    }
+    if (opts.userId > 0) {
+      const cntRow = await env.DB.prepare(
+        'SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0',
+      )
+        .bind(opts.userId)
+        .first<{ cnt: number }>();
+      await emitUserEvent(env, opts.userId, {
+        type: 'unread.updated',
+        notifications: Number(cntRow?.cnt || 0),
+      });
     }
   } catch {}
 }
@@ -209,6 +255,10 @@ export async function markAllNotificationsRead(env: Env, userId: number): Promis
     await env.DB.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0')
       .bind(userId)
       .run();
+    await emitUserEvent(env, userId, {
+      type: 'unread.updated',
+      notifications: 0,
+    });
   } catch {}
 }
 

@@ -294,6 +294,7 @@ export const ru: Translations = {
     photoLabel: 'Фото',
     youPrefix: 'Вы: ',
     seen: 'Просмотрено',
+    typing: 'печатает...',
     unsend: 'Отменить отправку',
     unsendConfirmTitle: 'Удалить сообщение?',
     unsendConfirmDesc: 'Сообщение будет удалено для обоих участников диалога.',

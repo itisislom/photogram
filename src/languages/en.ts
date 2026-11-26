@@ -289,6 +289,7 @@ export const en: Translations = {
     photoLabel: 'Photo',
     youPrefix: 'You: ',
     seen: 'Seen',
+    typing: 'typing...',
     unsend: 'Unsend',
     unsendConfirmTitle: 'Unsend message?',
     unsendConfirmDesc: 'This message will be removed for both participants.',

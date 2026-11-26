@@ -16,6 +16,16 @@ const STOP_WORDS = new Set([
 const BATCH_CHUNK_SIZE = 50;
 const MAX_TELEMETRY_EVENTS = 30;
 const MAX_DWELL_MS = 120000;
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 40;
+const MAX_CACHE_ENTRIES = 400;
+const MAX_TELEMETRY_DEDUPE_ENTRIES = 4000;
+const TTL_TELEMETRY_DEDUPE_MS = 10 * 60 * 1000;
+const TELEMETRY_EVENT_ID_RE = /^[A-Za-z0-9_-]{6,48}$/;
+const TTL_PERSONAL_MS = 3 * 60 * 1000;
+const TTL_POPULAR_MS = 7 * 60 * 1000;
+const TTL_TAGS_MS = 15 * 60 * 1000;
+const TTL_SIMILAR_MS = 15 * 60 * 1000;
 const ALLOWED_TELEMETRY_TYPES = new Set([
   'impression',
   'dwell',
@@ -24,6 +34,245 @@ const ALLOWED_TELEMETRY_TYPES = new Set([
   'profile_visit',
   'comment_open',
 ]);
+
+interface CachedEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+interface RankedIdItem {
+  id: number;
+  score?: number;
+}
+
+interface FeedRankCacheValue {
+  followedIds: number[];
+  suggestedIds: number[];
+  allCaughtUp: boolean;
+  gen: string;
+}
+
+interface RankedListCacheValue {
+  items: RankedIdItem[];
+  gen: string;
+}
+
+const memCache = new Map<string, CachedEntry<unknown>>();
+const telemetrySeenIds = new Map<string, number>();
+let tagsBackfilledDone = false;
+
+function hasOrRememberTelemetryEventId(userId: number, eventId: string, now: number): boolean {
+  const key = `${userId}:${eventId}`;
+  const exp = telemetrySeenIds.get(key);
+  if (exp !== undefined && exp > now) {
+    return true;
+  }
+  if (telemetrySeenIds.size >= MAX_TELEMETRY_DEDUPE_ENTRIES) {
+    for (const [k, v] of telemetrySeenIds.entries()) {
+      if (v <= now) telemetrySeenIds.delete(k);
+    }
+    if (telemetrySeenIds.size >= MAX_TELEMETRY_DEDUPE_ENTRIES) {
+      const oldest = telemetrySeenIds.keys().next().value;
+      if (oldest !== undefined) telemetrySeenIds.delete(oldest);
+    }
+  }
+  telemetrySeenIds.set(key, now + TTL_TELEMETRY_DEDUPE_MS);
+  return false;
+}
+
+export function clearTelemetryDedupeCache(): void {
+  telemetrySeenIds.clear();
+}
+
+function getEdgeCache(): Cache | null {
+  try {
+    const c = (globalThis as unknown as { caches?: { default?: Cache } }).caches;
+    return c && c.default ? c.default : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeEdgeCacheUrl(key: string): string {
+  return `https://rec-cache.photogram.internal/${encodeURIComponent(key)}`;
+}
+
+async function recCacheGet<T>(key: string): Promise<T | null> {
+  const now = Date.now();
+  const hit = memCache.get(key);
+  if (hit) {
+    if (hit.expiresAt > now) {
+      return hit.value as T;
+    }
+    memCache.delete(key);
+  }
+  const edge = getEdgeCache();
+  if (!edge) return null;
+  try {
+    const res = await edge.match(makeEdgeCacheUrl(key));
+    if (!res) return null;
+    const parsed = (await res.json()) as CachedEntry<T>;
+    if (!parsed || typeof parsed.expiresAt !== 'number' || parsed.expiresAt <= now) {
+      return null;
+    }
+    memCacheSet(key, parsed.value, parsed.expiresAt - now);
+    return parsed.value;
+  } catch {
+    return null;
+  }
+}
+
+function memCacheSet<T>(key: string, value: T, ttlMs: number): void {
+  if (memCache.size >= MAX_CACHE_ENTRIES) {
+    const firstKey = memCache.keys().next().value;
+    if (firstKey !== undefined) memCache.delete(firstKey);
+  }
+  memCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
+async function recCacheSet<T>(key: string, value: T, ttlMs: number): Promise<void> {
+  memCacheSet(key, value, ttlMs);
+  const edge = getEdgeCache();
+  if (!edge) return;
+  try {
+    const ttlSec = Math.max(10, Math.floor(ttlMs / 1000));
+    const entry: CachedEntry<T> = { value, expiresAt: Date.now() + ttlMs };
+    await edge.put(
+      makeEdgeCacheUrl(key),
+      new Response(JSON.stringify(entry), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${ttlSec}`,
+        },
+      }),
+    );
+  } catch {}
+}
+
+export async function invalidateRecommendationCaches(opts?: { userId?: number; postChanged?: boolean }): Promise<void> {
+  const edge = getEdgeCache();
+  const keysToDrop: string[] = [];
+  if (opts?.userId && opts.userId > 0) {
+    const uid = opts.userId;
+    keysToDrop.push(`feed:u:${uid}`, `explore:all:u:${uid}`, `recusers:u:${uid}`);
+  }
+  if (opts?.postChanged) {
+    keysToDrop.push('explore:popular', 'explore:tags:10');
+    for (const k of memCache.keys()) {
+      if (k.startsWith('explore:tag:') || k.startsWith('feed:u:') || k.startsWith('explore:all:u:')) {
+        keysToDrop.push(k);
+      }
+    }
+  }
+  const unique = Array.from(new Set(keysToDrop));
+  for (const k of unique) {
+    memCache.delete(k);
+    if (edge) {
+      try {
+        await edge.delete(makeEdgeCacheUrl(k));
+      } catch {}
+    }
+  }
+}
+
+function encodeCursor(offset: number, gen: string): string {
+  const raw = JSON.stringify({ o: Math.max(0, Math.floor(offset)), g: gen.slice(0, 16) });
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeCursor(rawCursor?: string | null): { offset: number; gen: string } | null {
+  if (!rawCursor || typeof rawCursor !== 'string' || rawCursor.length > 128) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(rawCursor)) return null;
+  try {
+    const padded = rawCursor.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (rawCursor.length % 4)) % 4);
+    const parsed = JSON.parse(atob(padded)) as { o?: unknown; g?: unknown };
+    const o = Number(parsed?.o);
+    const g = typeof parsed?.g === 'string' ? parsed.g.slice(0, 16) : '';
+    if (!Number.isInteger(o) || o < 0 || o > 300) return null;
+    return { offset: o, gen: g };
+  } catch {
+    return null;
+  }
+}
+
+function decodeRecentCursor(rawCursor?: string | null): number {
+  if (!rawCursor || typeof rawCursor !== 'string' || rawCursor.length > 64) return 0;
+  if (!/^r:(\d{1,12})$/.test(rawCursor)) return 0;
+  const id = Number(rawCursor.slice(2));
+  return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+async function hydratePostsByIds(
+  env: Env,
+  orderedIds: number[],
+  viewerId: number,
+  isFollowedMap?: Set<number>,
+): Promise<Array<FeedPost & ExplorePost>> {
+  const cleanIds = orderedIds.filter((id) => Number.isInteger(id) && id > 0);
+  if (cleanIds.length === 0) return [];
+  const placeholders = cleanIds.map((_, idx) => `?${idx + 2}`).join(', ');
+  const res = await env.DB.prepare(
+    `WITH target_posts AS (
+       SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+       FROM posts p
+       WHERE p.id IN (${placeholders})
+         AND (p.reports_count IS NULL OR p.reports_count < 5)
+     ),
+     post_likes AS (
+       SELECT l.post_id, COUNT(*)::int AS likes_count
+       FROM likes l
+       JOIN target_posts tp ON tp.id = l.post_id
+       GROUP BY l.post_id
+     ),
+     post_comments AS (
+       SELECT c.post_id, COUNT(*)::int AS comments_count
+       FROM comments c
+       JOIN target_posts tp ON tp.id = c.post_id
+       GROUP BY c.post_id
+     )
+     SELECT tp.id, tp.user_id, tp.image_key, tp.caption, tp.created_at,
+            u.username, u.display_name, u.avatar_key, u.is_verified,
+            COALESCE(pl.likes_count, 0) AS likes_count,
+            COALESCE(pc.comments_count, 0) AS comments_count,
+            EXISTS(SELECT 1 FROM likes l WHERE l.post_id = tp.id AND l.user_id = ?1) AS is_liked
+     FROM target_posts tp
+     JOIN users u ON u.id = tp.user_id
+     LEFT JOIN post_likes pl ON pl.post_id = tp.id
+     LEFT JOIN post_comments pc ON pc.post_id = tp.id
+     LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = tp.id
+     WHERE COALESCE(ui.is_hidden, 0) = 0`,
+  )
+    .bind(viewerId, ...cleanIds)
+    .all<any>();
+
+  const byId = new Map<number, FeedPost & ExplorePost>();
+  for (const p of res.results || []) {
+    const id = Number(p.id);
+    byId.set(id, {
+      id,
+      user_id: Number(p.user_id),
+      image_key: p.image_key,
+      caption: p.caption,
+      created_at: p.created_at,
+      username: p.username,
+      display_name: p.display_name,
+      avatar_key: p.avatar_key,
+      author_avatar_key: p.avatar_key,
+      likes_count: Number(p.likes_count) || 0,
+      comments_count: Number(p.comments_count) || 0,
+      is_liked: Boolean(p.is_liked),
+      is_followed_author: isFollowedMap ? isFollowedMap.has(id) : false,
+      is_verified: Number(p.is_verified) === 1 ? 1 : 0,
+    });
+  }
+
+  const ordered: Array<FeedPost & ExplorePost> = [];
+  for (const id of cleanIds) {
+    const item = byId.get(id);
+    if (item) ordered.push(item);
+  }
+  return ordered;
+}
 
 async function runBatchChunked(env: Env, statements: any[]): Promise<void> {
   if (!statements.length) return;
@@ -54,12 +303,19 @@ export function extractTagsFromCaption(caption: string): string[] {
 }
 
 export async function ensureTagsBackfilled(env: Env): Promise<void> {
+  if (tagsBackfilledDone) return;
   try {
     const existing = await env.DB.prepare('SELECT 1 FROM post_tags LIMIT 1').first();
-    if (existing) return;
+    if (existing) {
+      tagsBackfilledDone = true;
+      return;
+    }
 
     const posts = await env.DB.prepare("SELECT id, caption FROM posts WHERE caption != '' LIMIT 300").all<{ id: number; caption: string }>();
-    if (!posts.results || posts.results.length === 0) return;
+    if (!posts.results || posts.results.length === 0) {
+      tagsBackfilledDone = true;
+      return;
+    }
 
     const statements: any[] = [];
     for (const p of posts.results) {
@@ -71,6 +327,7 @@ export async function ensureTagsBackfilled(env: Env): Promise<void> {
       }
     }
     await runBatchChunked(env, statements);
+    tagsBackfilledDone = true;
   } catch { }
 }
 
@@ -137,6 +394,32 @@ export async function adjustTagAffinity(env: Env, userId: number, postId: number
 
     const stmts = tags.map(tag => buildTagAffinityStmt(env, userId, tag, delta));
     await runBatchChunked(env, stmts);
+  } catch { }
+}
+
+export async function adjustPostEngagementBatch(
+  env: Env,
+  userId: number,
+  postId: number,
+  authorId: number,
+  authorDelta: number,
+  tagDelta: number,
+): Promise<void> {
+  if (!userId || !postId || userId === authorId) return;
+  try {
+    const stmts: any[] = [];
+    if (authorId > 0 && Number.isFinite(authorDelta) && authorDelta !== 0) {
+      stmts.push(buildAuthorAffinityStmt(env, userId, authorId, authorDelta));
+    }
+    if (Number.isFinite(tagDelta) && tagDelta !== 0) {
+      const tagRows = await env.DB.prepare('SELECT tag FROM post_tags WHERE post_id = ?').bind(postId).all<{ tag: string }>();
+      for (const r of tagRows.results || []) {
+        if (r.tag) stmts.push(buildTagAffinityStmt(env, userId, r.tag, tagDelta));
+      }
+    }
+    if (stmts.length > 0) {
+      await runBatchChunked(env, stmts);
+    }
   } catch { }
 }
 
@@ -480,42 +763,35 @@ export interface PersonalizedFeedResult {
   suggestedPosts: FeedPost[];
   allCaughtUp: boolean;
   recommendedUsers: ExploreUser[];
+  nextCursor?: string | null;
+  hasMore?: boolean;
 }
 
-export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<PersonalizedFeedResult> {
-  await ensureTagsBackfilled(env);
+export interface FeedPageSliceResult {
+  posts: FeedPost[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
 
-  let followedPosts: FeedPost[] = [];
-  let suggestedPosts: FeedPost[] = [];
+async function computeFeedRankedIds(env: Env, viewerId: number): Promise<FeedRankCacheValue> {
+  const cacheKey = `feed:u:${viewerId}`;
+  const cached = await recCacheGet<FeedRankCacheValue>(cacheKey);
+  if (cached) return cached;
+
+  let followedIds: number[] = [];
   let unseenFollowedCount = 0;
 
   try {
     const followedRows = await env.DB.prepare(
       `WITH candidate_followed AS (
-         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+         SELECT p.id, p.user_id, p.created_at
          FROM posts p
          JOIN follows f ON f.follower_id = ?1 AND f.following_id = p.user_id
          WHERE (p.reports_count IS NULL OR p.reports_count < 5)
          ORDER BY p.created_at DESC
          LIMIT 150
-       ),
-       post_likes AS (
-         SELECT l.post_id, COUNT(*)::int AS likes_count
-         FROM likes l
-         JOIN candidate_followed cf ON cf.id = l.post_id
-         GROUP BY l.post_id
-       ),
-       post_comments AS (
-         SELECT c.post_id, COUNT(*)::int AS comments_count
-         FROM comments c
-         JOIN candidate_followed cf ON cf.id = c.post_id
-         GROUP BY c.post_id
        )
-       SELECT cf.id, cf.user_id, cf.image_key, cf.caption, cf.created_at,
-              u.username, u.display_name, u.avatar_key, u.is_verified,
-              COALESCE(pl.likes_count, 0) AS likes_count,
-              COALESCE(pc.comments_count, 0) AS comments_count,
-              EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cf.id AND l.user_id = ?1) AS is_liked,
+       SELECT cf.id,
               COALESCE(CASE WHEN ui.last_seen_at >= NOW() - INTERVAL '14 days' THEN ui.impressions ELSE 0 END, 0) AS recent_impressions,
               (
                 COALESCE(ua.affinity_score / (1.0 + GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - ua.updated_at)) / 86400.0) / 14.0), 0.0) * 1.6 +
@@ -525,8 +801,6 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
               ) AS sort_rank
        FROM candidate_followed cf
        JOIN users u ON u.id = cf.user_id
-       LEFT JOIN post_likes pl ON pl.post_id = cf.id
-       LEFT JOIN post_comments pc ON pc.post_id = cf.id
        LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cf.id
        LEFT JOIN user_affinity ua ON ua.user_id = ?1 AND ua.author_id = cf.user_id
        WHERE COALESCE(ui.is_hidden, 0) = 0
@@ -534,62 +808,100 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
          CASE WHEN COALESCE(CASE WHEN ui.last_seen_at >= NOW() - INTERVAL '14 days' THEN ui.impressions ELSE 0 END, 0) = 0 THEN 0 ELSE 1 END,
          sort_rank DESC,
          cf.created_at DESC
-       LIMIT 30`
-    ).bind(viewerId).all<any>();
+       LIMIT 60`
+    ).bind(viewerId).all<{ id: number; recent_impressions: number }>();
 
     if (followedRows.results) {
       unseenFollowedCount = followedRows.results.filter(p => Number(p.recent_impressions) === 0).length;
-      followedPosts = followedRows.results.map(p => ({
-        id: p.id,
-        user_id: p.user_id,
-        image_key: p.image_key,
-        caption: p.caption,
-        created_at: p.created_at,
-        username: p.username,
-        display_name: p.display_name,
-        avatar_key: p.avatar_key,
-        likes_count: Number(p.likes_count) || 0,
-        comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked),
-        is_followed_author: true,
-        is_verified: Number(p.is_verified) === 1 ? 1 : 0
-      }));
+      followedIds = followedRows.results.map(p => Number(p.id)).filter(id => id > 0);
     }
   } catch { }
 
-  const allCaughtUp = followedPosts.length === 0 || unseenFollowedCount === 0;
-  const followedIdSet = new Set(followedPosts.map(p => p.id));
+  const allCaughtUp = followedIds.length === 0 || unseenFollowedCount === 0;
+  const followedIdSet = new Set(followedIds);
+  let suggestedIds: number[] = [];
 
   try {
     const rawCandidates = await fetchScoredCandidates(env, viewerId, true);
     const filteredCandidates = rawCandidates.filter(c => !followedIdSet.has(c.id));
     const scored = scoreCandidates(filteredCandidates, viewerId);
-    const mixed = mixAndDiversify(scored, viewerId, 30, 2);
-
-    suggestedPosts = mixed.map(p => ({
-      id: p.id,
-      user_id: p.user_id,
-      image_key: p.image_key,
-      caption: p.caption,
-      created_at: p.created_at,
-      username: p.username,
-      display_name: p.display_name,
-      avatar_key: p.author_avatar_key,
-      likes_count: Number(p.likes_count) || 0,
-      comments_count: Number(p.comments_count) || 0,
-      is_liked: Boolean(p.is_liked),
-      is_followed_author: false,
-      is_verified: Number(p.is_verified) === 1 ? 1 : 0
-    }));
+    const mixed = mixAndDiversify(scored, viewerId, 100, 2);
+    suggestedIds = mixed.map(p => Number(p.id)).filter(id => id > 0);
   } catch { }
 
-  const recommendedUsers = await getRecommendedUsers(env, viewerId, 8);
+  const result: FeedRankCacheValue = {
+    followedIds,
+    suggestedIds,
+    allCaughtUp,
+    gen: Date.now().toString(36),
+  };
+  await recCacheSet(cacheKey, result, TTL_PERSONAL_MS);
+  return result;
+}
+
+export async function getPersonalizedFeed(
+  env: Env,
+  viewerId: number,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<PersonalizedFeedResult> {
+  await ensureTagsBackfilled(env);
+  const safeLimit = Math.max(1, Math.min(MAX_PAGE_SIZE, Number(pageSize) || DEFAULT_PAGE_SIZE));
+
+  const [ranked, recommendedUsers] = await Promise.all([
+    computeFeedRankedIds(env, viewerId),
+    getRecommendedUsers(env, viewerId, 8),
+  ]);
+
+  const followedCount = ranked.followedIds.length;
+  const combinedIds = [...ranked.followedIds, ...ranked.suggestedIds];
+  const firstSliceIds = combinedIds.slice(0, safeLimit);
+  const followedSet = new Set(ranked.followedIds);
+  const hydrated = await hydratePostsByIds(env, firstSliceIds, viewerId, followedSet);
+
+  const followedPosts: FeedPost[] = [];
+  const suggestedPosts: FeedPost[] = [];
+  for (const post of hydrated) {
+    if (followedSet.has(post.id)) followedPosts.push(post);
+    else suggestedPosts.push(post);
+  }
+
+  const nextOffset = firstSliceIds.length;
+  const hasMore = nextOffset < combinedIds.length;
+  const nextCursor = hasMore ? encodeCursor(nextOffset, ranked.gen) : null;
 
   return {
     followedPosts,
     suggestedPosts,
-    allCaughtUp,
-    recommendedUsers
+    allCaughtUp: ranked.allCaughtUp && followedPosts.length >= followedCount,
+    recommendedUsers,
+    nextCursor,
+    hasMore,
+  };
+}
+
+export async function getPersonalizedFeedPage(
+  env: Env,
+  viewerId: number,
+  cursor?: string | null,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<FeedPageSliceResult> {
+  await ensureTagsBackfilled(env);
+  const safeLimit = Math.max(1, Math.min(MAX_PAGE_SIZE, Number(pageSize) || DEFAULT_PAGE_SIZE));
+  const ranked = await computeFeedRankedIds(env, viewerId);
+  const decoded = decodeCursor(cursor);
+  const offset = decoded ? decoded.offset : 0;
+
+  const combinedIds = [...ranked.followedIds, ...ranked.suggestedIds];
+  const sliceIds = combinedIds.slice(offset, offset + safeLimit);
+  const followedSet = new Set(ranked.followedIds);
+  const posts = await hydratePostsByIds(env, sliceIds, viewerId, followedSet);
+
+  const nextOffset = offset + sliceIds.length;
+  const hasMore = sliceIds.length > 0 && nextOffset < combinedIds.length;
+  return {
+    posts,
+    next_cursor: hasMore ? encodeCursor(nextOffset, ranked.gen) : null,
+    has_more: hasMore,
   };
 }
 
@@ -597,72 +909,118 @@ export async function getPersonalizedExplore(
   env: Env,
   viewerId: number,
   tagFilter: string = 'all',
-  limit: number = 36
-): Promise<{ posts: ExplorePost[]; tags: string[]; activeTag: string }> {
+  limit: number = DEFAULT_PAGE_SIZE,
+  cursor?: string | null,
+): Promise<{ posts: ExplorePost[]; tags: string[]; activeTag: string; next_cursor: string | null; has_more: boolean }> {
   await ensureTagsBackfilled(env);
   const tags = await getPopularExploreTags(env, 10);
-  const safeLimit = Math.max(1, Math.min(60, Number(limit) || 36));
+  const safeLimit = Math.max(1, Math.min(MAX_PAGE_SIZE, Number(limit) || DEFAULT_PAGE_SIZE));
   const cleanFilter = (tagFilter || 'all').toLowerCase().trim();
   let posts: ExplorePost[] = [];
+  let nextCursor: string | null = null;
+  let hasMore = false;
 
   try {
     if (cleanFilter === 'all') {
-      const rawCandidates = await fetchScoredCandidates(env, viewerId, false);
-      const scored = scoreCandidates(rawCandidates, viewerId);
-      const mixed = mixAndDiversify(scored, viewerId, safeLimit, 2);
-      posts = mixed.map(p => ({
-        id: p.id,
-        user_id: p.user_id,
-        image_key: p.image_key,
-        caption: p.caption,
-        created_at: p.created_at,
-        username: p.username,
-        display_name: p.display_name,
-        author_avatar_key: p.author_avatar_key,
-        likes_count: Number(p.likes_count) || 0,
-        comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked),
-        is_verified: Number(p.is_verified) === 1 ? 1 : 0
-      }));
+      const cacheKey = `explore:all:u:${viewerId}`;
+      let ranked = await recCacheGet<RankedListCacheValue>(cacheKey);
+      if (!ranked) {
+        const rawCandidates = await fetchScoredCandidates(env, viewerId, false);
+        const scored = scoreCandidates(rawCandidates, viewerId);
+        const mixed = mixAndDiversify(scored, viewerId, 120, 2);
+        ranked = {
+          items: mixed.map((p, idx) => ({ id: Number(p.id), score: 120 - idx })),
+          gen: Date.now().toString(36),
+        };
+        await recCacheSet(cacheKey, ranked, TTL_PERSONAL_MS);
+      }
+      const decoded = decodeCursor(cursor);
+      const offset = decoded ? decoded.offset : 0;
+      const sliceIds = ranked.items.slice(offset, offset + safeLimit).map(it => it.id);
+      posts = await hydratePostsByIds(env, sliceIds, viewerId);
+      const nextOffset = offset + sliceIds.length;
+      hasMore = sliceIds.length > 0 && nextOffset < ranked.items.length;
+      nextCursor = hasMore ? encodeCursor(nextOffset, ranked.gen) : null;
     } else if (cleanFilter === 'recent') {
-      const postRows = await env.DB.prepare(
-        `WITH candidate_posts AS (
-           SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
-           FROM posts p
-           WHERE (p.reports_count IS NULL OR p.reports_count < 5)
-           ORDER BY p.created_at DESC
-           LIMIT 200
-         ),
-         post_likes AS (
-           SELECT l.post_id, COUNT(*)::int AS likes_count
-           FROM likes l
-           JOIN candidate_posts cp ON cp.id = l.post_id
-           GROUP BY l.post_id
-         ),
-         post_comments AS (
-           SELECT c.post_id, COUNT(*)::int AS comments_count
-           FROM comments c
-           JOIN candidate_posts cp ON cp.id = c.post_id
-           GROUP BY c.post_id
-         )
-         SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
-                u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
-                COALESCE(pl.likes_count, 0) AS likes_count,
-                COALESCE(pc.comments_count, 0) AS comments_count,
-                EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cp.id AND l.user_id = ?1) AS is_liked
-         FROM candidate_posts cp
-         JOIN users u ON u.id = cp.user_id
-         LEFT JOIN post_likes pl ON pl.post_id = cp.id
-         LEFT JOIN post_comments pc ON pc.post_id = cp.id
-         LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cp.id
-         WHERE COALESCE(ui.is_hidden, 0) = 0
-         ORDER BY cp.created_at DESC
-         LIMIT ?2`
-      ).bind(viewerId, safeLimit).all<any>();
+      const beforeId = decodeRecentCursor(cursor);
+      const fetchLimit = safeLimit + 1;
+      const postRows = beforeId > 0
+        ? await env.DB.prepare(
+            `WITH candidate_posts AS (
+               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+               FROM posts p
+               WHERE (p.reports_count IS NULL OR p.reports_count < 5)
+                 AND p.id < ?2
+               ORDER BY p.id DESC
+               LIMIT 120
+             ),
+             post_likes AS (
+               SELECT l.post_id, COUNT(*)::int AS likes_count
+               FROM likes l
+               JOIN candidate_posts cp ON cp.id = l.post_id
+               GROUP BY l.post_id
+             ),
+             post_comments AS (
+               SELECT c.post_id, COUNT(*)::int AS comments_count
+               FROM comments c
+               JOIN candidate_posts cp ON cp.id = c.post_id
+               GROUP BY c.post_id
+             )
+             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
+                    u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
+                    COALESCE(pl.likes_count, 0) AS likes_count,
+                    COALESCE(pc.comments_count, 0) AS comments_count,
+                    EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cp.id AND l.user_id = ?1) AS is_liked
+             FROM candidate_posts cp
+             JOIN users u ON u.id = cp.user_id
+             LEFT JOIN post_likes pl ON pl.post_id = cp.id
+             LEFT JOIN post_comments pc ON pc.post_id = cp.id
+             LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cp.id
+             WHERE COALESCE(ui.is_hidden, 0) = 0
+             ORDER BY cp.id DESC
+             LIMIT ?3`
+          ).bind(viewerId, beforeId, fetchLimit).all<any>()
+        : await env.DB.prepare(
+            `WITH candidate_posts AS (
+               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+               FROM posts p
+               WHERE (p.reports_count IS NULL OR p.reports_count < 5)
+               ORDER BY p.id DESC
+               LIMIT 120
+             ),
+             post_likes AS (
+               SELECT l.post_id, COUNT(*)::int AS likes_count
+               FROM likes l
+               JOIN candidate_posts cp ON cp.id = l.post_id
+               GROUP BY l.post_id
+             ),
+             post_comments AS (
+               SELECT c.post_id, COUNT(*)::int AS comments_count
+               FROM comments c
+               JOIN candidate_posts cp ON cp.id = c.post_id
+               GROUP BY c.post_id
+             )
+             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
+                    u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
+                    COALESCE(pl.likes_count, 0) AS likes_count,
+                    COALESCE(pc.comments_count, 0) AS comments_count,
+                    EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cp.id AND l.user_id = ?1) AS is_liked
+             FROM candidate_posts cp
+             JOIN users u ON u.id = cp.user_id
+             LEFT JOIN post_likes pl ON pl.post_id = cp.id
+             LEFT JOIN post_comments pc ON pc.post_id = cp.id
+             LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cp.id
+             WHERE COALESCE(ui.is_hidden, 0) = 0
+             ORDER BY cp.id DESC
+             LIMIT ?2`
+          ).bind(viewerId, fetchLimit).all<any>();
 
-      posts = (postRows.results || []).map(p => ({
-        id: p.id,
-        user_id: p.user_id,
+      const rawRows = postRows.results || [];
+      hasMore = rawRows.length > safeLimit;
+      const sliced = hasMore ? rawRows.slice(0, safeLimit) : rawRows;
+      posts = sliced.map(p => ({
+        id: Number(p.id),
+        user_id: Number(p.user_id),
         image_key: p.image_key,
         caption: p.caption,
         created_at: p.created_at,
@@ -674,129 +1032,128 @@ export async function getPersonalizedExplore(
         is_liked: Boolean(p.is_liked),
         is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
+      nextCursor = hasMore && posts.length > 0 ? `r:${posts[posts.length - 1].id}` : null;
     } else if (cleanFilter === 'popular') {
-      const postRows = await env.DB.prepare(
-        `WITH candidate_posts AS (
-           SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
-           FROM posts p
-           WHERE (p.reports_count IS NULL OR p.reports_count < 5)
-           ORDER BY p.created_at DESC
-           LIMIT 300
-         ),
-         post_likes AS (
-           SELECT l.post_id, COUNT(*)::int AS likes_count
-           FROM likes l
-           JOIN candidate_posts cp ON cp.id = l.post_id
-           GROUP BY l.post_id
-         ),
-         post_comments AS (
-           SELECT c.post_id, COUNT(*)::int AS comments_count
-           FROM comments c
-           JOIN candidate_posts cp ON cp.id = c.post_id
-           GROUP BY c.post_id
-         ),
-         post_impressions AS (
-           SELECT ui.post_id, COUNT(*)::int AS total_impressions
-           FROM user_interactions ui
-           JOIN candidate_posts cp ON cp.id = ui.post_id
-           WHERE ui.impressions > 0
-           GROUP BY ui.post_id
-         )
-         SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
-                u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
-                COALESCE(pl.likes_count, 0) AS likes_count,
-                COALESCE(pc.comments_count, 0) AS comments_count,
-                EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cp.id AND l.user_id = ?1) AS is_liked,
-                (
+      const cacheKey = 'explore:popular';
+      let ranked = await recCacheGet<RankedListCacheValue>(cacheKey);
+      if (!ranked) {
+        const postRows = await env.DB.prepare(
+          `WITH candidate_posts AS (
+             SELECT p.id, p.user_id, p.created_at
+             FROM posts p
+             WHERE (p.reports_count IS NULL OR p.reports_count < 5)
+             ORDER BY p.created_at DESC
+             LIMIT 300
+           ),
+           post_likes AS (
+             SELECT l.post_id, COUNT(*)::int AS likes_count
+             FROM likes l
+             JOIN candidate_posts cp ON cp.id = l.post_id
+             GROUP BY l.post_id
+           ),
+           post_comments AS (
+             SELECT c.post_id, COUNT(*)::int AS comments_count
+             FROM comments c
+             JOIN candidate_posts cp ON cp.id = c.post_id
+             GROUP BY c.post_id
+           ),
+           post_impressions AS (
+             SELECT ui.post_id, COUNT(*)::int AS total_impressions
+             FROM user_interactions ui
+             JOIN candidate_posts cp ON cp.id = ui.post_id
+             WHERE ui.impressions > 0
+             GROUP BY ui.post_id
+           )
+           SELECT cp.id, cp.user_id,
                   (
-                    (COALESCE(pl.likes_count, 0) * 3.0 + COALESCE(pc.comments_count, 0) * 5.0) +
-                    ((COALESCE(pl.likes_count, 0) + COALESCE(pc.comments_count, 0) * 2.0 + 0.5) / (COALESCE(pi.total_impressions, 0) + 10.0)) * 25.0
-                  ) * (CASE WHEN u.is_verified = 1 THEN 1.05 ELSE 1.0 END)
-                ) AS pop_score
-         FROM candidate_posts cp
-         JOIN users u ON u.id = cp.user_id
-         LEFT JOIN post_likes pl ON pl.post_id = cp.id
-         LEFT JOIN post_comments pc ON pc.post_id = cp.id
-         LEFT JOIN post_impressions pi ON pi.post_id = cp.id
-         LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cp.id
-         WHERE COALESCE(ui.is_hidden, 0) = 0
-         ORDER BY pop_score DESC, cp.created_at DESC
-         LIMIT ?2`
-      ).bind(viewerId, safeLimit).all<any>();
+                    (
+                      (COALESCE(pl.likes_count, 0) * 3.0 + COALESCE(pc.comments_count, 0) * 5.0) +
+                      ((COALESCE(pl.likes_count, 0) + COALESCE(pc.comments_count, 0) * 2.0 + 0.5) / (COALESCE(pi.total_impressions, 0) + 10.0)) * 25.0
+                    ) * (CASE WHEN u.is_verified = 1 THEN 1.05 ELSE 1.0 END)
+                  ) AS pop_score
+           FROM candidate_posts cp
+           JOIN users u ON u.id = cp.user_id
+           LEFT JOIN post_likes pl ON pl.post_id = cp.id
+           LEFT JOIN post_comments pc ON pc.post_id = cp.id
+           LEFT JOIN post_impressions pi ON pi.post_id = cp.id
+           ORDER BY pop_score DESC, cp.created_at DESC
+           LIMIT 120`
+        ).all<{ id: number; user_id: number; pop_score: number }>();
 
-      const mapped: ExplorePost[] = (postRows.results || []).map(p => ({
-        id: p.id,
-        user_id: p.user_id,
-        image_key: p.image_key,
-        caption: p.caption,
-        created_at: p.created_at,
-        username: p.username,
-        display_name: p.display_name,
-        author_avatar_key: p.author_avatar_key,
-        likes_count: Number(p.likes_count) || 0,
-        comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked),
-        is_verified: Number(p.is_verified) === 1 ? 1 : 0
-      }));
-      posts = interleaveNoConsecutiveAuthors(mapped);
+        const interleaved = interleaveNoConsecutiveAuthors(
+          (postRows.results || []).map(r => ({ id: Number(r.id), user_id: Number(r.user_id), score: Number(r.pop_score) || 0 })),
+        );
+        ranked = {
+          items: interleaved.map(r => ({ id: r.id, score: r.score })),
+          gen: Date.now().toString(36),
+        };
+        await recCacheSet(cacheKey, ranked, TTL_POPULAR_MS);
+      }
+      const decoded = decodeCursor(cursor);
+      const offset = decoded ? decoded.offset : 0;
+      const sliceIds = ranked.items.slice(offset, offset + safeLimit).map(it => it.id);
+      posts = await hydratePostsByIds(env, sliceIds, viewerId);
+      const nextOffset = offset + sliceIds.length;
+      hasMore = sliceIds.length > 0 && nextOffset < ranked.items.length;
+      nextCursor = hasMore ? encodeCursor(nextOffset, ranked.gen) : null;
     } else {
-      const postRows = await env.DB.prepare(
-        `WITH candidate_posts AS (
-           SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
-           FROM posts p
-           JOIN post_tags pt ON pt.post_id = p.id AND LOWER(pt.tag) = LOWER(?2)
-           WHERE (p.reports_count IS NULL OR p.reports_count < 5)
-           ORDER BY p.created_at DESC
-           LIMIT 200
-         ),
-         post_likes AS (
-           SELECT l.post_id, COUNT(*)::int AS likes_count
-           FROM likes l
-           JOIN candidate_posts cp ON cp.id = l.post_id
-           GROUP BY l.post_id
-         ),
-         post_comments AS (
-           SELECT c.post_id, COUNT(*)::int AS comments_count
-           FROM comments c
-           JOIN candidate_posts cp ON cp.id = c.post_id
-           GROUP BY c.post_id
-         )
-         SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
-                u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
-                COALESCE(pl.likes_count, 0) AS likes_count,
-                COALESCE(pc.comments_count, 0) AS comments_count,
-                EXISTS(SELECT 1 FROM likes l WHERE l.post_id = cp.id AND l.user_id = ?1) AS is_liked
-         FROM candidate_posts cp
-         JOIN users u ON u.id = cp.user_id
-         LEFT JOIN post_likes pl ON pl.post_id = cp.id
-         LEFT JOIN post_comments pc ON pc.post_id = cp.id
-         LEFT JOIN user_interactions ui ON ui.user_id = ?1 AND ui.post_id = cp.id
-         WHERE COALESCE(ui.is_hidden, 0) = 0
-         ORDER BY (COALESCE(pl.likes_count, 0) * 2.0 + COALESCE(pc.comments_count, 0) * 3.5) DESC, cp.created_at DESC
-         LIMIT ?3`
-      ).bind(viewerId, cleanFilter, safeLimit).all<any>();
+      const cacheKey = `explore:tag:${cleanFilter.slice(0, 32)}`;
+      let ranked = await recCacheGet<RankedListCacheValue>(cacheKey);
+      if (!ranked) {
+        const postRows = await env.DB.prepare(
+          `WITH candidate_posts AS (
+             SELECT p.id, p.created_at
+             FROM posts p
+             JOIN post_tags pt ON pt.post_id = p.id AND LOWER(pt.tag) = LOWER(?1)
+             WHERE (p.reports_count IS NULL OR p.reports_count < 5)
+             ORDER BY p.created_at DESC
+             LIMIT 200
+           ),
+           post_likes AS (
+             SELECT l.post_id, COUNT(*)::int AS likes_count
+             FROM likes l
+             JOIN candidate_posts cp ON cp.id = l.post_id
+             GROUP BY l.post_id
+           ),
+           post_comments AS (
+             SELECT c.post_id, COUNT(*)::int AS comments_count
+             FROM comments c
+             JOIN candidate_posts cp ON cp.id = c.post_id
+             GROUP BY c.post_id
+           )
+           SELECT cp.id,
+                  (COALESCE(pl.likes_count, 0) * 2.0 + COALESCE(pc.comments_count, 0) * 3.5) AS tag_rank
+           FROM candidate_posts cp
+           LEFT JOIN post_likes pl ON pl.post_id = cp.id
+           LEFT JOIN post_comments pc ON pc.post_id = cp.id
+           ORDER BY tag_rank DESC, cp.created_at DESC
+           LIMIT 120`
+        ).bind(cleanFilter).all<{ id: number; tag_rank: number }>();
 
-      posts = (postRows.results || []).map(p => ({
-        id: p.id,
-        user_id: p.user_id,
-        image_key: p.image_key,
-        caption: p.caption,
-        created_at: p.created_at,
-        username: p.username,
-        display_name: p.display_name,
-        author_avatar_key: p.author_avatar_key,
-        likes_count: Number(p.likes_count) || 0,
-        comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked),
-        is_verified: Number(p.is_verified) === 1 ? 1 : 0
-      }));
+        ranked = {
+          items: (postRows.results || []).map(r => ({ id: Number(r.id), score: Number(r.tag_rank) || 0 })),
+          gen: Date.now().toString(36),
+        };
+        await recCacheSet(cacheKey, ranked, TTL_POPULAR_MS);
+      }
+      const decoded = decodeCursor(cursor);
+      const offset = decoded ? decoded.offset : 0;
+      const sliceIds = ranked.items.slice(offset, offset + safeLimit).map(it => it.id);
+      posts = await hydratePostsByIds(env, sliceIds, viewerId);
+      const nextOffset = offset + sliceIds.length;
+      hasMore = sliceIds.length > 0 && nextOffset < ranked.items.length;
+      nextCursor = hasMore ? encodeCursor(nextOffset, ranked.gen) : null;
     }
   } catch { }
 
-  return { posts, tags, activeTag: cleanFilter };
+  return { posts, tags, activeTag: cleanFilter, next_cursor: nextCursor, has_more: hasMore };
 }
 
 export async function getPopularExploreTags(env: Env, limit: number = 10): Promise<string[]> {
+  const safeLimit = Math.max(1, Math.min(30, Number(limit) || 10));
+  const cacheKey = `explore:tags:${safeLimit}`;
+  const cached = await recCacheGet<string[]>(cacheKey);
+  if (cached) return cached;
   try {
     const rows = await env.DB.prepare(
       `SELECT LOWER(tag) AS tag, COUNT(*) AS cnt
@@ -804,8 +1161,10 @@ export async function getPopularExploreTags(env: Env, limit: number = 10): Promi
        GROUP BY LOWER(tag)
        ORDER BY cnt DESC, LOWER(tag) ASC
        LIMIT ?`
-    ).bind(limit).all<{ tag: string }>();
-    return (rows.results || []).map(r => r.tag);
+    ).bind(safeLimit).all<{ tag: string }>();
+    const tags = (rows.results || []).map(r => r.tag);
+    await recCacheSet(cacheKey, tags, TTL_TAGS_MS);
+    return tags;
   } catch {
     return [];
   }
@@ -911,63 +1270,89 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
 export async function getRecommendedUsers(env: Env, viewerId: number, limit: number = 8): Promise<ExploreUser[]> {
   try {
     const safeLimit = Math.max(1, Math.min(20, Number(limit) || 8));
-    const rows = await env.DB.prepare(
-      `WITH fof AS (
-         SELECT f2.following_id AS uid, COUNT(*)::int AS mutual_cnt
-         FROM follows f1
-         JOIN follows f2 ON f2.follower_id = f1.following_id
-         WHERE f1.follower_id = ?1
-         GROUP BY f2.following_id
-       ),
-       author_tag_match AS (
-         SELECT p.user_id AS uid,
-                SUM(uta.score / (1.0 + GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - uta.updated_at)) / 86400.0) / 14.0)) AS tag_match
-         FROM post_tags pt
-         JOIN posts p ON p.id = pt.post_id
-         JOIN user_tag_affinity uta ON uta.user_id = ?1 AND LOWER(uta.tag) = LOWER(pt.tag)
-         WHERE p.user_id != ?1
-         GROUP BY p.user_id
-       ),
-       follower_counts AS (
-         SELECT following_id AS uid, COUNT(*)::int AS cnt
-         FROM follows
-         GROUP BY following_id
-       ),
-       recent_posts AS (
-         SELECT user_id AS uid, COUNT(*)::int AS cnt
-         FROM posts
-         WHERE created_at >= NOW() - INTERVAL '72 hours'
-         GROUP BY user_id
-       ),
-       candidate_users AS (
-         SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
-                (
-                  COALESCE(fof.mutual_cnt, 0) * 6.0 +
-                  COALESCE(ua.affinity_score / (1.0 + GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - ua.updated_at)) / 86400.0) / 14.0), 0.0) * 3.0 +
-                  COALESCE(atm.tag_match, 0.0) * 1.5 +
-                  COALESCE(fc.cnt, 0) * 0.4 +
-                  COALESCE(rp.cnt, 0) * 3.0 +
-                  (CASE WHEN u.is_verified = 1 THEN 0.15 ELSE 0.0 END)
-                ) AS rec_score
-         FROM users u
-         LEFT JOIN fof ON fof.uid = u.id
-         LEFT JOIN author_tag_match atm ON atm.uid = u.id
-         LEFT JOIN follower_counts fc ON fc.uid = u.id
-         LEFT JOIN recent_posts rp ON rp.uid = u.id
-         LEFT JOIN user_affinity ua ON ua.user_id = ?1 AND ua.author_id = u.id
-         WHERE u.id != ?1
-           AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ?1 AND f.following_id = u.id)
-       )
-       SELECT id, username, display_name, avatar_key, is_verified
-       FROM candidate_users
-       ORDER BY rec_score DESC, id DESC
-       LIMIT ?2`
-    ).bind(viewerId, safeLimit).all<ExploreUser>();
+    const cacheKey = `recusers:u:${viewerId}`;
+    let rankedIds = await recCacheGet<number[]>(cacheKey);
+    if (!rankedIds) {
+      const rows = await env.DB.prepare(
+        `WITH fof AS (
+           SELECT f2.following_id AS uid, COUNT(*)::int AS mutual_cnt
+           FROM follows f1
+           JOIN follows f2 ON f2.follower_id = f1.following_id
+           WHERE f1.follower_id = ?1
+           GROUP BY f2.following_id
+         ),
+         author_tag_match AS (
+           SELECT p.user_id AS uid,
+                  SUM(uta.score / (1.0 + GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - uta.updated_at)) / 86400.0) / 14.0)) AS tag_match
+           FROM post_tags pt
+           JOIN posts p ON p.id = pt.post_id
+           JOIN user_tag_affinity uta ON uta.user_id = ?1 AND LOWER(uta.tag) = LOWER(pt.tag)
+           WHERE p.user_id != ?1
+           GROUP BY p.user_id
+         ),
+         follower_counts AS (
+           SELECT following_id AS uid, COUNT(*)::int AS cnt
+           FROM follows
+           GROUP BY following_id
+         ),
+         recent_posts AS (
+           SELECT user_id AS uid, COUNT(*)::int AS cnt
+           FROM posts
+           WHERE created_at >= NOW() - INTERVAL '72 hours'
+           GROUP BY user_id
+         ),
+         candidate_users AS (
+           SELECT u.id,
+                  (
+                    COALESCE(fof.mutual_cnt, 0) * 6.0 +
+                    COALESCE(ua.affinity_score / (1.0 + GREATEST(0.0, EXTRACT(EPOCH FROM (NOW() - ua.updated_at)) / 86400.0) / 14.0), 0.0) * 3.0 +
+                    COALESCE(atm.tag_match, 0.0) * 1.5 +
+                    COALESCE(fc.cnt, 0) * 0.4 +
+                    COALESCE(rp.cnt, 0) * 3.0 +
+                    (CASE WHEN u.is_verified = 1 THEN 0.15 ELSE 0.0 END)
+                  ) AS rec_score
+           FROM users u
+           LEFT JOIN fof ON fof.uid = u.id
+           LEFT JOIN author_tag_match atm ON atm.uid = u.id
+           LEFT JOIN follower_counts fc ON fc.uid = u.id
+           LEFT JOIN recent_posts rp ON rp.uid = u.id
+           LEFT JOIN user_affinity ua ON ua.user_id = ?1 AND ua.author_id = u.id
+           WHERE u.id != ?1
+             AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ?1 AND f.following_id = u.id)
+         )
+         SELECT id
+         FROM candidate_users
+         ORDER BY rec_score DESC, id DESC
+         LIMIT 20`
+      ).bind(viewerId).all<{ id: number }>();
 
-    return (rows.results || []).map(u => ({
-      ...u,
-      is_verified: Number(u.is_verified) === 1 ? 1 : 0
-    }));
+      rankedIds = (rows.results || []).map(r => Number(r.id)).filter(id => id > 0);
+      await recCacheSet(cacheKey, rankedIds, TTL_PERSONAL_MS);
+    }
+
+    if (rankedIds.length === 0) return [];
+    const placeholders = rankedIds.map((_, idx) => `?${idx + 2}`).join(', ');
+    const hydrated = await env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified
+       FROM users u
+       WHERE u.id IN (${placeholders})
+         AND u.id != ?1
+         AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ?1 AND f.following_id = u.id)`
+    ).bind(viewerId, ...rankedIds).all<ExploreUser>();
+
+    const byId = new Map<number, ExploreUser>();
+    for (const u of hydrated.results || []) {
+      byId.set(Number(u.id), { ...u, id: Number(u.id), is_verified: Number(u.is_verified) === 1 ? 1 : 0 });
+    }
+    const out: ExploreUser[] = [];
+    for (const id of rankedIds) {
+      const u = byId.get(id);
+      if (u) {
+        out.push(u);
+        if (out.length >= safeLimit) break;
+      }
+    }
+    return out;
   } catch {
     return [];
   }
@@ -976,79 +1361,110 @@ export async function getRecommendedUsers(env: Env, viewerId: number, limit: num
 export async function getSimilarAuthors(env: Env, targetAuthorId: number, viewerId: number, limit: number = 6): Promise<ExploreUser[]> {
   try {
     const safeLimit = Math.max(1, Math.min(20, Number(limit) || 6));
-    const rows = await env.DB.prepare(
-      `WITH target_followers AS (
-         SELECT follower_id FROM follows WHERE following_id = ?1
-       ),
-       co_following AS (
-         SELECT f.following_id AS uid, COUNT(*)::int AS shared_followers
-         FROM follows f
-         JOIN target_followers tf ON tf.follower_id = f.follower_id
-         WHERE f.following_id != ?1
-         GROUP BY f.following_id
-       ),
-       target_tags AS (
-         SELECT DISTINCT LOWER(pt.tag) AS tag
-         FROM post_tags pt
-         JOIN posts p ON p.id = pt.post_id
-         WHERE p.user_id = ?1
-       ),
-       tag_overlap AS (
-         SELECT p.user_id AS uid, COUNT(DISTINCT LOWER(pt.tag))::int AS shared_tags
-         FROM posts p
-         JOIN post_tags pt ON pt.post_id = p.id
-         JOIN target_tags tt ON tt.tag = LOWER(pt.tag)
-         WHERE p.user_id != ?1
-         GROUP BY p.user_id
-       ),
-       target_likers AS (
-         SELECT DISTINCT l.user_id
-         FROM likes l
-         JOIN posts p ON p.id = l.post_id
-         WHERE p.user_id = ?1 AND l.created_at >= NOW() - INTERVAL '30 days'
-         LIMIT 200
-       ),
-       co_likers AS (
-         SELECT p.user_id AS uid, COUNT(DISTINCT l.user_id)::int AS shared_likers
-         FROM likes l
-         JOIN target_likers tl ON tl.user_id = l.user_id
-         JOIN posts p ON p.id = l.post_id
-         WHERE p.user_id != ?1 AND l.created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY p.user_id
-       ),
-       similar_candidates AS (
-         SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
-                (
-                  COALESCE(cf.shared_followers, 0) * 5.0 +
-                  COALESCE(to2.shared_tags, 0) * 3.5 +
-                  COALESCE(cl.shared_likers, 0) * 2.5 +
-                  (CASE WHEN u.is_verified = 1 THEN 0.15 ELSE 0.0 END)
-                ) AS sim_score
-         FROM users u
-         LEFT JOIN co_following cf ON cf.uid = u.id
-         LEFT JOIN tag_overlap to2 ON to2.uid = u.id
-         LEFT JOIN co_likers cl ON cl.uid = u.id
-         WHERE u.id != ?1
-           AND u.id != ?2
-           AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ?2 AND f.following_id = u.id)
-       )
-       SELECT id, username, display_name, avatar_key, is_verified
-       FROM similar_candidates
-       WHERE sim_score > 0
-       ORDER BY sim_score DESC, id DESC
-       LIMIT ?3`
-    ).bind(targetAuthorId, viewerId, safeLimit).all<ExploreUser>();
+    const cacheKey = `similar:a:${targetAuthorId}`;
+    let rankedIds = await recCacheGet<number[]>(cacheKey);
+    if (!rankedIds) {
+      const rows = await env.DB.prepare(
+        `WITH target_followers AS (
+           SELECT follower_id FROM follows WHERE following_id = ?1
+         ),
+         co_following AS (
+           SELECT f.following_id AS uid, COUNT(*)::int AS shared_followers
+           FROM follows f
+           JOIN target_followers tf ON tf.follower_id = f.follower_id
+           WHERE f.following_id != ?1
+           GROUP BY f.following_id
+         ),
+         target_tags AS (
+           SELECT DISTINCT LOWER(pt.tag) AS tag
+           FROM post_tags pt
+           JOIN posts p ON p.id = pt.post_id
+           WHERE p.user_id = ?1
+         ),
+         tag_overlap AS (
+           SELECT p.user_id AS uid, COUNT(DISTINCT LOWER(pt.tag))::int AS shared_tags
+           FROM posts p
+           JOIN post_tags pt ON pt.post_id = p.id
+           JOIN target_tags tt ON tt.tag = LOWER(pt.tag)
+           WHERE p.user_id != ?1
+           GROUP BY p.user_id
+         ),
+         target_likers AS (
+           SELECT DISTINCT l.user_id
+           FROM likes l
+           JOIN posts p ON p.id = l.post_id
+           WHERE p.user_id = ?1 AND l.created_at >= NOW() - INTERVAL '30 days'
+           LIMIT 200
+         ),
+         co_likers AS (
+           SELECT p.user_id AS uid, COUNT(DISTINCT l.user_id)::int AS shared_likers
+           FROM likes l
+           JOIN target_likers tl ON tl.user_id = l.user_id
+           JOIN posts p ON p.id = l.post_id
+           WHERE p.user_id != ?1 AND l.created_at >= NOW() - INTERVAL '30 days'
+           GROUP BY p.user_id
+         ),
+         similar_candidates AS (
+           SELECT u.id,
+                  (
+                    COALESCE(cf.shared_followers, 0) * 5.0 +
+                    COALESCE(to2.shared_tags, 0) * 3.5 +
+                    COALESCE(cl.shared_likers, 0) * 2.5 +
+                    (CASE WHEN u.is_verified = 1 THEN 0.15 ELSE 0.0 END)
+                  ) AS sim_score
+           FROM users u
+           LEFT JOIN co_following cf ON cf.uid = u.id
+           LEFT JOIN tag_overlap to2 ON to2.uid = u.id
+           LEFT JOIN co_likers cl ON cl.uid = u.id
+           WHERE u.id != ?1
+         )
+         SELECT id
+         FROM similar_candidates
+         WHERE sim_score > 0
+         ORDER BY sim_score DESC, id DESC
+         LIMIT 25`
+      ).bind(targetAuthorId).all<{ id: number }>();
 
-    return (rows.results || []).map(u => ({
-      ...u,
-      is_verified: Number(u.is_verified) === 1 ? 1 : 0
-    }));
+      rankedIds = (rows.results || []).map(r => Number(r.id)).filter(id => id > 0);
+      await recCacheSet(cacheKey, rankedIds, TTL_SIMILAR_MS);
+    }
+
+    const filteredIds = rankedIds.filter(id => id !== targetAuthorId && id !== viewerId);
+    if (filteredIds.length === 0) return [];
+    const placeholders = filteredIds.map((_, idx) => `?${idx + 2}`).join(', ');
+    const hydrated = viewerId > 0
+      ? await env.DB.prepare(
+          `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified
+           FROM users u
+           WHERE u.id IN (${placeholders})
+             AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ?1 AND f.following_id = u.id)`
+        ).bind(viewerId, ...filteredIds).all<ExploreUser>()
+      : await env.DB.prepare(
+          `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified
+           FROM users u
+           WHERE u.id IN (${placeholders})`
+        ).bind(...filteredIds).all<ExploreUser>();
+
+    const byId = new Map<number, ExploreUser>();
+    for (const u of hydrated.results || []) {
+      byId.set(Number(u.id), { ...u, id: Number(u.id), is_verified: Number(u.is_verified) === 1 ? 1 : 0 });
+    }
+    const out: ExploreUser[] = [];
+    for (const id of filteredIds) {
+      const u = byId.get(id);
+      if (u) {
+        out.push(u);
+        if (out.length >= safeLimit) break;
+      }
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
 export interface TelemetryEvent {
+  event_id?: string;
   type: 'impression' | 'dwell' | 'skip' | 'post_open' | 'profile_visit' | 'comment_open';
   post_id?: number;
   author_id?: number;
@@ -1092,12 +1508,19 @@ export async function handleTelemetryBatch(
   const seenEventKeys = new Set<string>();
   const postIdSet = new Set<number>();
   const profileAuthorIdSet = new Set<number>();
+  const nowMs = Date.now();
 
   for (const item of slice) {
     if (!item || typeof item !== 'object') continue;
     const raw = item as Record<string, unknown>;
     const evType = typeof raw.type === 'string' ? raw.type : '';
     if (!ALLOWED_TELEMETRY_TYPES.has(evType)) continue;
+
+    let cleanEventId: string | undefined;
+    if (raw.event_id !== undefined && raw.event_id !== null && raw.event_id !== '') {
+      if (typeof raw.event_id !== 'string' || !TELEMETRY_EVENT_ID_RE.test(raw.event_id)) continue;
+      cleanEventId = raw.event_id;
+    }
 
     const type = evType as TelemetryEvent['type'];
     const rawPostId = typeof raw.post_id === 'number' ? raw.post_id : Number(raw.post_id);
@@ -1119,6 +1542,7 @@ export async function handleTelemetryBatch(
 
     const dedupeKey = `${type}:${hasValidPostId ? rawPostId : 0}:${hasValidAuthorId ? rawAuthorId : 0}`;
     if (seenEventKeys.has(dedupeKey)) continue;
+    if (cleanEventId && hasOrRememberTelemetryEventId(userId, cleanEventId, nowMs)) continue;
     seenEventKeys.add(dedupeKey);
 
     if (hasValidPostId) postIdSet.add(rawPostId);
@@ -1127,6 +1551,7 @@ export async function handleTelemetryBatch(
     }
 
     validEvents.push({
+      event_id: cleanEventId,
       type,
       post_id: hasValidPostId ? rawPostId : undefined,
       author_id: hasValidAuthorId ? rawAuthorId : undefined,

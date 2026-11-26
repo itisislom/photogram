@@ -1,5 +1,6 @@
 node_modules/
 dist/
+workers/realtime/dist/
 .wrangler/
 .agents/
 scratch/

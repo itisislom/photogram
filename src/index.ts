@@ -15,6 +15,7 @@ import {
   handleUnreadNotifications,
   handleToggleNotificationsSetting,
 } from './notifications';
+import { handleRealtimeWs } from './realtime';
 import {
   handleGetVapidKey,
   handlePushSubscribe,
@@ -55,6 +56,7 @@ import { ICON_SVG, getIconJpgBytes, getManifestJson, SW_JS } from './assets';
 import { detectLanguage, getTranslations, normalizeLang } from './languages';
 import {
   getPersonalizedFeed,
+  getPersonalizedFeedPage,
   getPersonalizedExplore,
   getRelatedPosts,
   getRecommendedUsers,
@@ -79,21 +81,21 @@ function safeDecode(raw: string): string | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const activeEnv = env.DATABASE_URL
       ? { ...env, DB: createPostgresClient(env.DATABASE_URL) }
       : env;
     const url = new URL(request.url);
     const isMedia = url.pathname.startsWith('/media/');
     try {
-      const response = await handleRequest(request, activeEnv, url);
-      return withSecurityHeaders(response, isMedia);
+      const response = await handleRequest(request, activeEnv, url, ctx);
+      return withSecurityHeaders(response, isMedia, url);
     } catch (err: any) {
       console.error(err);
       return withSecurityHeaders(new Response('Internal Server Error', {
         status: 500,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-      }), isMedia);
+      }), isMedia, url);
     }
   },
 };
@@ -125,7 +127,7 @@ function detectTimeZone(request: Request, cookieHeader: string): string {
   return 'UTC';
 }
 
-async function handleRequest(request: Request, env: Env, url: URL): Promise<Response> {
+async function handleRequest(request: Request, env: Env, url: URL, ctx?: ExecutionContext): Promise<Response> {
   const pathname = url.pathname;
   const method = request.method;
   const isHttps = url.protocol === 'https:' || !['localhost', '127.0.0.1'].includes(url.hostname);
@@ -399,25 +401,88 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
         if (!allowed) return new Response('Forbidden', { status: 403 });
       }
 
-      const object = await env.STORAGE.get(key);
+      const rawVariant = url.searchParams.get('v');
+      const variant =
+        !isDmMedia &&
+        (rawVariant === 'thumb' || rawVariant === 'full') &&
+        key.startsWith('posts/') &&
+        key.endsWith('.webp') &&
+        !key.endsWith('_thumb.webp') &&
+        !key.endsWith('_full.webp')
+          ? rawVariant
+          : null;
+      const resolvedKey = variant ? `${key.slice(0, -5)}_${variant}.webp` : key;
+      const isDownload = url.searchParams.get('download') === '1' && key.startsWith('posts/');
+      const ifNoneMatch = request.headers.get('If-None-Match');
+
+      const edgeCache = !isDmMedia
+        ? (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default || null
+        : null;
+      const edgeCacheUrl = `https://media-cache.photogram.internal/${encodeURIComponent(resolvedKey)}?dl=${isDownload ? '1' : '0'}`;
+
+      if (edgeCache && method === 'GET') {
+        try {
+          const cachedRes = await edgeCache.match(edgeCacheUrl);
+          if (cachedRes) {
+            const cachedEtag = cachedRes.headers.get('etag');
+            if (ifNoneMatch && cachedEtag && ifNoneMatch === cachedEtag) {
+              return new Response(null, { status: 304, headers: cachedRes.headers });
+            }
+            return cachedRes;
+          }
+        } catch {}
+      }
+
+      let object = await env.STORAGE.get(resolvedKey);
+      if (!object && variant) {
+        object = await env.STORAGE.get(key);
+      }
       if (!object) return new Response('Not Found', { status: 404 });
 
       const headers = new Headers();
       object.writeHttpMetadata(headers);
-      headers.set('etag', object.httpEtag);
-      headers.set('Cache-Control', isDmMedia ? 'private, no-store' : 'public, max-age=31536000, immutable');
+      if (object.httpEtag) {
+        headers.set('etag', object.httpEtag);
+      }
+      if (isDmMedia) {
+        headers.set('Cache-Control', 'private, no-store');
+        headers.set('CDN-Cache-Control', 'private, no-store');
+        headers.set('Vary', 'Cookie');
+      } else {
+        headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+        headers.set('CDN-Cache-Control', 'public, max-age=31536000, immutable');
+      }
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Content-Security-Policy', "default-src 'none'");
       if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/octet-stream');
       }
-      if (url.searchParams.get('download') === '1' && key.startsWith('posts/')) {
+      if (isDownload) {
         const ct = (headers.get('Content-Type') || '').toLowerCase();
         const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : ct.includes('gif') ? 'gif' : 'jpg';
         headers.set('Content-Disposition', `attachment; filename="photogram-photo.${ext}"`);
       }
 
-      return new Response(object.body, { headers });
+      if (!isDmMedia && ifNoneMatch && object.httpEtag && ifNoneMatch === object.httpEtag) {
+        return new Response(null, { status: 304, headers });
+      }
+
+      if (method === 'HEAD') {
+        return new Response(null, { headers });
+      }
+
+      const response = new Response(object.body, { headers });
+      if (edgeCache) {
+        try {
+          const putTask = edgeCache.put(edgeCacheUrl, response.clone()).catch(() => {});
+          if (ctx && typeof ctx.waitUntil === 'function') {
+            ctx.waitUntil(putTask);
+          } else {
+            void putTask;
+          }
+        } catch {}
+      }
+      return response;
     }
 
     if (pathname === '/api/auth/login' && method === 'POST') {
@@ -497,26 +562,50 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       );
     }
 
+    if (pathname === '/api/recommendations/feed' && method === 'GET') {
+      const user = await getUserFromRequest(env, request);
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+        });
+      }
+      const allowed = await consumeRateLimitAtomic(env, `feed:user:${user.id}`, 60, 60);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+        });
+      }
+      const cursor = url.searchParams.get('cursor') || undefined;
+      const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+      const data = await getPersonalizedFeedPage(env, user.id, cursor, limit);
+      return new Response(JSON.stringify(data), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+      });
+    }
+
     if (pathname === '/api/recommendations/explore' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
           status: 401,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
         });
       }
-      const allowed = await consumeRateLimitAtomic(env, `explore:user:${user.id}`, 40, 60);
+      const allowed = await consumeRateLimitAtomic(env, `explore:user:${user.id}`, 60, 60);
       if (!allowed) {
         return new Response(JSON.stringify({ error: 'Too many requests' }), {
           status: 429,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
         });
       }
       const tag = (url.searchParams.get('tag') || 'all').slice(0, 40);
-      const limit = parseInt(url.searchParams.get('limit') || '36', 10);
-      const data = await getPersonalizedExplore(env, user.id, tag, limit);
+      const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+      const cursor = url.searchParams.get('cursor') || undefined;
+      const data = await getPersonalizedExplore(env, user.id, tag, limit, cursor);
       return new Response(JSON.stringify(data), {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
       });
     }
 
@@ -601,6 +690,10 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       return handleToggleCommentLike(request, env);
     }
 
+    if (pathname === '/api/realtime/ws' && method === 'GET') {
+      return handleRealtimeWs(request, env, url);
+    }
+
     if (pathname === '/api/messages/conversations' && method === 'GET') {
       return handleGetConversations(request, env);
     }
@@ -618,27 +711,27 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
     }
 
     if (pathname === '/api/messages/send' && method === 'POST') {
-      return handleSendMessage(request, env);
+      return handleSendMessage(request, env, ctx);
     }
 
     if (pathname === '/api/messages/read' && method === 'POST') {
-      return handleMarkRead(request, env);
+      return handleMarkRead(request, env, ctx);
     }
 
     if (pathname === '/api/messages/delete' && method === 'POST') {
-      return handleDeleteMessage(request, env);
+      return handleDeleteMessage(request, env, ctx);
     }
 
     if (pathname === '/api/messages/conversation/delete' && method === 'POST') {
-      return handleDeleteConversation(request, env);
+      return handleDeleteConversation(request, env, ctx);
     }
 
     if (pathname === '/api/messages/react' && method === 'POST') {
-      return handleToggleReaction(request, env);
+      return handleToggleReaction(request, env, ctx);
     }
 
     if (pathname === '/api/messages/edit' && method === 'POST') {
-      return handleEditMessage(request, env);
+      return handleEditMessage(request, env, ctx);
     }
 
     if (pathname === '/api/messages/unread' && method === 'GET') {
@@ -715,7 +808,10 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
     return new Response('Not Found', { status: 404 });
 }
 
-function withSecurityHeaders(response: Response, isMedia = false): Response {
+function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Response {
+  if (response.status === 101 || Boolean((response as Response & { webSocket?: unknown }).webSocket)) {
+    return response;
+  }
   const headers = new Headers(response.headers);
   headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   headers.set('X-Content-Type-Options', 'nosniff');
@@ -726,9 +822,11 @@ function withSecurityHeaders(response: Response, isMedia = false): Response {
   if (isMedia) {
     headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   } else {
+    const wsScheme = url && url.protocol === 'http:' ? 'ws:' : 'wss:';
+    const wsOrigin = url ? ` ${wsScheme}//${url.host}` : '';
     headers.set(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'${wsOrigin}; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
     );
   }
 

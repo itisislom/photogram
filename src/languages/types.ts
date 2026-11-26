@@ -261,6 +261,7 @@ export interface Translations {
     e2eePartnerNotReady: string;
     e2eeDecryptFailed: string;
     e2eeInitializing: string;
+    typing: string;
   };
 
   notifications: {

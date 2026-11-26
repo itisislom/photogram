@@ -449,32 +449,14 @@ export function publishPostPage(
     cropViewport.addEventListener('touchcancel', handleTouchEnd);
   }
 
-  function getCroppedBlob() {
+  function renderCroppedBlob(sx, sy, cropSize, targetMax, mime, quality) {
     return new Promise(function(resolve, reject) {
-      if (!loadedImg || !viewportSize) return reject(new Error('No image'));
-      var natW = loadedImg.naturalWidth;
-      var natH = loadedImg.naturalHeight;
-      var dispW = natW * baseScale * zoom;
-      var scale = natW / dispW;
-
-      var sx = (-currentX) * scale;
-      var sy = (-currentY) * scale;
-      var sw = viewportSize * scale;
-      var sh = viewportSize * scale;
-
-      if (sx < 0) sx = 0;
-      if (sy < 0) sy = 0;
-      if (sx + sw > natW) sw = natW - sx;
-      if (sy + sh > natH) sh = natH - sy;
-
-      var cropSize = Math.round(Math.min(sw, sh));
-      var outSize = Math.min(1080, cropSize);
-      if (outSize < 1) outSize = cropSize;
-
+      var outSize = Math.max(1, Math.min(targetMax, cropSize));
       var canvas = document.createElement('canvas');
       canvas.width = outSize;
       canvas.height = outSize;
       var ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('Canvas error'));
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(loadedImg, sx, sy, cropSize, cropSize, 0, 0, outSize, outSize);
@@ -482,8 +464,48 @@ export function publishPostPage(
       canvas.toBlob(function(blob) {
         if (!blob) return reject(new Error('Canvas error'));
         resolve(blob);
-      }, 'image/jpeg', 0.9);
+      }, mime, quality);
     });
+  }
+
+  async function getCroppedVariants() {
+    if (!loadedImg || !viewportSize) throw new Error('No image');
+    var natW = loadedImg.naturalWidth;
+    var natH = loadedImg.naturalHeight;
+    var dispW = natW * baseScale * zoom;
+    var scale = natW / dispW;
+
+    var sx = (-currentX) * scale;
+    var sy = (-currentY) * scale;
+    var sw = viewportSize * scale;
+    var sh = viewportSize * scale;
+
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+    if (sx + sw > natW) sw = natW - sx;
+    if (sy + sh > natH) sh = natH - sy;
+
+    var cropSize = Math.max(1, Math.round(Math.min(sw, sh)));
+    var feedBlob = await renderCroppedBlob(sx, sy, cropSize, 1080, 'image/webp', 0.82);
+
+    if (feedBlob && feedBlob.type === 'image/webp') {
+      var thumbBlob = await renderCroppedBlob(sx, sy, cropSize, 320, 'image/webp', 0.78);
+      var fullBlob = await renderCroppedBlob(sx, sy, cropSize, 1920, 'image/webp', 0.86);
+      return {
+        feed: feedBlob,
+        feedName: 'post.webp',
+        thumb: thumbBlob && thumbBlob.type === 'image/webp' ? thumbBlob : null,
+        full: fullBlob && fullBlob.type === 'image/webp' ? fullBlob : null
+      };
+    }
+
+    var fallbackBlob = await renderCroppedBlob(sx, sy, cropSize, 1080, 'image/jpeg', 0.88);
+    return {
+      feed: fallbackBlob,
+      feedName: 'post.jpg',
+      thumb: null,
+      full: null
+    };
   }
 
   if (form) {
@@ -500,9 +522,9 @@ export function publishPostPage(
       }
       hideError();
 
-      var blob;
+      var variants;
       try {
-        blob = await getCroppedBlob();
+        variants = await getCroppedVariants();
       } catch (cropErr) {
         isSubmitting = false;
         if (submitBtn) {
@@ -516,7 +538,9 @@ export function publishPostPage(
       }
 
       var fd = new FormData();
-      fd.append('image', blob, 'post.jpg');
+      fd.append('image', variants.feed, variants.feedName);
+      if (variants.thumb) fd.append('image_thumb', variants.thumb, 'post_thumb.webp');
+      if (variants.full) fd.append('image_full', variants.full, 'post_full.webp');
       fd.append('caption', captionInput ? captionInput.value : '');
 
       try {

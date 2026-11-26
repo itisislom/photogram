@@ -289,6 +289,7 @@ export const kz: Translations = {
     photoLabel: 'Фото',
     youPrefix: 'Сіз: ',
     seen: 'Қаралды',
+    typing: 'жазып жатыр...',
     unsend: 'Жіберуді болдырмау',
     unsendConfirmTitle: 'Хабарламаны жою?',
     unsendConfirmDesc: 'Хабарлама екі қатысушы үшін де жойылады.',

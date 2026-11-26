@@ -5144,6 +5144,11 @@ body.dm-lock-scroll {
   text-overflow: ellipsis;
 }
 
+.dm-thread-display.is-typing {
+  color: var(--accent, #29B6F6);
+  font-weight: 500;
+}
+
 .dm-messages-scroll {
   flex: 1;
   min-height: 0;

@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database | PostgresDb;
   STORAGE: R2Bucket;
   ASSETS?: { fetch(request: Request | string): Promise<Response> };
+  REALTIME_HUB?: DurableObjectNamespace;
   DATABASE_URL?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;

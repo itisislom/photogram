@@ -636,46 +636,45 @@ export class E2eeClient {
       plaintextBytes.byteOffset + plaintextBytes.byteLength,
     ) as ArrayBuffer;
 
-    const [partnerIdRes, selfIdRes] = await Promise.all([
-      this.fetchImpl(`/api/e2ee/keys/identities?user_id=${opts.partnerUserId}`, {
+    const idRes = await this.fetchImpl(
+      `/api/e2ee/keys/identities?user_id=${opts.partnerUserId}&include_self=1`,
+      {
         credentials: 'same-origin',
         cache: 'no-store',
-      }),
-      this.fetchImpl(`/api/e2ee/keys/identities?user_id=${this.userId}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      }),
-    ]);
+      },
+    );
 
-    if (!partnerIdRes.ok) {
+    if (!idRes.ok) {
       throw Object.assign(new Error('Key lookup failed'), { code: 'NETWORK' });
     }
 
-    const partnerIdsData = (await partnerIdRes.json()) as {
+    const idsData = (await idRes.json()) as {
       devices?: Array<{ device_id: number; identity_key_pub: string }>;
+      self_devices?: Array<{ device_id: number; identity_key_pub: string }>;
     };
-    const selfIdsData = selfIdRes.ok
-      ? ((await selfIdRes.json()) as {
-          devices?: Array<{ device_id: number; identity_key_pub: string }>;
-        })
-      : { devices: [] };
 
-    const partnerDevs = partnerIdsData.devices || [];
+    const partnerDevs = idsData.devices || [];
+    const selfDevs = Array.isArray(idsData.self_devices) ? idsData.self_devices : [];
+
     if (partnerDevs.length === 0) {
       throw Object.assign(new Error('Partner has no E2EE keys'), { code: 'PARTNER_NOT_READY' });
     }
+
+    const pendingKeyChanges: Array<{ userId: number; deviceId: number; identityKey: string }> = [];
+    const pendingKeySet = new Set<string>();
+    const addPendingKeyChange = (userId: number, deviceId: number, identityKey: string) => {
+      const k = `${userId}:${deviceId}`;
+      if (pendingKeySet.has(k)) return;
+      pendingKeySet.add(k);
+      pendingKeyChanges.push({ userId, deviceId, identityKey });
+    };
 
     const knownPartnerDevs = await this.store.getKnownDevices(opts.partnerUserId);
     if (knownPartnerDevs.length > 0) {
       for (const pd of partnerDevs) {
         const pdId = Number(pd.device_id);
         if (!knownPartnerDevs.includes(pdId)) {
-          throw Object.assign(new Error('New device detected'), {
-            code: 'KEY_CHANGED',
-            userId: opts.partnerUserId,
-            deviceId: pdId,
-            identityKey: pd.identity_key_pub,
-          });
+          addPendingKeyChange(opts.partnerUserId, pdId, pd.identity_key_pub);
         }
       }
     } else {
@@ -685,7 +684,7 @@ export class E2eeClient {
       );
     }
 
-    const selfOtherDevs = (selfIdsData.devices || []).filter(
+    const selfOtherDevs = selfDevs.filter(
       (d) => Number(d.device_id) !== Number(myDeviceId),
     );
 
@@ -707,18 +706,25 @@ export class E2eeClient {
       const addr = makeDeviceAddress(target.userId, target.deviceId);
       const trustedB64 = await this.store.getTrustedIdentityB64(addr.getName());
       if (trustedB64 && trustedB64 !== target.identityKeyPub) {
-        throw Object.assign(new Error('Identity key changed'), {
-          code: 'KEY_CHANGED',
-          userId: target.userId,
-          deviceId: target.deviceId,
-          identityKey: target.identityKeyPub,
-        });
+        addPendingKeyChange(target.userId, target.deviceId, target.identityKeyPub);
+        continue;
       }
       const cipher = new SessionCipher(this.store, addr);
       const hasSession = await cipher.hasOpenSession();
       if (!hasSession) {
         needSessionKeys.add(`${target.userId}:${target.deviceId}`);
       }
+    }
+
+    if (pendingKeyChanges.length > 0) {
+      const first = pendingKeyChanges[0];
+      throw Object.assign(new Error('Identity key changed'), {
+        code: 'KEY_CHANGED',
+        userId: first.userId,
+        deviceId: first.deviceId,
+        identityKey: first.identityKey,
+        devices: pendingKeyChanges,
+      });
     }
 
     if (needSessionKeys.size > 0) {
@@ -1071,6 +1077,20 @@ export class E2eeClient {
       await this.store.setKnownDevices(targetUserId, [...known, targetDeviceId]);
     }
     await this.store.removeSession(addr.toString());
+  }
+
+  async acceptKeyChanges(
+    items: Array<{ userId: number; deviceId: number; identityKey: string }>,
+  ): Promise<void> {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (!item || !item.userId || !item.deviceId) continue;
+      await this.acceptKeyChange(
+        Number(item.userId),
+        Number(item.deviceId),
+        String(item.identityKey || ''),
+      );
+    }
   }
 
   async unregisterDevice(): Promise<void> {

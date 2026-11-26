@@ -1,5 +1,5 @@
 import { ExploreData, User } from '../types';
-import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
@@ -50,7 +50,7 @@ function formatPostDateTime(dateStr: string, t: Translations): string {
 }
 
 export function explorePage(
-  data: { posts: any[]; tags?: string[]; activeTag?: string } | ExploreData,
+  data: { posts: any[]; tags?: string[]; activeTag?: string; next_cursor?: string | null; has_more?: boolean } | ExploreData,
   currentUser: User,
   t: Translations = ru,
   theme?: string,
@@ -59,6 +59,8 @@ export function explorePage(
   const postList = data.posts || [];
   const tagsList = (data as any).tags || [];
   const activeTag = ((data as any).activeTag || 'all').toLowerCase().trim();
+  const initialCursor = (data as any).next_cursor || null;
+  const initialHasMore = Boolean((data as any).has_more && initialCursor);
 
   const tagsPillsHtml = `
   <div class="explore-tags-wrap" id="exploreTagsBar">
@@ -93,7 +95,7 @@ export function explorePage(
             data-likes-count="${p.likes_count ?? 0}"
             data-comments-count="${p.comments_count ?? 0}"
             data-is-liked="${p.is_liked ? '1' : '0'}">
-            <img src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 6 ? 'eager' : 'lazy'}">
+            <img src="${postMediaUrl(p.image_key, 'thumb')}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 6 ? 'eager' : 'lazy'}">
             <div class="explore-item-likes-badge">
               <span class="explore-badge-part">${MINI_HEART_ICON} <span class="badge-count">${p.likes_count ?? 0}</span></span>
               <span class="explore-badge-part">${MINI_COMMENT_ICON} <span class="badge-comments-count">${p.comments_count ?? 0}</span></span>
@@ -116,9 +118,9 @@ export function explorePage(
       : `<span>${escapeHtml(authorInit)}</span>`;
 
     return `
-    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-post-img="/media/${encodeURIComponent(p.image_key)}" data-post-username="${escapeHtml(p.username)}" data-index="${idx}">
+    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-post-img="${postMediaUrl(p.image_key, 'full')}" data-post-username="${escapeHtml(p.username)}" data-index="${idx}">
       <div class="pics-image-wrap">
-        <img class="pics-image" src="/media/${encodeURIComponent(p.image_key)}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 3 ? 'eager' : 'lazy'}">
+        <img class="pics-image" src="${postMediaUrl(p.image_key, 'full')}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 3 ? 'eager' : 'lazy'}">
         <div class="post-like-burst">
           ${HEART_BURST_ICON}
         </div>
@@ -193,7 +195,10 @@ export function explorePage(
     deletePostTitle: t.profile.deletePostConfirmTitle,
     deletePostDesc: t.profile.deletePostConfirmDesc,
     deleteBtn: t.common.delete,
-    cancelBtn: t.common.cancel
+    cancelBtn: t.common.cancel,
+    initialTag: activeTag,
+    nextCursor: initialCursor,
+    hasMore: initialHasMore
   });
 
   const script = `
@@ -856,47 +861,69 @@ ${renderCommentsSheetScript(t)}
     }
   }
 
-  function renderExplorePosts(posts) {
+  function ensureExploreGrid() {
     var gridEl = document.getElementById('exploreGrid');
+    if (gridEl) return gridEl;
+    if (!defaultContent) return null;
+    defaultContent.innerHTML = '<div class="explore-section"><div class="explore-mosaic-grid" id="exploreGrid"></div></div>';
+    return document.getElementById('exploreGrid');
+  }
+
+  function renderExplorePosts(posts, append) {
+    var gridEl = ensureExploreGrid();
     var feedEl = document.getElementById('picsFeed');
     if (!gridEl || !feedEl) return;
 
-    if (!posts || posts.length === 0) {
+    if (!append && (!posts || posts.length === 0)) {
       gridEl.innerHTML = '<div class="profile-empty" style="padding: 40px 16px; grid-column: 1 / -1;">' + escapeHtmlClient(i18n.noPosts) + '</div>';
       feedEl.innerHTML = '';
       return;
     }
+    if (append && (!posts || posts.length === 0)) return;
 
+    var baseIdx = append ? gridEl.querySelectorAll('.post-item-btn').length : 0;
     var gridHtml = '';
     var slidesHtml = '';
-    for (var idx = 0; idx < posts.length; idx++) {
-      var p = posts[idx];
+    var addedOffset = 0;
+    for (var i = 0; i < posts.length; i++) {
+      var p = posts[i];
+      if (!p || !p.id) continue;
+      if (append && gridEl.querySelector('.post-item-btn[data-post-id="' + Number(p.id) + '"]')) continue;
+      var idx = baseIdx + addedOffset;
+      addedOffset++;
       var likes = p.likes_count || 0;
       var comments = p.comments_count || 0;
       var liked = p.is_liked ? '1' : '0';
       var authorInit = (p.display_name || p.username || '?').charAt(0).toUpperCase();
-      var avHtml = p.author_avatar_key
-        ? '<img src="/media/' + encodeURIComponent(p.author_avatar_key) + '" alt="' + escapeHtmlClient(p.username) + '">'
+      var avKey = p.author_avatar_key || p.avatar_key || '';
+      var avHtml = avKey
+        ? '<img src="/media/' + encodeURIComponent(avKey) + '" alt="' + escapeHtmlClient(p.username) + '">'
         : '<span>' + escapeHtmlClient(authorInit) + '</span>';
+      var verifiedHtml = (Number(p.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
 
-      gridHtml += '<button class="explore-grid-item post-item-btn" type="button" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-index="' + idx + '" data-likes-count="' + likes + '" data-comments-count="' + comments + '" data-is-liked="' + liked + '">' +
-        '<img src="/media/' + encodeURIComponent(p.image_key) + '" alt="Explore" loading="' + (idx < 6 ? 'eager' : 'lazy') + '">' +
+      var mediaBase = '/media/' + encodeURIComponent(p.image_key || '');
+      var isWebpPost = typeof p.image_key === 'string' && p.image_key.slice(-5) === '.webp';
+      var thumbUrl = isWebpPost ? (mediaBase + '?v=thumb') : mediaBase;
+      var fullUrl = isWebpPost ? (mediaBase + '?v=full') : mediaBase;
+
+      gridHtml += '<button class="explore-grid-item post-item-btn" type="button" data-post-id="' + Number(p.id) + '" data-author-id="' + Number(p.user_id) + '" data-author-verified="' + (Number(p.is_verified) === 1 ? '1' : '0') + '" data-index="' + idx + '" data-likes-count="' + likes + '" data-comments-count="' + comments + '" data-is-liked="' + liked + '">' +
+        '<img src="' + thumbUrl + '" alt="Explore" loading="' + (idx < 6 ? 'eager' : 'lazy') + '">' +
         '<div class="explore-item-likes-badge">' +
           '<span class="explore-badge-part">' + ${safeJsonForScript(MINI_HEART_ICON)} + ' <span class="badge-count">' + likes + '</span></span>' +
           '<span class="explore-badge-part">' + ${safeJsonForScript(MINI_COMMENT_ICON)} + ' <span class="badge-comments-count">' + comments + '</span></span>' +
         '</div>' +
       '</button>';
 
-      slidesHtml += '<div class="pics-slide" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-post-img="/media/' + encodeURIComponent(p.image_key) + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-index="' + idx + '">' +
+      slidesHtml += '<div class="pics-slide" data-post-id="' + Number(p.id) + '" data-author-id="' + Number(p.user_id) + '" data-post-img="' + fullUrl + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-index="' + idx + '">' +
         '<div class="pics-image-wrap">' +
-          '<img class="pics-image" src="/media/' + encodeURIComponent(p.image_key) + '" alt="Explore" loading="' + (idx < 3 ? 'eager' : 'lazy') + '">' +
+          '<img class="pics-image" src="' + fullUrl + '" alt="Explore" loading="' + (idx < 3 ? 'eager' : 'lazy') + '">' +
           '<div class="post-like-burst">' + ${safeJsonForScript(HEART_BURST_ICON)} + '</div>' +
         '</div>' +
         '<div class="pics-gradient-overlay"></div>' +
         '<div class="pics-bottom-info">' +
           '<a href="/u/' + encodeURIComponent(p.username) + '" class="pics-author-row">' +
             '<div class="pics-author-avatar">' + avHtml + '</div>' +
-            '<span class="pics-author-name">' + escapeHtmlClient(p.username) + '</span>' +
+            '<span class="pics-author-name">' + escapeHtmlClient(p.username) + verifiedHtml + '</span>' +
           '</a>' +
           (p.caption ? '<div class="pics-caption">' + escapeHtmlClient(p.caption) + '</div>' : '') +
           '<div class="pics-date">' + escapeHtmlClient(formatExploreDateClient(p.created_at || '')) + '</div>' +
@@ -906,7 +933,7 @@ ${renderCommentsSheetScript(t)}
             ${safeJsonForScript(HEART_ICON)} +
             '<span class="pics-action-count">' + likes + '</span>' +
           '</button>' +
-          '<button class="pics-action-btn pics-comment-btn" type="button" data-post-id="' + p.id + '" data-comments-count="' + comments + '">' +
+          '<button class="pics-action-btn pics-comment-btn" type="button" data-post-id="' + Number(p.id) + '" data-comments-count="' + comments + '">' +
             ${safeJsonForScript(COMMENT_ICON)} +
             '<span class="pics-action-count pics-comment-count">' + comments + '</span>' +
           '</button>' +
@@ -914,27 +941,146 @@ ${renderCommentsSheetScript(t)}
       '</div>';
     }
 
-    gridEl.innerHTML = gridHtml;
-    feedEl.innerHTML = slidesHtml;
+    if (append) {
+      if (gridHtml) gridEl.insertAdjacentHTML('beforeend', gridHtml);
+      if (slidesHtml) feedEl.insertAdjacentHTML('beforeend', slidesHtml);
+    } else {
+      gridEl.innerHTML = gridHtml;
+      feedEl.innerHTML = slidesHtml;
+    }
 
     bindExploreInteractions();
   }
 
+  var currentExploreTag = i18n.initialTag || 'all';
+  var exploreNextCursor = i18n.nextCursor || null;
+  var exploreHasMore = Boolean(i18n.hasMore && exploreNextCursor);
+  var exploreLoadingMore = false;
+  var prefetchedExplore = null;
+  var prefetchExplorePromise = null;
+  var exploreEpoch = 0;
+
+  function fetchExplorePage(tag, cursor) {
+    var url = '/api/recommendations/explore?tag=' + encodeURIComponent(tag) + '&limit=20';
+    if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
+    return fetch(url)
+      .then(function(res) {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .catch(function() { return null; });
+  }
+
+  function prefetchNextExplorePage() {
+    if (!exploreHasMore || !exploreNextCursor || prefetchedExplore || prefetchExplorePromise) return;
+    var epochAtStart = exploreEpoch;
+    var cursorAtStart = exploreNextCursor;
+    var tagAtStart = currentExploreTag;
+    prefetchExplorePromise = fetchExplorePage(tagAtStart, cursorAtStart).then(function(data) {
+      if (data && Array.isArray(data.posts) && epochAtStart === exploreEpoch && cursorAtStart === exploreNextCursor) {
+        prefetchedExplore = data;
+      }
+      return data;
+    }).finally(function() {
+      prefetchExplorePromise = null;
+    });
+  }
+
+  async function loadNextExplorePage() {
+    if (exploreLoadingMore || !exploreHasMore || !exploreNextCursor) return;
+    exploreLoadingMore = true;
+    var epochAtStart = exploreEpoch;
+    try {
+      var data = prefetchedExplore;
+      prefetchedExplore = null;
+      if (!data && prefetchExplorePromise) {
+        data = await prefetchExplorePromise;
+        prefetchedExplore = null;
+      }
+      if (!data) {
+        data = await fetchExplorePage(currentExploreTag, exploreNextCursor);
+      }
+      if (epochAtStart !== exploreEpoch) return;
+      if (!data || !Array.isArray(data.posts)) {
+        exploreHasMore = false;
+        exploreNextCursor = null;
+        return;
+      }
+      renderExplorePosts(data.posts, true);
+      exploreNextCursor = data.next_cursor || null;
+      exploreHasMore = Boolean(data.has_more && exploreNextCursor);
+      if (exploreHasMore) {
+        prefetchNextExplorePage();
+      }
+    } finally {
+      exploreLoadingMore = false;
+    }
+  }
+
+  function checkExploreScroll() {
+    if (!exploreHasMore) return;
+    if (defaultContent && defaultContent.style.display === 'none') return;
+    if (picsModal && picsModal.classList.contains('visible')) return;
+    var scrollBottom = (window.scrollY || document.documentElement.scrollTop || 0) + window.innerHeight;
+    var docHeight = document.documentElement.scrollHeight || 0;
+    var remaining = docHeight - scrollBottom;
+    if (remaining < 1600) {
+      prefetchNextExplorePage();
+    }
+    if (remaining < 700) {
+      loadNextExplorePage();
+    }
+  }
+
+  function checkPicsScroll() {
+    if (!exploreHasMore || !picsFeed) return;
+    var slideH = picsFeed.clientHeight || window.innerHeight || 1;
+    var currentSlide = Math.round(picsFeed.scrollTop / slideH);
+    var totalSlides = picsFeed.querySelectorAll('.pics-slide').length;
+    if (totalSlides > 0 && currentSlide >= totalSlides - 6) {
+      prefetchNextExplorePage();
+    }
+    if (totalSlides > 0 && currentSlide >= totalSlides - 4) {
+      loadNextExplorePage();
+    }
+  }
+
+  window.addEventListener('scroll', checkExploreScroll, { passive: true });
+  if (picsFeed) {
+    picsFeed.addEventListener('scroll', checkPicsScroll, { passive: true });
+  }
+  if (exploreHasMore) {
+    setTimeout(prefetchNextExplorePage, 150);
+  }
+
   async function selectExploreTag(tag) {
+    exploreEpoch++;
+    currentExploreTag = tag || 'all';
+    exploreNextCursor = null;
+    exploreHasMore = false;
+    prefetchedExplore = null;
+    prefetchExplorePromise = null;
+    var epochAtStart = exploreEpoch;
+
     var pills = document.querySelectorAll('.explore-tag-pill');
     pills.forEach(function(p) {
-      if (p.dataset.tag === tag) p.classList.add('active');
+      if (p.dataset.tag === currentExploreTag) p.classList.add('active');
       else p.classList.remove('active');
     });
 
-    var newUrl = '/explore' + (tag === 'all' ? '' : '?tag=' + encodeURIComponent(tag));
+    var newUrl = '/explore' + (currentExploreTag === 'all' ? '' : '?tag=' + encodeURIComponent(currentExploreTag));
     history.pushState(null, '', newUrl);
 
     try {
-      var res = await fetch('/api/recommendations/explore?tag=' + encodeURIComponent(tag));
-      var data = await res.json();
-      if (res.ok && data.posts) {
-        renderExplorePosts(data.posts);
+      var data = await fetchExplorePage(currentExploreTag, null);
+      if (epochAtStart !== exploreEpoch) return;
+      if (data && data.posts) {
+        renderExplorePosts(data.posts, false);
+        exploreNextCursor = data.next_cursor || null;
+        exploreHasMore = Boolean(data.has_more && exploreNextCursor);
+        if (exploreHasMore) {
+          prefetchNextExplorePage();
+        }
       }
     } catch(err) {}
   }

@@ -1,6 +1,6 @@
 import { Env, ProfileData, User, Post, ExploreData, ExploreUser, ExplorePost, FollowerUser } from './types';
 import { getUserFromRequest } from './auth';
-import { adjustAffinity, getPersonalizedExplore } from './recommendations';
+import { adjustAffinity, getPersonalizedExplore, invalidateRecommendationCaches } from './recommendations';
 import { isBlockedUsername } from './blockedUsernames';
 import { detectLanguage, getTranslations } from './languages';
 import { createNotification, removeNotification } from './notifications';
@@ -475,8 +475,11 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
         .first<{ follower_id: number }>();
       isFollowing = false;
       if (delRow) {
-        await adjustAffinity(env, currentUser.id, targetId, -8.0);
-        await removeNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+        await Promise.all([
+          adjustAffinity(env, currentUser.id, targetId, -8.0),
+          removeNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' }),
+          invalidateRecommendationCaches({ userId: currentUser.id }),
+        ]);
       }
     } else {
       const insRow = await env.DB.prepare(
@@ -486,8 +489,11 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
         .first<{ follower_id: number }>();
       isFollowing = true;
       if (insRow) {
-        await adjustAffinity(env, currentUser.id, targetId, 10.0);
-        await createNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+        await Promise.all([
+          adjustAffinity(env, currentUser.id, targetId, 10.0),
+          createNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' }),
+          invalidateRecommendationCaches({ userId: currentUser.id }),
+        ]);
       }
     }
 

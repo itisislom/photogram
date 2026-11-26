@@ -289,6 +289,7 @@ export const uz: Translations = {
     photoLabel: 'Surat',
     youPrefix: 'Siz: ',
     seen: 'Ko‘rildi',
+    typing: 'yozmoqda...',
     unsend: 'Yuborishni bekor qilish',
     unsendConfirmTitle: 'Xabarni o‘chirish?',
     unsendConfirmDesc: 'Xabar har ikki ishtirokchi uchun o‘chiriladi.',

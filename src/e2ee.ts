@@ -451,24 +451,42 @@ export async function handleGetIdentities(request: Request, env: Env, url: URL):
     return jsonError(t.common.networkError, 400);
   }
 
-  const res = await env.DB.prepare(
+  const includeSelf = url.searchParams.get('include_self') === '1';
+
+  const partnerPromise = env.DB.prepare(
     'SELECT device_id, identity_key_pub, updated_at FROM e2ee_devices WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
   )
     .bind(targetUserId, MAX_DEVICES_PER_USER)
     .all<{ device_id: number; identity_key_pub: string; updated_at: string }>();
 
-  return jsonResponse(
-    {
-      success: true,
-      user_id: targetUserId,
-      devices: (res.results || []).map((r) => ({
-        device_id: Number(r.device_id),
-        identity_key_pub: r.identity_key_pub,
-        updated_at: r.updated_at,
-      })),
-    },
-    200,
-  );
+  const selfPromise =
+    includeSelf && targetUserId !== user.id
+      ? env.DB.prepare(
+          'SELECT device_id, identity_key_pub, updated_at FROM e2ee_devices WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
+        )
+          .bind(user.id, MAX_DEVICES_PER_USER)
+          .all<{ device_id: number; identity_key_pub: string; updated_at: string }>()
+      : Promise.resolve(null);
+
+  const [res, selfRes] = await Promise.all([partnerPromise, selfPromise]);
+
+  const mapRows = (rows?: Array<{ device_id: number; identity_key_pub: string; updated_at: string }>) =>
+    (rows || []).map((r) => ({
+      device_id: Number(r.device_id),
+      identity_key_pub: r.identity_key_pub,
+      updated_at: r.updated_at,
+    }));
+
+  const payload: Record<string, unknown> = {
+    success: true,
+    user_id: targetUserId,
+    devices: mapRows(res.results),
+  };
+  if (includeSelf) {
+    payload.self_devices = targetUserId === user.id ? payload.devices : mapRows(selfRes?.results);
+  }
+
+  return jsonResponse(payload, 200);
 }
 
 export async function handleUnregisterE2eeDevice(request: Request, env: Env): Promise<Response> {
