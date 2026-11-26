@@ -1,6 +1,7 @@
 import { Env } from './types';
-import { getUserFromRequest } from './auth';
+import { getUserFromRequest, getDeviceSessionUserIds } from './auth';
 import { detectLanguage, getTranslations } from './languages';
+import { consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
 const MAX_SUBSCRIPTIONS_PER_USER = 5;
 const ALLOWED_PUSH_HOST_SUFFIXES = [
@@ -182,6 +183,7 @@ export function isAllowedPushEndpoint(raw: string): boolean {
     return false;
   }
   if (parsed.protocol !== 'https:') return false;
+  if (parsed.port !== '' || parsed.username !== '' || parsed.password !== '') return false;
   const host = parsed.hostname.toLowerCase();
   if (!host || host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':')) {
     return false;
@@ -235,6 +237,9 @@ export async function sendPushToUser(
           const res = await fetch(sub.endpoint, {
             method: 'POST',
             redirect: 'error',
+            signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+              ? AbortSignal.timeout(4000)
+              : undefined,
             headers: {
               Authorization: authHeader,
               'Content-Encoding': 'aes128gcm',
@@ -255,7 +260,13 @@ export async function sendPushToUser(
 
 export async function handleGetVapidKey(env: Env): Promise<Response> {
   const pubKey = (env.VAPID_PUBLIC_KEY || '').trim();
-  return jsonResponse({ enabled: Boolean(pubKey), public_key: pubKey }, 200);
+  return new Response(JSON.stringify({ enabled: Boolean(pubKey), public_key: pubKey }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
 }
 
 export async function handlePushSubscribe(request: Request, env: Env): Promise<Response> {
@@ -263,12 +274,17 @@ export async function handlePushSubscribe(request: Request, env: Env): Promise<R
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  let body: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
-  try {
-    body = (await request.json()) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const allowed = await consumeRateLimitAtomic(env, `push:sub:${user.id}`, 20, 3600);
+  if (!allowed) return jsonError(t.common.networkError, 429);
+
+  const parsed = await readJsonWithLimit<{ endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }>(
+    request,
+    8192,
+  );
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
   }
+  const body = parsed.data;
 
   const endpoint = typeof body?.endpoint === 'string' ? body.endpoint.trim() : '';
   const p256dh = typeof body?.keys?.p256dh === 'string' ? body.keys.p256dh.trim() : '';
@@ -286,6 +302,17 @@ export async function handlePushSubscribe(request: Request, env: Env): Promise<R
     }
   } catch {
     return jsonError(t.common.networkError, 400);
+  }
+
+  const existingSub = await env.DB.prepare('SELECT user_id FROM push_subscriptions WHERE endpoint = ?')
+    .bind(endpoint)
+    .first<{ user_id: number }>();
+
+  if (existingSub && Number(existingSub.user_id) !== Number(user.id)) {
+    const deviceUserIds = await getDeviceSessionUserIds(env, request);
+    if (!deviceUserIds.has(Number(existingSub.user_id))) {
+      return jsonError(t.common.networkError, 409);
+    }
   }
 
   await env.DB.prepare(
@@ -318,11 +345,14 @@ export async function handlePushUnsubscribe(request: Request, env: Env): Promise
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
+  const allowed = await consumeRateLimitAtomic(env, `push:unsub:${user.id}`, 30, 3600);
+  if (!allowed) return jsonError(t.common.networkError, 429);
+
   let endpoint = '';
-  try {
-    const body = (await request.json()) as { endpoint?: unknown };
-    if (typeof body?.endpoint === 'string') endpoint = body.endpoint.trim();
-  } catch {}
+  const parsed = await readJsonWithLimit<{ endpoint?: unknown }>(request, 4096);
+  if (parsed.ok && typeof parsed.data?.endpoint === 'string') {
+    endpoint = parsed.data.endpoint.trim();
+  }
 
   if (endpoint) {
     await env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?')

@@ -1,15 +1,16 @@
-import { ConversationItem, DirectMessage, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
+import { ConversationItem, DirectMessage, MessageReaction, User } from '../types';
+import { ALLOWED_DM_REACTIONS } from '../messages';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { SEND_COMMENT_ICON } from './commentsModal';
-import { Translations, ru, formatLocalizedShortDate, formatLocalizedTime, getClientDateFormat } from '../languages';
+import { Translations, LangCode, ru, formatLocalizedShortDate, formatLocalizedTime, getClientDateFormat, formatCompactCount, getCompactCountUnits } from '../languages';
 
 const BACK_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>`;
 const SEARCH_ICON = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 const PHOTO_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
 const CHAT_BIG_ICON = `<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
 const TRASH_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
-const LOCK_SM_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const EDIT_SM_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
 const LOCK_XS_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 
 function parseDateSafe(dateStr: string): Date {
@@ -19,7 +20,7 @@ function parseDateSafe(dateStr: string): Date {
   return new Date(s.replace(' ', 'T') + 'Z');
 }
 
-function formatDmShortTime(dateStr: string, t: Translations): string {
+function formatDmShortTime(dateStr: string, t: Translations, timeZone: string): string {
   try {
     const d = parseDateSafe(dateStr);
     if (isNaN(d.getTime())) return '';
@@ -28,19 +29,30 @@ function formatDmShortTime(dateStr: string, t: Translations): string {
     if (diff < 3600) return `${Math.floor(diff / 60)} ${t.common.minutesShort}`;
     if (diff < 86400) return `${Math.floor(diff / 3600)} ${t.common.hoursShort}`;
     if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} ${t.common.daysShort}`;
-    return formatLocalizedShortDate(d, t.code);
+    return formatLocalizedShortDate(d, t.code, timeZone);
   } catch {
     return '';
   }
 }
 
-function formatMsgClock(dateStr: string): string {
+function formatMsgClock(dateStr: string, timeZone: string): string {
   try {
     const d = parseDateSafe(dateStr);
-    return isNaN(d.getTime()) ? '' : formatLocalizedTime(d);
+    return isNaN(d.getTime()) ? '' : formatLocalizedTime(d, timeZone);
   } catch {
     return '';
   }
+}
+
+function renderMsgReactionsHtml(msgId: number, reactions?: MessageReaction[], lang: LangCode = 'ru'): string {
+  const list = Array.isArray(reactions) ? reactions : [];
+  const pills = list
+    .map(
+      (r) =>
+        `<button type="button" class="dm-reaction-pill${r.mine ? ' mine' : ''}" data-react-msg-id="${msgId}" data-react-emoji="${escapeHtml(r.emoji)}"><span class="dm-reaction-emoji">${escapeHtml(r.emoji)}</span>${r.count > 1 ? `<span class="dm-reaction-count">${escapeHtml(formatCompactCount(r.count, lang))}</span>` : ''}</button>`,
+    )
+    .join('');
+  return `<div class="dm-msg-reactions" data-reactions-for="${msgId}">${pills}</div>`;
 }
 
 export interface MessagesPageData {
@@ -63,6 +75,7 @@ export function messagesPage(
   currentUser: User,
   t: Translations = ru,
   theme?: string,
+  timeZone: string = 'UTC',
 ): string {
   const { conversations, activeConversationId, activePartner, messages, hasMore, lastReadOwnId } = data;
   const hasActive = Boolean(activePartner);
@@ -86,12 +99,12 @@ export function messagesPage(
             : '';
 
           return `
-          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}">
+          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}">
             <div class="dm-avatar">${avatarHtml}</div>
             <div class="dm-conv-meta">
               <div class="dm-conv-top">
                 <span class="dm-conv-name">${escapeHtml(c.other_username)}${c.other_is_verified ? renderVerifiedBadge(13) : ''}</span>
-                <span class="dm-conv-time">${escapeHtml(formatDmShortTime(c.last_message_at, t))}</span>
+                <span class="dm-conv-time">${escapeHtml(formatDmShortTime(c.last_message_at, t, timeZone))}</span>
               </div>
               <div class="dm-conv-bottom">
                 <span class="dm-conv-preview">${escapeHtml(previewText)}</span>
@@ -117,6 +130,8 @@ export function messagesPage(
       is_encrypted: 1,
       image_key: m.image_key || '',
       ciphertext_envelope: m.ciphertext_envelope || '',
+      edited_at: m.edited_at || null,
+      edit_version: Number(m.edit_version || 0),
       created_at: m.created_at,
     }));
 
@@ -132,16 +147,22 @@ export function messagesPage(
           .map((m) => {
             const isMine = Number(m.sender_id) === Number(currentUser.id);
             const isEnc = Boolean(m.is_encrypted);
+            const isEdited = Boolean(m.edited_at);
+            const editVer = Number(m.edit_version || 0);
+            const timeInner = `${isEdited ? `<span class="dm-msg-edited">${escapeHtml(t.messages.editedLabel)}</span> ` : ''}<span class="dm-msg-clock">${escapeHtml(formatMsgClock(m.created_at, timeZone))}</span>`;
             const unsendBtn = isMine
               ? `<button type="button" class="dm-unsend-btn" data-unsend-id="${m.id}" aria-label="${escapeHtml(t.messages.unsend)}" title="${escapeHtml(t.messages.unsend)}">${TRASH_SM_ICON}</button>`
               : '';
             if (isEnc) {
               return `
-            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-encrypted="1">
+            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-encrypted="1" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}">
               ${isMine ? unsendBtn : ''}
-              <div class="dm-msg-bubble">
-                <div class="dm-msg-text dm-msg-decrypt-err" data-enc-slot="1">${escapeHtml(t.messages.e2eeInitializing)}</div>
-                <div class="dm-msg-time">${escapeHtml(formatMsgClock(m.created_at))}</div>
+              <div class="dm-msg-stack">
+                <div class="dm-msg-bubble">
+                  <div class="dm-msg-text dm-msg-decrypt-err" data-enc-slot="1">${escapeHtml(t.messages.e2eeInitializing)}</div>
+                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}">${timeInner}</div>
+                </div>
+                ${renderMsgReactionsHtml(m.id, m.reactions, t.code)}
               </div>
             </div>`;
             }
@@ -152,12 +173,15 @@ export function messagesPage(
               ? `<div class="dm-msg-text">${escapeHtml(m.body)}</div>`
               : '';
             return `
-            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}">
+            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}">
               ${isMine ? unsendBtn : ''}
-              <div class="dm-msg-bubble ${m.image_key && !m.body ? 'img-only' : ''}">
-                ${imgHtml}
-                ${textHtml}
-                <div class="dm-msg-time">${escapeHtml(formatMsgClock(m.created_at))}</div>
+              <div class="dm-msg-stack">
+                <div class="dm-msg-bubble ${m.image_key && !m.body ? 'img-only' : ''}">
+                  ${imgHtml}
+                  ${textHtml}
+                  <div class="dm-msg-time" data-ts="${escapeHtml(m.created_at)}" data-edited="${isEdited ? '1' : '0'}">${timeInner}</div>
+                </div>
+                ${renderMsgReactionsHtml(m.id, m.reactions, t.code)}
               </div>
             </div>`;
           })
@@ -176,7 +200,6 @@ export function messagesPage(
           <div class="dm-thread-display">${escapeHtml(activePartner.display_name || activePartner.username)}</div>
         </div>
       </a>
-      <button type="button" class="dm-safety-btn" id="dmSafetyBtn" aria-label="${escapeHtml(t.messages.e2eeSafetyTitle)}" title="${escapeHtml(t.messages.e2eeSafetyTitle)}">${LOCK_SM_ICON}</button>
     </header>
 
     <div class="dm-e2ee-banner" id="dmE2eeBanner">
@@ -191,6 +214,15 @@ export function messagesPage(
         ${msgsHtml}
       </div>
       <div class="dm-seen-indicator ${seenVisible ? 'visible' : ''}" id="dmSeenIndicator">${escapeHtml(t.messages.seen)}</div>
+    </div>
+
+    <div class="dm-edit-bar" id="dmEditBar" style="display:none;">
+      <div class="dm-edit-bar-icon">${EDIT_SM_ICON}</div>
+      <div class="dm-edit-bar-meta">
+        <div class="dm-edit-bar-title">${escapeHtml(t.messages.editingMessage)}</div>
+        <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+      </div>
+      <button type="button" class="dm-edit-bar-close" id="dmEditCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
 
     <div class="dm-attach-preview" id="dmAttachPreview" style="display:none;">
@@ -248,18 +280,43 @@ export function messagesPage(
     </div>
   </div>
 
-  <div class="modal-backdrop" id="dmSafetyModal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 class="modal-title">${escapeHtml(t.messages.e2eeSafetyTitle)}</h3>
-        <button class="modal-close" id="closeDmSafetyBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+  <div class="dm-ctx-menu" id="dmConvCtxMenu" role="menu" aria-hidden="true">
+    <button type="button" class="dm-ctx-item dm-ctx-danger" id="dmCtxDeleteBtn" role="menuitem">
+      ${TRASH_SM_ICON}
+      <span>${escapeHtml(t.messages.deleteChat)}</span>
+    </button>
+  </div>
+
+  <div class="dm-reaction-picker" id="dmReactionPicker" role="menu" aria-hidden="true">
+    <div class="dm-reaction-row">
+      ${ALLOWED_DM_REACTIONS.map((em) => `<button type="button" class="dm-reaction-pick-btn" data-pick-emoji="${escapeHtml(em)}" role="menuitem" aria-label="${escapeHtml(em)}">${escapeHtml(em)}</button>`).join('')}
+    </div>
+    <div class="dm-msg-action-list" id="dmMsgActionList">
+      <button type="button" class="dm-msg-action-btn" id="dmMsgEditBtn" role="menuitem" style="display:none;">
+        ${EDIT_SM_ICON}
+        <span>${escapeHtml(t.messages.editMessage)}</span>
+      </button>
+      <button type="button" class="dm-msg-action-btn dm-msg-action-danger" id="dmMsgDeleteBtn" role="menuitem">
+        ${TRASH_SM_ICON}
+        <span>${escapeHtml(t.messages.deleteMessage)}</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="dmDeleteChatModal" aria-hidden="true">
+    <div class="modal-card dm-delete-modal-card" role="dialog" aria-modal="true" aria-labelledby="dmDeleteChatTitle">
+      <div class="dm-delete-modal-body">
+        <h3 class="dm-delete-modal-title" id="dmDeleteChatTitle">${escapeHtml(t.messages.deleteChatConfirmTitle)}</h3>
+        <p class="dm-delete-modal-desc" id="dmDeleteChatDesc"></p>
+        <label class="dm-delete-check-row" for="dmDeleteForBothCheck">
+          <input type="checkbox" id="dmDeleteForBothCheck" class="dm-delete-checkbox">
+          <span class="dm-delete-check-box" aria-hidden="true"></span>
+          <span class="dm-delete-check-label" id="dmDeleteForBothLabel"></span>
+        </label>
       </div>
-      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.45;">${escapeHtml(t.messages.e2eeSafetyDesc)}</p>
-      <div class="dm-safety-status" id="dmSafetyStatus" style="display:none;">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeVerified)}</span></div>
-      <div class="dm-safety-grid" id="dmSafetyGrid">...</div>
-      <div style="display: flex; gap: 8px; margin-top: 8px;">
-        <button type="button" class="btn btn-primary btn-sm" id="dmSafetyVerifyBtn" style="flex:1; display:none;">${escapeHtml(t.messages.e2eeVerifyBtn)}</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="okDmSafetyBtn" style="flex:1;">${escapeHtml(t.common.close)}</button>
+      <div class="dm-delete-modal-actions">
+        <button type="button" class="dm-delete-action-btn" id="dmDeleteChatCancelBtn">${escapeHtml(t.common.cancel)}</button>
+        <button type="button" class="dm-delete-action-btn dm-delete-action-danger" id="dmDeleteChatConfirmBtn">${escapeHtml(t.common.delete)}</button>
       </div>
     </div>
   </div>
@@ -268,7 +325,7 @@ export function messagesPage(
   const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : 0;
   const oldestMsgId = messages.length > 0 ? messages[0].id : 0;
 
-  const clientState = JSON.stringify({
+  const clientState = safeJsonForScript({
     currentUserId: currentUser.id,
     activeConversationId: activeConversationId || 0,
     activePartnerId: activePartner ? activePartner.id : 0,
@@ -276,7 +333,10 @@ export function messagesPage(
     lastMsgId,
     oldestMsgId,
     lastReadOwnId,
+    timeZone,
     initialEncrypted: initialEncryptedMessages,
+    langCode: t.code,
+    compactUnits: getCompactCountUnits(t.code),
     dateFmt: getClientDateFormat(t.code),
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
@@ -290,6 +350,16 @@ export function messagesPage(
     unsend: t.messages.unsend,
     unsendTitle: t.messages.unsendConfirmTitle,
     unsendDesc: t.messages.unsendConfirmDesc,
+    deleteChatConfirmTitle: t.messages.deleteChatConfirmTitle,
+    deleteChatConfirmDesc: t.messages.deleteChatConfirmDesc,
+    deleteChatAlsoFor: t.messages.deleteChatAlsoFor,
+    deleteChatSuccess: t.messages.deleteChatSuccess,
+    deleteMessageConfirmTitle: t.messages.deleteMessageConfirmTitle,
+    deleteMessageConfirmDesc: t.messages.deleteMessageConfirmDesc,
+    editedLabel: t.messages.editedLabel,
+    emptyListTitle: t.messages.emptyListTitle,
+    emptyListDesc: t.messages.emptyListDesc,
+    chatBigIcon: CHAT_BIG_ICON,
     deleteBtn: t.common.delete,
     noMessagesYet: t.messages.noMessagesYet,
     errImageTooLarge: t.messages.errImageTooLarge,
@@ -299,8 +369,6 @@ export function messagesPage(
     e2eeAcceptNewKey: t.messages.e2eeAcceptNewKey,
     e2eePartnerNotReady: t.messages.e2eePartnerNotReady,
     e2eeDecryptFailed: t.messages.e2eeDecryptFailed,
-    e2eeVerifyBtn: t.messages.e2eeVerifyBtn,
-    e2eeUnverifyBtn: t.messages.e2eeUnverifyBtn,
     trashIcon: TRASH_SM_ICON,
   });
 
@@ -319,8 +387,40 @@ export function messagesPage(
   document.body.classList.add('dm-lock-scroll');
 
   var dmShellEl = document.querySelector('.dm-shell');
-  function syncDmViewport() {
+  var scrollEl = document.getElementById('dmMessagesScroll');
+  var listEl = document.getElementById('dmMessagesList');
+  var isPinnedToBottom = true;
+  var kbOpeningUntil = 0;
+  var isAdjustingViewport = false;
+  var lastScrollClientH = scrollEl ? scrollEl.clientHeight : 0;
+  var kbTimers = [];
+  var dmResizeObserver = null;
+
+  function clearKbTimers() {
+    for (var ti = 0; ti < kbTimers.length; ti++) {
+      clearTimeout(kbTimers[ti]);
+    }
+    kbTimers = [];
+  }
+
+  function pinScrollBottomNow() {
+    if (!scrollEl) return;
+    isAdjustingViewport = true;
+    scrollEl.scrollTop = scrollEl.scrollHeight;
+    requestAnimationFrame(function() {
+      if (scrollEl && (isPinnedToBottom || Date.now() < kbOpeningUntil)) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
+      isAdjustingViewport = false;
+    });
+  }
+
+  function syncDmViewport(forceBottom) {
     if (!dmShellEl) return;
+    var prevClientH = scrollEl ? scrollEl.clientHeight : 0;
+    var distFromBottom = scrollEl ? (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) : 0;
+    var shouldPin = Boolean(forceBottom || isPinnedToBottom || Date.now() < kbOpeningUntil || distFromBottom < 80);
+
     var vv = window.visualViewport;
     if (vv && window.innerWidth <= 768) {
       dmShellEl.style.setProperty('--dm-vp-h', Math.round(vv.height) + 'px');
@@ -332,34 +432,87 @@ export function messagesPage(
       dmShellEl.style.removeProperty('--dm-vp-h');
       dmShellEl.style.removeProperty('--dm-vp-top');
     }
+
+    if (scrollEl) {
+      var nextClientH = scrollEl.clientHeight;
+      if (shouldPin) {
+        isPinnedToBottom = true;
+        pinScrollBottomNow();
+      } else if (prevClientH > 0 && nextClientH < prevClientH) {
+        isAdjustingViewport = true;
+        scrollEl.scrollTop += (prevClientH - nextClientH);
+        requestAnimationFrame(function() {
+          isAdjustingViewport = false;
+        });
+      }
+      lastScrollClientH = nextClientH;
+    }
   }
-  syncDmViewport();
-  window.addEventListener('resize', syncDmViewport);
+  function onViewportChange() {
+    syncDmViewport(false);
+  }
+  syncDmViewport(true);
+  window.addEventListener('resize', onViewportChange);
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncDmViewport);
-    window.visualViewport.addEventListener('scroll', syncDmViewport);
+    window.visualViewport.addEventListener('resize', onViewportChange);
+    window.visualViewport.addEventListener('scroll', onViewportChange);
+  }
+  if (scrollEl) {
+    scrollEl.addEventListener('scroll', function() {
+      if (isAdjustingViewport || Date.now() < kbOpeningUntil) return;
+      isPinnedToBottom = (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < 80;
+    }, { passive: true });
+    if (typeof ResizeObserver !== 'undefined') {
+      dmResizeObserver = new ResizeObserver(function() {
+        if (!scrollEl) return;
+        var nextH = scrollEl.clientHeight;
+        if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+          pinScrollBottomNow();
+        } else if (lastScrollClientH > 0 && nextH < lastScrollClientH) {
+          isAdjustingViewport = true;
+          scrollEl.scrollTop += (lastScrollClientH - nextH);
+          requestAnimationFrame(function() {
+            isAdjustingViewport = false;
+          });
+        }
+        lastScrollClientH = nextH;
+      });
+      dmResizeObserver.observe(scrollEl);
+      if (listEl) dmResizeObserver.observe(listEl);
+    }
   }
 
   var e2eeClient = null;
   var pendingKeyChange = null;
-  var currentSafetyInfo = null;
+  var extraCleanups = [];
 
   window.__dmViewportCleanup = function() {
+    clearKbTimers();
+    for (var ci = 0; ci < extraCleanups.length; ci++) {
+      try { extraCleanups[ci](); } catch (e) {}
+    }
+    extraCleanups = [];
+    if (dmResizeObserver) {
+      try { dmResizeObserver.disconnect(); } catch (e) {}
+      dmResizeObserver = null;
+    }
+    if (e2eeClient && typeof e2eeClient.revokeAllMediaUrls === 'function') {
+      try { e2eeClient.revokeAllMediaUrls(); } catch (e) {}
+    }
     document.documentElement.classList.remove('dm-lock-scroll');
     document.body.classList.remove('dm-lock-scroll');
     if (dmShellEl) {
       dmShellEl.style.removeProperty('--dm-vp-h');
       dmShellEl.style.removeProperty('--dm-vp-top');
     }
+    window.removeEventListener('resize', onViewportChange);
     if (window.visualViewport) {
-      window.visualViewport.removeEventListener('resize', syncDmViewport);
-      window.visualViewport.removeEventListener('scroll', syncDmViewport);
+      window.visualViewport.removeEventListener('resize', onViewportChange);
+      window.visualViewport.removeEventListener('scroll', onViewportChange);
     }
   };
 
   var state = ${clientState};
-  var scrollEl = document.getElementById('dmMessagesScroll');
-  var listEl = document.getElementById('dmMessagesList');
   var seenEl = document.getElementById('dmSeenIndicator');
   var formEl = document.getElementById('dmComposeForm');
   var inputEl = document.getElementById('dmMessageInput');
@@ -377,21 +530,48 @@ export function messagesPage(
   var lightbox = document.getElementById('dmPhotoLightbox');
   var lightboxImg = document.getElementById('dmLightboxImg');
   var lightboxCloseBtn = document.getElementById('dmLightboxCloseBtn');
-  var safetyBtn = document.getElementById('dmSafetyBtn');
-  var safetyModal = document.getElementById('dmSafetyModal');
-  var safetyGrid = document.getElementById('dmSafetyGrid');
-  var safetyStatus = document.getElementById('dmSafetyStatus');
-  var safetyVerifyBtn = document.getElementById('dmSafetyVerifyBtn');
-  var closeSafetyBtn = document.getElementById('closeDmSafetyBtn');
-  var okSafetyBtn = document.getElementById('okDmSafetyBtn');
   var e2eeBanner = document.getElementById('dmE2eeBanner');
   var e2eeBannerText = document.getElementById('dmE2eeBannerText');
   var e2eeBannerBtn = document.getElementById('dmE2eeBannerBtn');
+  var convCtxMenu = document.getElementById('dmConvCtxMenu');
+  var ctxDeleteBtn = document.getElementById('dmCtxDeleteBtn');
+  var deleteChatModal = document.getElementById('dmDeleteChatModal');
+  var deleteChatTitle = document.getElementById('dmDeleteChatTitle');
+  var deleteChatDesc = document.getElementById('dmDeleteChatDesc');
+  var deleteForBothCheck = document.getElementById('dmDeleteForBothCheck');
+  var deleteForBothLabel = document.getElementById('dmDeleteForBothLabel');
+  var deleteChatCancelBtn = document.getElementById('dmDeleteChatCancelBtn');
+  var deleteChatConfirmBtn = document.getElementById('dmDeleteChatConfirmBtn');
+  var reactionPicker = document.getElementById('dmReactionPicker');
+  var msgActionList = document.getElementById('dmMsgActionList');
+  var msgEditBtn = document.getElementById('dmMsgEditBtn');
+  var msgDeleteBtn = document.getElementById('dmMsgDeleteBtn');
+  var editBar = document.getElementById('dmEditBar');
+  var editBarPreview = document.getElementById('dmEditBarPreview');
+  var editCancelBtn = document.getElementById('dmEditCancelBtn');
 
   var pendingFile = null;
   var pendingPreviewUrl = '';
+  var editingMsg = null;
   var isSending = false;
   var isPolling = false;
+  var isDeletingChat = false;
+  var ctxTarget = null;
+  var ctxActiveItem = null;
+  var deleteTarget = null;
+  var longPressTimer = null;
+  var longPressDidFire = false;
+  var longPressStartX = 0;
+  var longPressStartY = 0;
+  var suppressNextConvClickUntil = 0;
+  var reactTargetMsgId = 0;
+  var reactActiveRow = null;
+  var msgLongPressTimer = null;
+  var msgLongPressDidFire = false;
+  var msgLongPressStartX = 0;
+  var msgLongPressStartY = 0;
+  var suppressNextMsgClickUntil = 0;
+  var reactingMsgIds = {};
   var searchTimer = null;
   var searchAbort = null;
 
@@ -402,29 +582,156 @@ export function messagesPage(
     return new Date(s.replace(' ', 'T') + 'Z');
   }
 
+  var activeTimeZone = (function() {
+    try {
+      var devTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (devTz) return devTz;
+    } catch (e) {}
+    return state.timeZone || 'UTC';
+  })();
+
   function formatClockClient(dateStr) {
     try {
       var d = parseDateClient(dateStr);
       if (isNaN(d.getTime())) return '';
-      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      try {
+        var parts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: activeTimeZone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        }).formatToParts(d);
+        var hh = '00';
+        var mm = '00';
+        for (var i = 0; i < parts.length; i++) {
+          if (parts[i].type === 'hour') hh = parts[i].value;
+          if (parts[i].type === 'minute') mm = parts[i].value;
+        }
+        if (hh === '24') hh = '00';
+        return hh.padStart(2, '0') + ':' + mm.padStart(2, '0');
+      } catch (e2) {
+        return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+      }
     } catch (e) {
       return '';
     }
   }
 
+  function renderMsgTimeEl(timeEl, ts, isEdited) {
+    if (!timeEl) return;
+    var clockText = formatClockClient(ts);
+    timeEl.setAttribute('data-ts', ts || '');
+    timeEl.setAttribute('data-edited', isEdited ? '1' : '0');
+    while (timeEl.firstChild) timeEl.removeChild(timeEl.firstChild);
+    if (isEdited) {
+      var edSpan = document.createElement('span');
+      edSpan.className = 'dm-msg-edited';
+      edSpan.textContent = state.editedLabel;
+      timeEl.appendChild(edSpan);
+      timeEl.appendChild(document.createTextNode(' '));
+    }
+    var clkSpan = document.createElement('span');
+    clkSpan.className = 'dm-msg-clock';
+    clkSpan.textContent = clockText;
+    timeEl.appendChild(clkSpan);
+  }
+
+  function syncRenderedMsgClocks() {
+    if (!listEl) return;
+    listEl.querySelectorAll('.dm-msg-time[data-ts]').forEach(function(el) {
+      var ts = el.getAttribute('data-ts');
+      if (ts) {
+        var formatted = formatClockClient(ts);
+        var clk = el.querySelector('.dm-msg-clock');
+        if (clk && formatted) clk.textContent = formatted;
+        else if (formatted) renderMsgTimeEl(el, ts, el.getAttribute('data-edited') === '1');
+      }
+    });
+  }
+
   function scrollToBottom() {
     if (scrollEl) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
+      isPinnedToBottom = true;
+      pinScrollBottomNow();
     }
   }
 
   function syncSendState() {
     if (!sendBtn) return;
     var hasText = inputEl && inputEl.value.trim().length > 0;
-    var ready = Boolean((hasText || pendingFile) && !isSending);
-    sendBtn.disabled = !ready;
-    if (ready) sendBtn.classList.add('active');
+    var canSubmit = editingMsg
+      ? Boolean((hasText || editingMsg.existingMedia || editingMsg.imageKey) && !isSending)
+      : Boolean((hasText || pendingFile) && !isSending);
+    sendBtn.disabled = !canSubmit;
+    if (canSubmit) sendBtn.classList.add('active');
     else sendBtn.classList.remove('active');
+  }
+
+  function applyPlainBubbleEdit(bubble, timeEl, newText, hasImg) {
+    if (!bubble || !timeEl) return;
+    var txtEl = bubble.querySelector('.dm-msg-text');
+    if (newText) {
+      if (!txtEl) {
+        txtEl = document.createElement('div');
+        txtEl.className = 'dm-msg-text';
+        bubble.insertBefore(txtEl, timeEl);
+      }
+      txtEl.textContent = newText;
+      bubble.classList.remove('img-only');
+    } else if (txtEl) {
+      txtEl.remove();
+      if (hasImg) bubble.classList.add('img-only');
+    }
+  }
+
+  function cancelEditMode() {
+    editingMsg = null;
+    if (editBar) editBar.style.display = 'none';
+    if (editBarPreview) editBarPreview.textContent = '';
+    if (attachBtn) attachBtn.style.display = '';
+    if (inputEl) inputEl.value = '';
+    syncSendState();
+  }
+
+  async function startEditMode(msgId, row) {
+    if (!msgId || !row || !inputEl) return;
+    var currentText = '';
+    var existingMedia = null;
+    var isEncrypted = row.getAttribute('data-encrypted') === '1';
+    var imageKey = row.getAttribute('data-image-key') || '';
+    if (isEncrypted) {
+      try {
+        var c = e2eeClient || await ensureE2eeReady();
+        if (c && typeof c.getCachedMessage === 'function') {
+          var cached = await c.getCachedMessage(msgId);
+          if (cached) {
+            currentText = cached.text || '';
+            existingMedia = cached.media || null;
+          }
+        }
+      } catch (e) {}
+    }
+    if (!currentText) {
+      var txtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
+      if (txtEl) currentText = txtEl.textContent || '';
+    }
+    clearPendingFile();
+    editingMsg = {
+      id: msgId,
+      isEncrypted: isEncrypted,
+      imageKey: imageKey,
+      existingMedia: existingMedia,
+      originalText: currentText
+    };
+    if (attachBtn) attachBtn.style.display = 'none';
+    if (editBarPreview) editBarPreview.textContent = currentText || state.photoLabel;
+    if (editBar) editBar.style.display = 'flex';
+    inputEl.value = currentText;
+    syncSendState();
+    inputEl.focus();
+    try {
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    } catch (e2) {}
   }
 
   function showBanner(msg, isWarn, btnLabel) {
@@ -504,6 +811,11 @@ export function messagesPage(
       img.className = 'dm-msg-img';
       img.alt = state.photoLabel;
       img.loading = 'lazy';
+      img.addEventListener('load', function() {
+        if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+          pinScrollBottomNow();
+        }
+      });
       imgBtn.appendChild(img);
       bubble.appendChild(imgBtn);
 
@@ -539,6 +851,9 @@ export function messagesPage(
     var row = document.createElement('div');
     row.className = 'dm-msg-row ' + (isMine ? 'mine' : 'theirs');
     row.setAttribute('data-msg-id', String(m.id));
+    if (m.is_encrypted) row.setAttribute('data-encrypted', '1');
+    row.setAttribute('data-edit-version', String(Number(m.edit_version || 0)));
+    row.setAttribute('data-image-key', m.image_key || '');
 
     if (isMine) {
       var unsendBtn = document.createElement('button');
@@ -555,7 +870,7 @@ export function messagesPage(
     bubble.className = 'dm-msg-bubble';
     var timeEl = document.createElement('div');
     timeEl.className = 'dm-msg-time';
-    timeEl.textContent = formatClockClient(m.created_at);
+    renderMsgTimeEl(timeEl, m.created_at || '', Boolean(m.edited_at));
 
     if (m.is_encrypted) {
       if (decryptedPayload) {
@@ -592,8 +907,63 @@ export function messagesPage(
       bubble.appendChild(timeEl);
     }
 
-    row.appendChild(bubble);
+    var stack = document.createElement('div');
+    stack.className = 'dm-msg-stack';
+    stack.appendChild(bubble);
+    var reactWrap = document.createElement('div');
+    reactWrap.className = 'dm-msg-reactions';
+    reactWrap.setAttribute('data-reactions-for', String(m.id));
+    stack.appendChild(reactWrap);
+    row.appendChild(stack);
+    renderMessageReactions(row, Array.isArray(m.reactions) ? m.reactions : []);
     return row;
+  }
+
+  function formatCompactCountClient(count) {
+    var raw = Number(count);
+    if (!isFinite(raw) || raw <= 0) return '0';
+    var n = Math.floor(raw);
+    if (n < 1000) return String(n);
+    var u = state.compactUnits || { k: 'K', m: 'M', b: 'B' };
+    var sep = state.langCode === 'en' ? '' : ' ';
+    function fmt(val, unit) {
+      var rounded = val >= 100 ? Math.floor(val) : Math.floor(val * 10) / 10;
+      var s = (rounded % 1 === 0) ? String(rounded) : rounded.toFixed(1).replace(/\.0$/, '');
+      return s + sep + unit;
+    }
+    if (n >= 1000000000) return fmt(n / 1000000000, u.b);
+    if (n >= 1000000) return fmt(n / 1000000, u.m);
+    return fmt(n / 1000, u.k);
+  }
+
+  function renderMessageReactions(row, reactions) {
+    if (!row) return;
+    var msgId = parseInt(row.getAttribute('data-msg-id') || '0', 10);
+    if (!msgId) return;
+    var wrap = row.querySelector('.dm-msg-reactions');
+    if (!wrap) return;
+    while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+    if (!Array.isArray(reactions) || reactions.length === 0) return;
+    for (var i = 0; i < reactions.length; i++) {
+      var r = reactions[i];
+      if (!r || !r.emoji) continue;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dm-reaction-pill' + (r.mine ? ' mine' : '');
+      btn.setAttribute('data-react-msg-id', String(msgId));
+      btn.setAttribute('data-react-emoji', r.emoji);
+      var emSpan = document.createElement('span');
+      emSpan.className = 'dm-reaction-emoji';
+      emSpan.textContent = r.emoji;
+      btn.appendChild(emSpan);
+      if (Number(r.count) > 1) {
+        var cntSpan = document.createElement('span');
+        cntSpan.className = 'dm-reaction-count';
+        cntSpan.textContent = formatCompactCountClient(r.count);
+        btn.appendChild(cntSpan);
+      }
+      wrap.appendChild(btn);
+    }
   }
 
   function appendMessageIfNew(m, shouldScroll, decryptedPayload, localMediaUrl) {
@@ -606,6 +976,41 @@ export function messagesPage(
     if (!state.oldestMsgId || Number(m.id) < state.oldestMsgId) state.oldestMsgId = Number(m.id);
     updateSeenUI();
     if (shouldScroll) scrollToBottom();
+  }
+
+  function syncAfterMsgRemoval() {
+    if (!listEl) return;
+    var rows = listEl.querySelectorAll('.dm-msg-row[data-msg-id]');
+    if (rows.length > 0) {
+      var firstId = parseInt(rows[0].getAttribute('data-msg-id') || '0', 10);
+      if (firstId > 0) state.oldestMsgId = firstId;
+      var lastRow = rows[rows.length - 1];
+      if (convListEl && state.activeConversationId) {
+        var item = convListEl.querySelector('.dm-conv-item[data-conv-id="' + state.activeConversationId + '"]');
+        if (item) {
+          var previewEl = item.querySelector('.dm-conv-preview');
+          if (previewEl) {
+            var isMine = lastRow.classList.contains('mine');
+            var prefix = isMine ? state.youPrefix : '';
+            var txtEl = lastRow.querySelector('.dm-msg-text');
+            var txt = txtEl ? (txtEl.textContent || '') : '';
+            var hasImg = Boolean(lastRow.querySelector('.dm-msg-img') || lastRow.getAttribute('data-image-key'));
+            var isEnc = lastRow.getAttribute('data-encrypted') === '1';
+            previewEl.textContent = txt ? (prefix + txt) : (hasImg ? (prefix + state.photoLabel) : (isEnc ? (prefix + state.encryptedPreview) : ''));
+          }
+        }
+      }
+    } else {
+      state.oldestMsgId = 0;
+      if (convListEl && state.activeConversationId) {
+        var emptyItem = convListEl.querySelector('.dm-conv-item[data-conv-id="' + state.activeConversationId + '"]');
+        if (emptyItem) {
+          var emptyPrev = emptyItem.querySelector('.dm-conv-preview');
+          if (emptyPrev) emptyPrev.textContent = '';
+        }
+      }
+    }
+    updateSeenUI();
   }
 
   function updateSidebarPreview(convId, senderId, plainText, hasImg) {
@@ -656,27 +1061,27 @@ export function messagesPage(
         var res = await c.decryptMessage(m);
         if (res.ok && res.payload) {
           hydrateBubbleContent(bubble, timeEl, res.payload, m.image_key || '', '');
+          if (Number(m.id) === Number(state.lastMsgId) && Number(m.edit_version || 0) > 0) {
+            updateSidebarPreview(state.activeConversationId, m.sender_id, res.payload.text, Boolean(res.payload.media));
+          }
         } else {
+          if (res && res.reason === 'KEY_CHANGED' && res.userId && res.deviceId) {
+            pendingKeyChange = {
+              userId: res.userId,
+              deviceId: res.deviceId,
+              identityKey: res.identityKey || ''
+            };
+            showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+          }
           var slot = bubble.querySelector('[data-enc-slot="1"]');
           if (slot) slot.textContent = state.e2eeDecryptFailed;
         }
       }
       if (scrollEl) scrollToBottom();
-
-      if (state.activePartnerId > 0) {
-        var info = await c.getSafetyNumber(state.activePartnerId);
-        currentSafetyInfo = info;
-        if (safetyBtn) {
-          if (info.verified) safetyBtn.classList.add('is-verified');
-          else safetyBtn.classList.remove('is-verified');
-        }
-        if (!info.ready) {
-          showBanner(state.e2eePartnerNotReady, false, '');
-        }
-      }
     } catch (e) {}
   }
 
+  syncRenderedMsgClocks();
   if (scrollEl) {
     scrollToBottom();
     setTimeout(scrollToBottom, 80);
@@ -693,88 +1098,35 @@ export function messagesPage(
           pendingKeyChange.identityKey
         );
         hideBanner();
-        if (safetyBtn) safetyBtn.classList.remove('is-verified');
       } catch (e) {}
-    });
-  }
-
-  function closeSafetyModal() {
-    if (safetyModal) safetyModal.classList.remove('visible');
-  }
-
-  if (safetyBtn && safetyModal) {
-    safetyBtn.addEventListener('click', async function() {
-      if (!state.activePartnerId) return;
-      safetyModal.classList.add('visible');
-      if (safetyGrid) safetyGrid.textContent = '...';
-      if (safetyStatus) safetyStatus.style.display = 'none';
-      if (safetyVerifyBtn) safetyVerifyBtn.style.display = 'none';
-      try {
-        var c = await ensureE2eeReady();
-        if (!c) return;
-        var info = await c.getSafetyNumber(state.activePartnerId);
-        currentSafetyInfo = info;
-        if (!info.ready) {
-          if (safetyGrid) safetyGrid.textContent = state.e2eePartnerNotReady;
-          return;
-        }
-        if (safetyGrid) {
-          safetyGrid.innerHTML = '';
-          info.formatted.split(' ').forEach(function(chunk) {
-            var span = document.createElement('span');
-            span.textContent = chunk;
-            safetyGrid.appendChild(span);
-          });
-        }
-        if (safetyStatus) safetyStatus.style.display = info.verified ? 'inline-flex' : 'none';
-        if (safetyVerifyBtn) {
-          safetyVerifyBtn.style.display = 'inline-flex';
-          safetyVerifyBtn.textContent = info.verified ? state.e2eeUnverifyBtn : state.e2eeVerifyBtn;
-        }
-      } catch (e) {
-        if (safetyGrid) safetyGrid.textContent = state.networkError;
-      }
-    });
-  }
-
-  if (safetyVerifyBtn) {
-    safetyVerifyBtn.addEventListener('click', async function() {
-      if (!e2eeClient || !currentSafetyInfo || !currentSafetyInfo.ready) return;
-      var nextVerified = !currentSafetyInfo.verified;
-      await e2eeClient.setVerified(state.activePartnerId, nextVerified ? currentSafetyInfo.fingerprint : null);
-      currentSafetyInfo.verified = nextVerified;
-      if (safetyStatus) safetyStatus.style.display = nextVerified ? 'inline-flex' : 'none';
-      safetyVerifyBtn.textContent = nextVerified ? state.e2eeUnverifyBtn : state.e2eeVerifyBtn;
-      if (safetyBtn) {
-        if (nextVerified) safetyBtn.classList.add('is-verified');
-        else safetyBtn.classList.remove('is-verified');
-      }
-    });
-  }
-
-  if (closeSafetyBtn) closeSafetyBtn.addEventListener('click', closeSafetyModal);
-  if (okSafetyBtn) okSafetyBtn.addEventListener('click', closeSafetyModal);
-  if (safetyModal) {
-    safetyModal.addEventListener('click', function(e) {
-      if (e.target === safetyModal) closeSafetyModal();
-    });
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && safetyModal.classList.contains('visible')) {
-        closeSafetyModal();
-      }
     });
   }
 
   if (inputEl) {
     inputEl.addEventListener('input', syncSendState);
     inputEl.addEventListener('focus', function() {
-      setTimeout(function() {
-        syncDmViewport();
-        scrollToBottom();
-      }, 120);
+      var snap = isPinnedToBottom || !scrollEl || (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < 140;
+      if (snap) {
+        isPinnedToBottom = true;
+        kbOpeningUntil = Date.now() + 750;
+      }
+      clearKbTimers();
+      syncDmViewport(snap);
+      [60, 180, 350, 550].forEach(function(ms) {
+        kbTimers.push(setTimeout(function() {
+          syncDmViewport(snap);
+        }, ms));
+      });
     });
     inputEl.addEventListener('blur', function() {
-      setTimeout(syncDmViewport, 80);
+      clearKbTimers();
+      kbOpeningUntil = 0;
+      kbTimers.push(setTimeout(function() {
+        syncDmViewport(false);
+      }, 100));
+      kbTimers.push(setTimeout(function() {
+        syncDmViewport(false);
+      }, 300));
     });
   }
 
@@ -805,11 +1157,130 @@ export function messagesPage(
     attachClearBtn.addEventListener('click', clearPendingFile);
   }
 
+  if (editCancelBtn) {
+    editCancelBtn.addEventListener('click', cancelEditMode);
+  }
+
   if (formEl) {
     formEl.addEventListener('submit', async function(e) {
       e.preventDefault();
       if (isSending) return;
       var text = inputEl ? inputEl.value.trim() : '';
+
+      if (editingMsg) {
+        if (!text && !editingMsg.existingMedia && !editingMsg.imageKey) return;
+        var editTarget = editingMsg;
+        isSending = true;
+        syncSendState();
+        try {
+          if (!editTarget.isEncrypted) {
+            var plainRes = await fetch('/api/messages/edit', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message_id: editTarget.id,
+                body: text
+              })
+            });
+            var plainData = await plainRes.json();
+            if (plainRes.ok && plainData && plainData.success) {
+              var plainVer = Number(plainData.edit_version || 1);
+              if (listEl) {
+                var pRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + editTarget.id + '"]');
+                if (pRow) {
+                  pRow.setAttribute('data-edit-version', String(plainVer));
+                  var pBubble = pRow.querySelector('.dm-msg-bubble');
+                  var pTime = pRow.querySelector('.dm-msg-time');
+                  if (pBubble && pTime) {
+                    renderMsgTimeEl(pTime, pTime.getAttribute('data-ts') || '', true);
+                    applyPlainBubbleEdit(pBubble, pTime, text, Boolean(editTarget.imageKey));
+                  }
+                }
+              }
+              if (Number(editTarget.id) === Number(state.lastMsgId)) {
+                updateSidebarPreview(state.activeConversationId, state.currentUserId, text, Boolean(editTarget.imageKey));
+              }
+              cancelEditMode();
+            } else if (window.showAppToast) {
+              window.showAppToast((plainData && plainData.error) || state.networkError);
+            }
+            return;
+          }
+
+          var ec = await ensureE2eeReady();
+          if (!ec) {
+            if (window.showAppToast) window.showAppToast(state.networkError);
+            return;
+          }
+          var encEdit;
+          try {
+            encEdit = await ec.encryptMessage({
+              partnerUserId: state.activePartnerId,
+              text: text,
+              existingMedia: editTarget.existingMedia,
+              editOf: editTarget.id
+            });
+          } catch (encEditErr) {
+            if (encEditErr && encEditErr.code === 'PARTNER_NOT_READY') {
+              if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
+              return;
+            }
+            if (encEditErr && encEditErr.code === 'KEY_CHANGED') {
+              pendingKeyChange = {
+                userId: encEditErr.userId,
+                deviceId: encEditErr.deviceId,
+                identityKey: encEditErr.identityKey
+              };
+              showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              return;
+            }
+            if (window.showAppToast) window.showAppToast(state.networkError);
+            return;
+          }
+          var editRes = await fetch('/api/messages/edit', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message_id: editTarget.id,
+              sender_device_id: encEdit.senderDeviceId,
+              envelopes: encEdit.envelopes
+            })
+          });
+          var editData = await editRes.json();
+          if (editRes.ok && editData && editData.success) {
+            hideBanner();
+            var nextVer = Number(editData.edit_version || 1);
+            await ec.cacheSentMessage(editTarget.id, encEdit.payload, nextVer);
+            if (listEl) {
+              var editedRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + editTarget.id + '"]');
+              if (editedRow) {
+                editedRow.setAttribute('data-edit-version', String(nextVer));
+                var eBubble = editedRow.querySelector('.dm-msg-bubble');
+                var eTime = editedRow.querySelector('.dm-msg-time');
+                if (eBubble && eTime) {
+                  renderMsgTimeEl(eTime, eTime.getAttribute('data-ts') || '', true);
+                  hydrateBubbleContent(eBubble, eTime, encEdit.payload, editTarget.imageKey || '', '');
+                }
+              }
+            }
+            if (Number(editTarget.id) === Number(state.lastMsgId)) {
+              updateSidebarPreview(state.activeConversationId, state.currentUserId, encEdit.payload.text, Boolean(encEdit.payload.media));
+            }
+            cancelEditMode();
+          } else if (window.showAppToast) {
+            window.showAppToast((editData && editData.error) || state.networkError);
+          }
+        } catch (errEdit) {
+          if (window.showAppToast) window.showAppToast(state.networkError);
+        } finally {
+          isSending = false;
+          syncSendState();
+        }
+        return;
+      }
+
       if (!text && !pendingFile) return;
 
       isSending = true;
@@ -843,7 +1314,6 @@ export function messagesPage(
         } catch (encErr) {
           if (sentLocalPreview) { try { URL.revokeObjectURL(sentLocalPreview); } catch (e2) {} }
           if (encErr && encErr.code === 'PARTNER_NOT_READY') {
-            showBanner(state.e2eePartnerNotReady, false, '');
             if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
             return;
           }
@@ -916,6 +1386,8 @@ export function messagesPage(
   if (loadOlderBtn && listEl && scrollEl) {
     loadOlderBtn.addEventListener('click', async function() {
       if (!state.activeConversationId || !state.oldestMsgId || loadOlderBtn.disabled) return;
+      isPinnedToBottom = false;
+      kbOpeningUntil = 0;
       loadOlderBtn.disabled = true;
       var prevHeight = scrollEl.scrollHeight;
       try {
@@ -933,7 +1405,16 @@ export function messagesPage(
             var dec = null;
             if (m.is_encrypted && c) {
               var rDec = await c.decryptMessage(m);
-              if (rDec.ok && rDec.payload) dec = rDec.payload;
+              if (rDec.ok && rDec.payload) {
+                dec = rDec.payload;
+              } else if (rDec && rDec.reason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+                pendingKeyChange = {
+                  userId: rDec.userId,
+                  deviceId: rDec.deviceId,
+                  identityKey: rDec.identityKey || ''
+                };
+                showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              }
             }
             frag.appendChild(buildMessageRowEl(m, dec, ''));
           }
@@ -956,8 +1437,240 @@ export function messagesPage(
     });
   }
 
+  function closeReactionPicker() {
+    if (reactionPicker) {
+      reactionPicker.classList.remove('visible');
+      reactionPicker.setAttribute('aria-hidden', 'true');
+    }
+    if (reactActiveRow) {
+      reactActiveRow.classList.remove('is-react-open');
+      reactActiveRow = null;
+    }
+    reactTargetMsgId = 0;
+  }
+
+  function clearMsgLongPressTimer() {
+    if (msgLongPressTimer) {
+      clearTimeout(msgLongPressTimer);
+      msgLongPressTimer = null;
+    }
+  }
+
+  function openReactionPicker(row, anchorX, anchorY) {
+    if (!reactionPicker || !row) return;
+    var msgId = parseInt(row.getAttribute('data-msg-id') || '0', 10);
+    if (!msgId) return;
+    closeConvCtxMenu();
+    closeReactionPicker();
+    reactTargetMsgId = msgId;
+    reactActiveRow = row;
+    reactActiveRow.classList.add('is-react-open');
+
+    var myPill = row.querySelector('.dm-reaction-pill.mine');
+    var myEmoji = myPill ? (myPill.getAttribute('data-react-emoji') || '') : '';
+    reactionPicker.querySelectorAll('.dm-reaction-pick-btn').forEach(function(b) {
+      if (myEmoji && b.getAttribute('data-pick-emoji') === myEmoji) {
+        b.classList.add('is-selected');
+      } else {
+        b.classList.remove('is-selected');
+      }
+    });
+    if (msgEditBtn) {
+      var canEditMsg = row.classList.contains('mine') && !row.querySelector('.dm-msg-decrypt-err');
+      msgEditBtn.style.display = canEditMsg ? 'flex' : 'none';
+    }
+    if (msgActionList) {
+      msgActionList.style.display = 'flex';
+    }
+
+    reactionPicker.style.left = '0px';
+    reactionPicker.style.top = '0px';
+    reactionPicker.classList.add('visible');
+    reactionPicker.setAttribute('aria-hidden', 'false');
+
+    var pickerRect = reactionPicker.getBoundingClientRect();
+    var bubbleEl = row.querySelector('.dm-msg-bubble') || row;
+    var bRect = bubbleEl.getBoundingClientRect ? bubbleEl.getBoundingClientRect() : { left: anchorX, top: anchorY, width: 0, height: 0 };
+    var pad = 10;
+    var vw = window.innerWidth || 360;
+    var vh = window.innerHeight || 640;
+    var pw = pickerRect.width || 310;
+    var ph = pickerRect.height || 54;
+    var cx = (typeof anchorX === 'number' && anchorX > 0) ? anchorX : (bRect.left + bRect.width / 2);
+    var x = cx - pw / 2;
+    var y = (bRect.top > ph + pad + 8) ? (bRect.top - ph - 8) : ((typeof anchorY === 'number' && anchorY > 0) ? (anchorY + 12) : (bRect.top + bRect.height + 8));
+    if (x + pw + pad > vw) x = vw - pw - pad;
+    if (x < pad) x = pad;
+    if (y + ph + pad > vh) y = vh - ph - pad;
+    if (y < pad) y = pad;
+
+    reactionPicker.style.left = Math.round(x) + 'px';
+    reactionPicker.style.top = Math.round(y) + 'px';
+  }
+
+  async function toggleMessageReaction(msgId, emoji) {
+    if (!msgId || !emoji || reactingMsgIds[msgId]) return;
+    reactingMsgIds[msgId] = true;
+    try {
+      var res = await fetch('/api/messages/react', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: msgId, emoji: emoji })
+      });
+      var data = await res.json();
+      if (res.ok && data && data.success && listEl) {
+        var row = listEl.querySelector('.dm-msg-row[data-msg-id="' + msgId + '"]');
+        if (row) renderMessageReactions(row, data.reactions || []);
+      } else if (window.showAppToast) {
+        window.showAppToast((data && data.error) || state.networkError);
+      }
+    } catch (e) {
+      if (window.showAppToast) window.showAppToast(state.networkError);
+    } finally {
+      delete reactingMsgIds[msgId];
+    }
+  }
+
+  if (msgEditBtn) {
+    msgEditBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var targetId = reactTargetMsgId;
+      var targetRow = reactActiveRow;
+      closeReactionPicker();
+      if (targetId && targetRow && targetRow.classList.contains('mine')) {
+        startEditMode(targetId, targetRow);
+      }
+    });
+  }
+
+  if (msgDeleteBtn) {
+    msgDeleteBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var targetId = reactTargetMsgId;
+      closeReactionPicker();
+      if (targetId) {
+        openDeleteMessageModal(targetId);
+      }
+    });
+  }
+
+  if (reactionPicker) {
+    reactionPicker.addEventListener('click', function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-pick-emoji]') : null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var emoji = btn.getAttribute('data-pick-emoji') || '';
+      var targetId = reactTargetMsgId;
+      closeReactionPicker();
+      if (targetId && emoji) {
+        toggleMessageReaction(targetId, emoji);
+      }
+    });
+
+    function onGlobalReactPointerDown(e) {
+      if (!reactionPicker.classList.contains('visible')) return;
+      if (e.target && reactionPicker.contains(e.target)) return;
+      closeReactionPicker();
+    }
+
+    function onGlobalReactKeydown(e) {
+      if (e.key === 'Escape') {
+        if (reactionPicker.classList.contains('visible')) {
+          closeReactionPicker();
+        } else if (editingMsg) {
+          cancelEditMode();
+        }
+      }
+    }
+
+    document.addEventListener('pointerdown', onGlobalReactPointerDown, true);
+    document.addEventListener('keydown', onGlobalReactKeydown);
+    window.addEventListener('resize', closeReactionPicker);
+    if (scrollEl) scrollEl.addEventListener('scroll', closeReactionPicker, { passive: true });
+    extraCleanups.push(function() {
+      clearMsgLongPressTimer();
+      document.removeEventListener('pointerdown', onGlobalReactPointerDown, true);
+      document.removeEventListener('keydown', onGlobalReactKeydown);
+      window.removeEventListener('resize', closeReactionPicker);
+      if (scrollEl) scrollEl.removeEventListener('scroll', closeReactionPicker);
+    });
+  }
+
   if (listEl) {
+    listEl.addEventListener('contextmenu', function(e) {
+      if (e.target && e.target.closest && e.target.closest('.dm-unsend-btn')) return;
+      var row = e.target && e.target.closest ? e.target.closest('.dm-msg-row[data-msg-id]') : null;
+      if (!row || !reactionPicker) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openReactionPicker(row, e.clientX, e.clientY);
+    });
+
+    listEl.addEventListener('touchstart', function(e) {
+      if (!e.touches || e.touches.length !== 1) {
+        clearMsgLongPressTimer();
+        return;
+      }
+      if (e.target && e.target.closest && e.target.closest('.dm-unsend-btn, .dm-reaction-pill')) return;
+      var bubble = e.target && e.target.closest ? e.target.closest('.dm-msg-bubble') : null;
+      var row = bubble && bubble.closest ? bubble.closest('.dm-msg-row[data-msg-id]') : null;
+      if (!row || !reactionPicker) return;
+      clearMsgLongPressTimer();
+      msgLongPressDidFire = false;
+      var t0 = e.touches[0];
+      msgLongPressStartX = t0.clientX;
+      msgLongPressStartY = t0.clientY;
+      msgLongPressTimer = setTimeout(function() {
+        msgLongPressTimer = null;
+        msgLongPressDidFire = true;
+        suppressNextMsgClickUntil = Date.now() + 1000;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(15); } catch (ve) {}
+        }
+        openReactionPicker(row, msgLongPressStartX, msgLongPressStartY);
+      }, 450);
+    }, { passive: true });
+
+    listEl.addEventListener('touchmove', function(e) {
+      if (!msgLongPressTimer || !e.touches || !e.touches.length) return;
+      var t0 = e.touches[0];
+      if (Math.abs(t0.clientX - msgLongPressStartX) > 10 || Math.abs(t0.clientY - msgLongPressStartY) > 10) {
+        clearMsgLongPressTimer();
+      }
+    }, { passive: true });
+
+    listEl.addEventListener('touchend', function() {
+      clearMsgLongPressTimer();
+      if (msgLongPressDidFire) {
+        suppressNextMsgClickUntil = Date.now() + 500;
+        msgLongPressDidFire = false;
+      }
+    }, { passive: true });
+
+    listEl.addEventListener('touchcancel', function() {
+      clearMsgLongPressTimer();
+      msgLongPressDidFire = false;
+    }, { passive: true });
+
     listEl.addEventListener('click', function(e) {
+      if (Date.now() < suppressNextMsgClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      var reactPill = e.target && e.target.closest ? e.target.closest('.dm-reaction-pill[data-react-msg-id]') : null;
+      if (reactPill) {
+        e.preventDefault();
+        e.stopPropagation();
+        var rMsgId = parseInt(reactPill.getAttribute('data-react-msg-id') || '0', 10);
+        var rEmoji = reactPill.getAttribute('data-react-emoji') || '';
+        if (rMsgId && rEmoji) toggleMessageReaction(rMsgId, rEmoji);
+        return;
+      }
       var imgBtn = e.target && e.target.closest ? e.target.closest('[data-dm-lightbox]') : null;
       if (imgBtn && lightbox && lightboxImg) {
         lightboxImg.src = imgBtn.getAttribute('data-dm-lightbox') || '';
@@ -968,39 +1681,7 @@ export function messagesPage(
       if (!unsendBtn) return;
       var msgId = parseInt(unsendBtn.getAttribute('data-unsend-id'), 10);
       if (!msgId) return;
-
-      function doUnsend() {
-        fetch('/api/messages/delete', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message_id: msgId })
-        }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
-          .then(function(res) {
-            if (res.ok && res.d && res.d.success) {
-              var row = listEl.querySelector('.dm-msg-row[data-msg-id="' + msgId + '"]');
-              if (row) row.remove();
-              updateSeenUI();
-            } else if (window.showAppToast) {
-              window.showAppToast((res.d && res.d.error) || state.networkError);
-            }
-          })
-          .catch(function() {
-            if (window.showAppToast) window.showAppToast(state.networkError);
-          });
-      }
-
-      if (window.showAppConfirm) {
-        window.showAppConfirm({
-          title: state.unsendTitle,
-          message: state.unsendDesc,
-          okText: state.deleteBtn,
-          danger: true,
-          onOk: doUnsend
-        });
-      } else if (window.confirm(state.unsendDesc)) {
-        doUnsend();
-      }
+      openDeleteMessageModal(msgId);
     });
   }
 
@@ -1013,9 +1694,374 @@ export function messagesPage(
     lightbox.addEventListener('click', function(e) {
       if (e.target === lightbox) lightbox.classList.remove('visible');
     });
-    document.addEventListener('keydown', function(e) {
+    function onLightboxKeydown(e) {
       if (e.key === 'Escape' && lightbox.classList.contains('visible')) {
         lightbox.classList.remove('visible');
+      }
+    }
+    document.addEventListener('keydown', onLightboxKeydown);
+    extraCleanups.push(function() {
+      document.removeEventListener('keydown', onLightboxKeydown);
+    });
+  }
+
+  function closeConvCtxMenu() {
+    if (convCtxMenu) {
+      convCtxMenu.classList.remove('visible');
+      convCtxMenu.setAttribute('aria-hidden', 'true');
+    }
+    if (ctxActiveItem) {
+      ctxActiveItem.classList.remove('is-ctx-open');
+      ctxActiveItem = null;
+    }
+    ctxTarget = null;
+  }
+
+  function openConvCtxMenu(item, clientX, clientY) {
+    if (!convCtxMenu || !item) return;
+    var convId = parseInt(item.getAttribute('data-conv-id') || '0', 10);
+    var partnerUsername = item.getAttribute('data-partner-username') || '';
+    var lastMsgIdAttr = parseInt(item.getAttribute('data-last-msg-id') || '0', 10);
+    if (!convId || !partnerUsername) return;
+
+    closeConvCtxMenu();
+    ctxTarget = { convId: convId, username: partnerUsername, lastMsgId: lastMsgIdAttr };
+    ctxActiveItem = item;
+    ctxActiveItem.classList.add('is-ctx-open');
+
+    convCtxMenu.style.left = '0px';
+    convCtxMenu.style.top = '0px';
+    convCtxMenu.classList.add('visible');
+    convCtxMenu.setAttribute('aria-hidden', 'false');
+
+    var rect = convCtxMenu.getBoundingClientRect();
+    var pad = 10;
+    var vw = window.innerWidth || 360;
+    var vh = window.innerHeight || 640;
+    var menuW = rect.width || 196;
+    var menuH = rect.height || 56;
+    var x = Number(clientX || 0);
+    var y = Number(clientY || 0);
+    if (x + menuW + pad > vw) x = vw - menuW - pad;
+    if (y + menuH + pad > vh) y = vh - menuH - pad;
+    if (x < pad) x = pad;
+    if (y < pad) y = pad;
+
+    convCtxMenu.style.left = Math.round(x) + 'px';
+    convCtxMenu.style.top = Math.round(y) + 'px';
+  }
+
+  function closeDeleteChatModal() {
+    if (!deleteChatModal) return;
+    deleteChatModal.classList.remove('visible');
+    deleteChatModal.setAttribute('aria-hidden', 'true');
+    deleteTarget = null;
+    if (deleteForBothCheck) deleteForBothCheck.checked = false;
+    if (deleteChatConfirmBtn) deleteChatConfirmBtn.disabled = false;
+  }
+
+  function openDeleteChatModal(target) {
+    if (!deleteChatModal || !target) return;
+    deleteTarget = {
+      kind: 'chat',
+      convId: target.convId,
+      username: target.username,
+      lastMsgId: target.lastMsgId || 0
+    };
+    if (deleteChatTitle) {
+      deleteChatTitle.textContent = state.deleteChatConfirmTitle;
+    }
+    if (deleteChatDesc) {
+      deleteChatDesc.textContent = state.deleteChatConfirmDesc.replace('{username}', target.username);
+    }
+    if (deleteForBothLabel) {
+      deleteForBothLabel.textContent = state.deleteChatAlsoFor.replace('{username}', target.username);
+    }
+    if (deleteForBothCheck) deleteForBothCheck.checked = false;
+    if (deleteChatConfirmBtn) deleteChatConfirmBtn.disabled = false;
+    deleteChatModal.classList.add('visible');
+    deleteChatModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function openDeleteMessageModal(msgId) {
+    if (!deleteChatModal || !msgId) return;
+    var partnerUname = state.activePartnerUsername || '';
+    deleteTarget = {
+      kind: 'message',
+      msgId: Number(msgId),
+      username: partnerUname
+    };
+    if (deleteChatTitle) {
+      deleteChatTitle.textContent = state.deleteMessageConfirmTitle;
+    }
+    if (deleteChatDesc) {
+      deleteChatDesc.textContent = state.deleteMessageConfirmDesc;
+    }
+    if (deleteForBothLabel) {
+      deleteForBothLabel.textContent = state.deleteChatAlsoFor.replace('{username}', partnerUname);
+    }
+    if (deleteForBothCheck) deleteForBothCheck.checked = false;
+    if (deleteChatConfirmBtn) deleteChatConfirmBtn.disabled = false;
+    deleteChatModal.classList.add('visible');
+    deleteChatModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function renderEmptyConvListIfNeeded() {
+    if (!convListEl) return;
+    if (convListEl.querySelector('.dm-conv-item')) return;
+    if (document.getElementById('dmEmptyList')) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'dm-empty-list';
+    wrap.id = 'dmEmptyList';
+    var icon = document.createElement('div');
+    icon.className = 'dm-empty-icon';
+    icon.innerHTML = state.chatBigIcon;
+    var title = document.createElement('div');
+    title.className = 'dm-empty-title';
+    title.textContent = state.emptyListTitle;
+    var desc = document.createElement('div');
+    desc.className = 'dm-empty-desc';
+    desc.textContent = state.emptyListDesc;
+    wrap.appendChild(icon);
+    wrap.appendChild(title);
+    wrap.appendChild(desc);
+    convListEl.appendChild(wrap);
+  }
+
+  function clearLongPressTimer() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  if (convListEl && convCtxMenu) {
+    convListEl.addEventListener('contextmenu', function(e) {
+      var item = e.target && e.target.closest ? e.target.closest('.dm-conv-item[data-conv-id]') : null;
+      if (!item) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openConvCtxMenu(item, e.clientX, e.clientY);
+    });
+
+    convListEl.addEventListener('touchstart', function(e) {
+      if (!e.touches || e.touches.length !== 1) {
+        clearLongPressTimer();
+        return;
+      }
+      var item = e.target && e.target.closest ? e.target.closest('.dm-conv-item[data-conv-id]') : null;
+      if (!item) return;
+      clearLongPressTimer();
+      longPressDidFire = false;
+      var touch = e.touches[0];
+      longPressStartX = touch.clientX;
+      longPressStartY = touch.clientY;
+      longPressTimer = setTimeout(function() {
+        longPressTimer = null;
+        longPressDidFire = true;
+        suppressNextConvClickUntil = Date.now() + 1000;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(15); } catch (ve) {}
+        }
+        openConvCtxMenu(item, longPressStartX, longPressStartY);
+      }, 450);
+    }, { passive: true });
+
+    convListEl.addEventListener('touchmove', function(e) {
+      if (!longPressTimer || !e.touches || !e.touches.length) return;
+      var t0 = e.touches[0];
+      if (Math.abs(t0.clientX - longPressStartX) > 10 || Math.abs(t0.clientY - longPressStartY) > 10) {
+        clearLongPressTimer();
+      }
+    }, { passive: true });
+
+    convListEl.addEventListener('touchend', function() {
+      clearLongPressTimer();
+      if (longPressDidFire) {
+        suppressNextConvClickUntil = Date.now() + 500;
+        longPressDidFire = false;
+      }
+    }, { passive: true });
+    convListEl.addEventListener('touchcancel', function() {
+      clearLongPressTimer();
+      longPressDidFire = false;
+    }, { passive: true });
+
+    convListEl.addEventListener('click', function(e) {
+      if (Date.now() < suppressNextConvClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (convCtxMenu.classList.contains('visible')) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeConvCtxMenu();
+      }
+    }, true);
+
+    convListEl.addEventListener('scroll', closeConvCtxMenu, { passive: true });
+
+    function onGlobalPointerDown(e) {
+      if (!convCtxMenu.classList.contains('visible')) return;
+      if (e.target && convCtxMenu.contains(e.target)) return;
+      closeConvCtxMenu();
+    }
+
+    function onGlobalCtxKeydown(e) {
+      if (e.key === 'Escape') {
+        if (convCtxMenu.classList.contains('visible')) closeConvCtxMenu();
+        if (deleteChatModal && deleteChatModal.classList.contains('visible') && !isDeletingChat) {
+          closeDeleteChatModal();
+        }
+      }
+    }
+
+    document.addEventListener('pointerdown', onGlobalPointerDown, true);
+    document.addEventListener('keydown', onGlobalCtxKeydown);
+    window.addEventListener('resize', closeConvCtxMenu);
+    extraCleanups.push(function() {
+      clearLongPressTimer();
+      document.removeEventListener('pointerdown', onGlobalPointerDown, true);
+      document.removeEventListener('keydown', onGlobalCtxKeydown);
+      window.removeEventListener('resize', closeConvCtxMenu);
+    });
+  }
+
+  if (ctxDeleteBtn) {
+    ctxDeleteBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var chosen = ctxTarget;
+      closeConvCtxMenu();
+      if (chosen) openDeleteChatModal(chosen);
+    });
+  }
+
+  if (deleteChatModal) {
+    deleteChatModal.addEventListener('click', function(e) {
+      if (e.target === deleteChatModal && !isDeletingChat) {
+        closeDeleteChatModal();
+      }
+    });
+  }
+
+  if (deleteChatCancelBtn) {
+    deleteChatCancelBtn.addEventListener('click', function() {
+      if (!isDeletingChat) closeDeleteChatModal();
+    });
+  }
+
+  if (deleteChatConfirmBtn) {
+    deleteChatConfirmBtn.addEventListener('click', async function() {
+      if (isDeletingChat || !deleteTarget) return;
+      var target = deleteTarget;
+      var forBoth = Boolean(deleteForBothCheck && deleteForBothCheck.checked);
+      isDeletingChat = true;
+      deleteChatConfirmBtn.disabled = true;
+      try {
+        if (target.kind === 'message') {
+          var mRes = await fetch('/api/messages/delete', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message_id: target.msgId,
+              for_both: forBoth
+            })
+          });
+          var mData = await mRes.json();
+          if (mRes.ok && mData && mData.success) {
+            closeDeleteChatModal();
+            if (editingMsg && Number(editingMsg.id) === Number(target.msgId)) {
+              cancelEditMode();
+            }
+            if (listEl) {
+              var mRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + target.msgId + '"]');
+              if (mRow) mRow.remove();
+              syncAfterMsgRemoval();
+            }
+            try {
+              var mc = e2eeClient || await ensureE2eeReady();
+              if (mc && typeof mc.clearCachedMessages === 'function') {
+                await mc.clearCachedMessages([target.msgId]);
+              }
+            } catch (mce) {}
+            if (typeof mData.unread_total === 'number' && window.updateUnreadMessagesBadge) {
+              window.updateUnreadMessagesBadge(mData.unread_total);
+            }
+          } else {
+            deleteChatConfirmBtn.disabled = false;
+            if (window.showAppToast) {
+              window.showAppToast((mData && mData.error) || state.networkError);
+            }
+          }
+          return;
+        }
+
+        var res = await fetch('/api/messages/conversation/delete', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: target.convId,
+            for_both: forBoth
+          })
+        });
+        var data = await res.json();
+        if (res.ok && data && data.success) {
+          closeDeleteChatModal();
+          var idsToClear = Array.isArray(data.cleared_message_ids) ? data.cleared_message_ids.slice() : [];
+          if (target.lastMsgId > 0 && idsToClear.indexOf(target.lastMsgId) === -1) {
+            idsToClear.push(target.lastMsgId);
+          }
+          if (idsToClear.length > 0) {
+            try {
+              var c = e2eeClient || await ensureE2eeReady();
+              if (c && typeof c.clearCachedMessages === 'function') {
+                await c.clearCachedMessages(idsToClear);
+              }
+            } catch (ce) {}
+          }
+          if (convListEl) {
+            var removedEl = convListEl.querySelector('.dm-conv-item[data-conv-id="' + target.convId + '"]');
+            if (removedEl) removedEl.remove();
+            renderEmptyConvListIfNeeded();
+          }
+          if (typeof data.unread_total === 'number' && window.updateUnreadMessagesBadge) {
+            window.updateUnreadMessagesBadge(data.unread_total);
+          }
+          if (window.showAppToast) {
+            window.showAppToast(state.deleteChatSuccess);
+          }
+          if (Number(state.activeConversationId) === Number(target.convId)) {
+            if (window.__dmPollTimer) {
+              clearInterval(window.__dmPollTimer);
+              window.__dmPollTimer = null;
+            }
+            state.activeConversationId = 0;
+            if (e2eeClient && typeof e2eeClient.revokeAllMediaUrls === 'function') {
+              try { e2eeClient.revokeAllMediaUrls(); } catch (re) {}
+            }
+            if (window.spaNavigate) {
+              window.spaNavigate('/messages');
+            } else {
+              window.location.href = '/messages';
+            }
+          }
+        } else {
+          deleteChatConfirmBtn.disabled = false;
+          if (window.showAppToast) {
+            window.showAppToast((data && data.error) || state.networkError);
+          }
+        }
+      } catch (err) {
+        deleteChatConfirmBtn.disabled = false;
+        if (window.showAppToast) {
+          window.showAppToast(state.networkError);
+        }
+      } finally {
+        isDeletingChat = false;
       }
     });
   }
@@ -1116,10 +2162,35 @@ export function messagesPage(
     if (isPolling || document.visibilityState === 'hidden' || !state.activeConversationId) return;
     isPolling = true;
     try {
-      var r = await fetch(
-        '/api/messages/poll?conversation_id=' + state.activeConversationId + '&after_id=' + state.lastMsgId,
-        { credentials: 'same-origin', cache: 'no-store' }
-      );
+      var pollUrl = '/api/messages/poll?conversation_id=' + state.activeConversationId + '&after_id=' + state.lastMsgId;
+      if (state.oldestMsgId > 0) pollUrl += '&min_msg_id=' + state.oldestMsgId;
+      var r = await fetch(pollUrl, { credentials: 'same-origin', cache: 'no-store' });
+      if (r.status === 403 && state.activeConversationId > 0) {
+        try {
+          var cr = await fetch('/api/messages/conversations', { credentials: 'same-origin', cache: 'no-store' });
+          if (cr.ok) {
+            var cd = await cr.json();
+            var stillExists = Array.isArray(cd.conversations) && cd.conversations.some(function(item) {
+              return Number(item.id) === Number(state.activeConversationId);
+            });
+            if (!stillExists) {
+              if (window.__dmPollTimer) {
+                clearInterval(window.__dmPollTimer);
+                window.__dmPollTimer = null;
+              }
+              if (convListEl) {
+                var staleEl = convListEl.querySelector('.dm-conv-item[data-conv-id="' + state.activeConversationId + '"]');
+                if (staleEl) staleEl.remove();
+                renderEmptyConvListIfNeeded();
+              }
+              state.activeConversationId = 0;
+              if (window.spaNavigate) window.spaNavigate('/messages');
+              else window.location.href = '/messages';
+            }
+          }
+        } catch (ce2) {}
+        return;
+      }
       if (!r.ok) return;
       var d = await r.json();
       if (d && d.success) {
@@ -1131,7 +2202,16 @@ export function messagesPage(
             var dec = null;
             if (m.is_encrypted && c) {
               var rDec = await c.decryptMessage(m);
-              if (rDec.ok && rDec.payload) dec = rDec.payload;
+              if (rDec.ok && rDec.payload) {
+                dec = rDec.payload;
+              } else if (rDec && rDec.reason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+                pendingKeyChange = {
+                  userId: rDec.userId,
+                  deviceId: rDec.deviceId,
+                  identityKey: rDec.identityKey || ''
+                };
+                showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              }
             }
             appendMessageIfNew(m, nearBottom, dec, '');
             updateSidebarPreview(
@@ -1141,6 +2221,81 @@ export function messagesPage(
               dec ? Boolean(dec.media) : Boolean(m.image_key)
             );
           }
+        }
+        if (Array.isArray(d.edited_messages) && d.edited_messages.length > 0 && listEl) {
+          var cEdit = await ensureE2eeReady();
+          for (var ei = 0; ei < d.edited_messages.length; ei++) {
+            var em = d.edited_messages[ei];
+            var eRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + em.id + '"]');
+            if (!eRow) continue;
+            var curVer = parseInt(eRow.getAttribute('data-edit-version') || '0', 10);
+            var srvVer = Number(em.edit_version || 0);
+            if (srvVer <= curVer) continue;
+            var decEdit = null;
+            if (em.is_encrypted && cEdit) {
+              var rDecEdit = await cEdit.decryptMessage(em);
+              if (rDecEdit.ok && rDecEdit.payload) {
+                decEdit = rDecEdit.payload;
+              } else if (rDecEdit && rDecEdit.reason === 'KEY_CHANGED' && rDecEdit.userId && rDecEdit.deviceId) {
+                pendingKeyChange = {
+                  userId: rDecEdit.userId,
+                  deviceId: rDecEdit.deviceId,
+                  identityKey: rDecEdit.identityKey || ''
+                };
+                showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+                continue;
+              } else {
+                continue;
+              }
+            }
+            eRow.setAttribute('data-edit-version', String(srvVer));
+            var eb = eRow.querySelector('.dm-msg-bubble');
+            var et = eRow.querySelector('.dm-msg-time');
+            if (eb && et) {
+              renderMsgTimeEl(et, et.getAttribute('data-ts') || em.created_at || '', true);
+              if (em.is_encrypted && decEdit) {
+                hydrateBubbleContent(eb, et, decEdit, em.image_key || '', '');
+              } else if (!em.is_encrypted) {
+                applyPlainBubbleEdit(eb, et, em.body || '', Boolean(em.image_key));
+              }
+            }
+            if (Number(em.id) === Number(state.lastMsgId)) {
+              updateSidebarPreview(
+                state.activeConversationId,
+                em.sender_id,
+                decEdit ? decEdit.text : (em.body || ''),
+                decEdit ? Boolean(decEdit.media) : Boolean(em.image_key)
+              );
+            }
+          }
+        }
+        if (Array.isArray(d.deleted_message_ids) && d.deleted_message_ids.length > 0 && listEl) {
+          var removedIds = [];
+          for (var di = 0; di < d.deleted_message_ids.length; di++) {
+            var delId = Number(d.deleted_message_ids[di]);
+            if (!delId) continue;
+            var dRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + delId + '"]');
+            if (dRow) {
+              if (editingMsg && Number(editingMsg.id) === delId) {
+                cancelEditMode();
+              }
+              dRow.remove();
+              removedIds.push(delId);
+            }
+          }
+          if (removedIds.length > 0) {
+            syncAfterMsgRemoval();
+            if (e2eeClient && typeof e2eeClient.clearCachedMessages === 'function') {
+              try { await e2eeClient.clearCachedMessages(removedIds); } catch (dce) {}
+            }
+          }
+        }
+        if (d.reactions_map && typeof d.reactions_map === 'object' && listEl) {
+          listEl.querySelectorAll('.dm-msg-row[data-msg-id]').forEach(function(row) {
+            var mid = row.getAttribute('data-msg-id');
+            if (!mid || reactingMsgIds[mid]) return;
+            renderMessageReactions(row, d.reactions_map[mid] || []);
+          });
         }
         if (typeof d.last_read_own_id === 'number') {
           state.lastReadOwnId = d.last_read_own_id;

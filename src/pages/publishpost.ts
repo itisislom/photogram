@@ -1,5 +1,5 @@
 import { User } from '../types';
-import { layout, esc } from './layout';
+import { layout, esc, safeJsonForScript } from './layout';
 import { SEND_COMMENT_ICON } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
@@ -14,12 +14,12 @@ export function publishPostPage(
   t: Translations = ru,
   theme?: string
 ): string {
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     publishBtn: t.post.publishBtn,
     publishing: t.post.publishing,
     networkError: t.common.networkError,
     targetProfileUrl: `/u/${encodeURIComponent(currentUser.username)}`,
-  }).replace(/</g, '\\u003c');
+  });
 
   const body = `
 <div class="app-layout publishpost-layout">

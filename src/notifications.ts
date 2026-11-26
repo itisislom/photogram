@@ -2,6 +2,7 @@ import { Env, NotificationItem } from './types';
 import { getUserFromRequest } from './auth';
 import { detectLanguage, getTranslations } from './languages';
 import { sendPushToUser } from './push';
+import { acquireCooldownAtomic, consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -68,18 +69,25 @@ export async function createNotification(
       .first<{ username: string }>();
 
     if (actor?.username) {
-      let bodyText = '';
-      if (opts.type === 'like') bodyText = `@${actor.username} liked your post`;
-      else if (opts.type === 'follow') bodyText = `@${actor.username} started following you`;
-      else bodyText = `@${actor.username}: ${preview || 'commented on your post'}`;
+      const pushAllowed = await acquireCooldownAtomic(
+        env,
+        `push:notif:${opts.userId}:${opts.actorId}:${opts.type}`,
+        30,
+      );
+      if (pushAllowed) {
+        let bodyText = '';
+        if (opts.type === 'like') bodyText = `@${actor.username} liked your post`;
+        else if (opts.type === 'follow') bodyText = `@${actor.username} started following you`;
+        else bodyText = `@${actor.username}: ${preview || 'commented on your post'}`;
 
-      await sendPushToUser(env, opts.userId, {
-        kind: opts.type,
-        title: 'Photogram',
-        body: bodyText.slice(0, 140),
-        url: '/notifications',
-        tag: `notif-${opts.type}-${opts.postId || opts.actorId}`,
-      });
+        await sendPushToUser(env, opts.userId, {
+          kind: opts.type,
+          title: 'Photogram',
+          body: bodyText.slice(0, 140),
+          url: '/notifications',
+          tag: `notif-${opts.type}-${opts.postId || opts.actorId}`,
+        });
+      }
     }
   } catch {}
 }
@@ -240,12 +248,16 @@ export async function handleToggleNotificationsSetting(
     return jsonError(t.common.authRequired, 401);
   }
 
-  let body: { enabled?: unknown };
-  try {
-    body = (await request.json()) as { enabled?: unknown };
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const allowed = await consumeRateLimitAtomic(env, `notif:pref:${user.id}`, 20, 60);
+  if (!allowed) {
+    return jsonError(t.common.networkError, 429);
   }
+
+  const parsed = await readJsonWithLimit<{ enabled?: unknown }>(request, 1024);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
+  }
+  const body = parsed.data;
 
   if (typeof body?.enabled !== 'boolean') {
     return jsonError(t.common.networkError, 400);

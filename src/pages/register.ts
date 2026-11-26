@@ -1,4 +1,4 @@
-import { layout, esc, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
+import { layout, esc, safeJsonForScript, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
 import { getLegalCardsHtml, renderTranslateBarHtml, getTranslateScript } from './useraccept';
 import { CLOSE_ICON } from './nav';
 import { Translations, ru, renderLangSwitcherHtml } from '../languages';
@@ -124,12 +124,12 @@ export function registerPage(t: Translations = ru, theme?: string, addMode = fal
       }
       if (shouldReveal) {
         togglePasswordBtn.classList.add('is-revealed');
-        togglePasswordBtn.setAttribute('aria-label', ${JSON.stringify(t.auth.hidePassword)});
-        togglePasswordBtn.setAttribute('title', ${JSON.stringify(t.auth.hidePassword)});
+        togglePasswordBtn.setAttribute('aria-label', ${safeJsonForScript(t.auth.hidePassword)});
+        togglePasswordBtn.setAttribute('title', ${safeJsonForScript(t.auth.hidePassword)});
       } else {
         togglePasswordBtn.classList.remove('is-revealed');
-        togglePasswordBtn.setAttribute('aria-label', ${JSON.stringify(t.auth.showPassword)});
-        togglePasswordBtn.setAttribute('title', ${JSON.stringify(t.auth.showPassword)});
+        togglePasswordBtn.setAttribute('aria-label', ${safeJsonForScript(t.auth.showPassword)});
+        togglePasswordBtn.setAttribute('title', ${safeJsonForScript(t.auth.showPassword)});
       }
       passwordInput.focus();
     });
@@ -191,7 +191,7 @@ export function registerPage(t: Translations = ru, theme?: string, addMode = fal
     err.classList.remove('visible');
 
     if (!termsCheckbox || !termsCheckbox.checked) {
-      err.textContent = ${JSON.stringify(t.auth.errTermsRequired)};
+      err.textContent = ${safeJsonForScript(t.auth.errTermsRequired)};
       err.classList.add('visible');
       if (btn) btn.disabled = true;
       return;
@@ -199,23 +199,23 @@ export function registerPage(t: Translations = ru, theme?: string, addMode = fal
 
     var username = usernameInput.value.toLowerCase().trim();
     if (!/^[a-z0-9_]{3,24}$/.test(username)) {
-      err.textContent = ${JSON.stringify(t.auth.errUsernameFormat)};
+      err.textContent = ${safeJsonForScript(t.auth.errUsernameFormat)};
       err.classList.add('visible');
       return;
     }
     var displayName = (document.getElementById('display_name').value || '').trim();
     if (!displayName) {
-      err.textContent = ${JSON.stringify(t.auth.errDisplayNameRequired)};
+      err.textContent = ${safeJsonForScript(t.auth.errDisplayNameRequired)};
       err.classList.add('visible');
       return;
     }
     if (document.getElementById('password').value.length < 8) {
-      err.textContent = ${JSON.stringify(t.auth.errPasswordMin)};
+      err.textContent = ${safeJsonForScript(t.auth.errPasswordMin)};
       err.classList.add('visible');
       return;
     }
     btn.disabled = true;
-    btn.textContent = ${JSON.stringify(t.common.creating)};
+    btn.textContent = ${safeJsonForScript(t.common.creating)};
     try {
       var fd = new FormData();
       fd.append('username', username);
@@ -235,11 +235,11 @@ export function registerPage(t: Translations = ru, theme?: string, addMode = fal
         err.classList.add('visible');
       }
     } catch (x) {
-      err.textContent = ${JSON.stringify(t.common.networkError)};
+      err.textContent = ${safeJsonForScript(t.common.networkError)};
       err.classList.add('visible');
     }
     btn.disabled = !termsCheckbox.checked;
-    btn.textContent = ${JSON.stringify(t.auth.registerBtn)};
+    btn.textContent = ${safeJsonForScript(t.auth.registerBtn)};
   });
 
   ${getTranslateScript(true)}

@@ -62,7 +62,7 @@ export function getManifestJson(theme?: string): string {
 
 export const MANIFEST_JSON = getManifestJson('dark');
 
-export const SW_JS = `const CACHE_NAME = 'photogram-v8';
+export const SW_JS = `const CACHE_NAME = 'photogram-v9';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
@@ -210,7 +210,7 @@ self.addEventListener('push', function(event) {
       icon: '/icon.jpg',
       badge: '/icon.svg',
       tag: data.tag || 'photogram-notif',
-      renotify: true,
+      renotify: Boolean(data.kind === 'dm'),
       data: { url: data.url || '/' }
     });
   })());
@@ -219,7 +219,15 @@ self.addEventListener('push', function(event) {
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   var rawUrl = (event.notification && event.notification.data && event.notification.data.url) || '/';
-  var targetUrl = (typeof rawUrl === 'string' && rawUrl.startsWith('/') && !rawUrl.startsWith('//')) ? rawUrl : '/';
+  var targetUrl = '/';
+  if (typeof rawUrl === 'string' && rawUrl.startsWith('/') && !rawUrl.startsWith('//') && rawUrl.indexOf('\\\\') === -1 && !/[\\x00-\\x1f\\x7f]/.test(rawUrl)) {
+    try {
+      var parsed = new URL(rawUrl, self.location.origin);
+      if (parsed.origin === self.location.origin) {
+        targetUrl = parsed.pathname + parsed.search + parsed.hash;
+      }
+    } catch (e) {}
+  }
   event.waitUntil((async function() {
     var windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (var i = 0; i < windowClients.length; i++) {

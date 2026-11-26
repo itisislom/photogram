@@ -1,11 +1,12 @@
 import { FeedPost, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON } from './layout';
 import { renderBottomNav } from './nav';
 import { COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { formatLocalizedFullDate, formatLocalizedShortDate } from '../languages';
 import { PersonalizedFeedResult } from '../recommendations';
+import { isAdminUser } from '../security';
 
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
 const HEART_BURST_ICON = `<svg viewBox="0 0 24 24" width="80" height="80" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -48,12 +49,12 @@ function formatFullDate(dateStr: string, t: Translations): string {
 function formatCaptionWithHashtags(caption: string): string {
   if (!caption) return '';
   const escaped = escapeHtml(caption);
-  return escaped.replace(/#([a-zA-Zа-яА-ЯёЁ0-9_]{2,30})/g, (_match, tag) => {
-    return `<a href="/explore?tag=${encodeURIComponent(tag.toLowerCase())}" class="caption-hashtag" onclick="event.stopPropagation();">#${tag}</a>`;
+  return escaped.replace(/(^|[^&])#([a-zA-Zа-яА-ЯёЁ0-9_]{2,30})/g, (_match, pre, tag) => {
+    return `${pre}<a href="/explore?tag=${encodeURIComponent(tag.toLowerCase())}" class="caption-hashtag">#${tag}</a>`;
   });
 }
 
-function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean = false): string {
+function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean = false, canAdminDelete: boolean = false): string {
   const initial = (p.display_name || p.username || '?').charAt(0).toUpperCase();
   const avatarHtml = p.avatar_key
     ? `<img src="/media/${encodeURIComponent(p.avatar_key)}" alt="${escapeHtml(p.username)}">`
@@ -75,6 +76,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
         <button type="button" class="feed-card-follow-btn" data-author-id="${p.user_id}" data-username="${escapeHtml(p.username)}" data-following="false">
           ${escapeHtml(t.recommendations.follow)}
         </button>` : ''}
+        ${canAdminDelete ? `<button type="button" class="modal-icon-btn modal-icon-danger feed-delete-post-btn" data-delete-post-id="${p.id}" aria-label="${escapeHtml(t.post.deletePost)}" title="${escapeHtml(t.post.deletePost)}">${TRASH_POST_ICON}</button>` : ''}
         <button type="button" class="post-more-btn" data-post-more-img="/media/${encodeURIComponent(p.image_key)}" data-post-more-id="${p.id}" data-post-more-user="${escapeHtml(p.username)}" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
       </div>
     </header>
@@ -128,6 +130,7 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
     recommendedUsers = feedInput.recommendedUsers || [];
   }
 
+  const isAdmin = isAdminUser(currentUser);
   const hasAnyPosts = followedPosts.length > 0 || suggestedPosts.length > 0;
 
   const caughtUpBannerHtml = (allCaughtUp && hasAnyPosts)
@@ -173,10 +176,10 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
   const feedContentHtml = hasAnyPosts
     ? `
     <div class="feed-container">
-      ${followedPosts.map(p => renderFeedPostCard(p, t, false)).join('')}
+      ${followedPosts.map(p => renderFeedPostCard(p, t, false, isAdmin)).join('')}
       ${caughtUpBannerHtml}
       ${whoToFollowHtml}
-      ${suggestedPosts.map(p => renderFeedPostCard(p, t, true)).join('')}
+      ${suggestedPosts.map(p => renderFeedPostCard(p, t, true, isAdmin)).join('')}
     </div>`
     : `
     <div class="feed-container">
@@ -207,7 +210,7 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
   ${renderCommentsSheetHtml(t)}
 </div>`;
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     lang: t.code,
     addComment: t.feed.addComment,
     networkError: t.common.networkError,
@@ -215,7 +218,11 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
     following: t.recommendations.following,
     unfollowTitle: t.profile.unfollowTitle,
     unfollowConfirmTpl: t.profile.unfollowConfirm('{username}'),
-    unfollowBtn: t.profile.unfollowBtn
+    unfollowBtn: t.profile.unfollowBtn,
+    deletePostTitle: t.profile.deletePostConfirmTitle,
+    deletePostDesc: t.profile.deletePostConfirmDesc,
+    deleteBtn: t.common.delete,
+    cancelBtn: t.common.cancel
   });
 
   const script = `
@@ -492,6 +499,54 @@ ${renderCommentsSheetScript(t)}
         }
       } else {
         executeFeedFollow();
+      }
+    });
+  });
+
+  document.querySelectorAll('.feed-delete-post-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var delBtn = this;
+      var pid = parseInt(delBtn.dataset.deletePostId, 10);
+      if (!pid || delBtn.disabled) return;
+
+      function doDeleteFeedPost() {
+        delBtn.disabled = true;
+        fetch('/api/posts/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ post_id: pid })
+        }).then(function(r) {
+          return r.json().then(function(d) { return { ok: r.ok, d: d }; });
+        }).then(function(res) {
+          if (res.ok && res.d && res.d.success) {
+            var card = document.querySelector('.feed-card[data-post-id="' + pid + '"]');
+            if (card) card.remove();
+          } else {
+            delBtn.disabled = false;
+            if (window.showAppAlert) {
+              window.showAppAlert({ message: (res.d && res.d.error) || i18n.networkError });
+            }
+          }
+        }).catch(function() {
+          delBtn.disabled = false;
+          if (window.showAppAlert) {
+            window.showAppAlert({ message: i18n.networkError });
+          }
+        });
+      }
+
+      if (window.showAppConfirm) {
+        window.showAppConfirm({
+          title: i18n.deletePostTitle,
+          message: i18n.deletePostDesc,
+          okText: i18n.deleteBtn,
+          cancelText: i18n.cancelBtn,
+          danger: true,
+          onOk: doDeleteFeedPost
+        });
+      } else if (window.confirm(i18n.deletePostDesc)) {
+        doDeleteFeedPost();
       }
     });
   });

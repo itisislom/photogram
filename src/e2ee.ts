@@ -1,12 +1,15 @@
 import { Env } from './types';
 import { getUserFromRequest } from './auth';
 import { detectLanguage, getTranslations } from './languages';
+import { consumeRateLimitAtomic, parsePositiveId, readJsonWithLimit } from './security';
 
 const MAX_DEVICES_PER_USER = 5;
 const MAX_PREKEYS_BATCH = 100;
 const MAX_PREKEYS_PER_DEVICE = 120;
 const REGISTER_LIMIT_PER_HOUR = 30;
-const BUNDLE_LIMIT_PER_MIN = 60;
+const BUNDLE_LIMIT_PER_MIN = 20;
+const BUNDLE_PAIR_LIMIT_PER_5MIN = 6;
+const IDENTITIES_LIMIT_PER_MIN = 120;
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -46,36 +49,6 @@ function isValidSignature(b64: string): boolean {
   return Boolean(bytes && bytes.length === 64);
 }
 
-async function consumeRateLimit(
-  env: Env,
-  key: string,
-  maxAttempts: number,
-  windowSeconds: number,
-): Promise<boolean> {
-  const now = Math.floor(Date.now() / 1000);
-  const row = await env.DB.prepare(
-    'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?',
-  )
-    .bind(key)
-    .first<{ attempts: number; locked_until: number; updated_at: number }>();
-
-  let attempts = 1;
-  let updatedAt = now;
-  if (row && now - row.updated_at < windowSeconds) {
-    attempts = row.attempts + 1;
-    updatedAt = row.updated_at;
-    if (attempts > maxAttempts) return false;
-  }
-
-  await env.DB.prepare(
-    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = 0, updated_at = ?',
-  )
-    .bind(key, attempts, updatedAt, attempts, updatedAt)
-    .run();
-
-  return true;
-}
-
 interface IncomingPreKey {
   key_id?: unknown;
   public_key?: unknown;
@@ -98,35 +71,54 @@ function validatePreKeyList(raw: unknown): Array<{ key_id: number; public_key: s
   return out;
 }
 
+async function insertPreKeysBatch(
+  env: Env,
+  userId: number,
+  deviceId: number,
+  prekeys: Array<{ key_id: number; public_key: string }>,
+): Promise<void> {
+  if (prekeys.length === 0) return;
+  const placeholders: string[] = [];
+  const params: unknown[] = [];
+  for (const pk of prekeys) {
+    placeholders.push('(?, ?, ?, ?)');
+    params.push(userId, deviceId, pk.key_id, pk.public_key);
+  }
+  await env.DB.prepare(
+    `INSERT INTO e2ee_prekeys (user_id, device_id, key_id, public_key) VALUES ${placeholders.join(', ')} ON CONFLICT(user_id, device_id, key_id) DO NOTHING`,
+  )
+    .bind(...params)
+    .run();
+}
+
 export async function handleRegisterE2eeKeys(request: Request, env: Env): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  const allowed = await consumeRateLimit(env, `e2ee:reg:${user.id}`, REGISTER_LIMIT_PER_HOUR, 3600);
+  const allowed = await consumeRateLimitAtomic(env, `e2ee:reg:${user.id}`, REGISTER_LIMIT_PER_HOUR, 3600);
   if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
-  let body: {
+  const parsed = await readJsonWithLimit<{
     device_id?: unknown;
     registration_id?: unknown;
     identity_key_pub?: unknown;
     signed_prekey?: { key_id?: unknown; public_key?: unknown; signature?: unknown };
     prekeys?: unknown;
-  };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  }>(request, 65536);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
   }
+  const body = parsed.data;
 
-  const deviceId = Number(body?.device_id);
+  const deviceId = parsePositiveId(body?.device_id);
   const registrationId = Number(body?.registration_id);
   const identityKeyPub = typeof body?.identity_key_pub === 'string' ? body.identity_key_pub.trim() : '';
-  const spkId = Number(body?.signed_prekey?.key_id);
+  const spkId = parsePositiveId(body?.signed_prekey?.key_id);
   const spkPub = typeof body?.signed_prekey?.public_key === 'string' ? body.signed_prekey.public_key.trim() : '';
   const spkSig = typeof body?.signed_prekey?.signature === 'string' ? body.signed_prekey.signature.trim() : '';
 
-  if (!Number.isInteger(deviceId) || deviceId <= 0 || deviceId > 2147483647) {
+  if (!deviceId) {
     return jsonError(t.common.networkError, 400);
   }
   if (!Number.isInteger(registrationId) || registrationId <= 0 || registrationId > 16380) {
@@ -135,7 +127,7 @@ export async function handleRegisterE2eeKeys(request: Request, env: Env): Promis
   if (!isValidSignalPublicKey(identityKeyPub)) {
     return jsonError(t.common.networkError, 400);
   }
-  if (!Number.isInteger(spkId) || spkId <= 0 || spkId > 2147483647) {
+  if (!spkId) {
     return jsonError(t.common.networkError, 400);
   }
   if (!isValidSignalPublicKey(spkPub) || !isValidSignature(spkSig)) {
@@ -145,6 +137,21 @@ export async function handleRegisterE2eeKeys(request: Request, env: Env): Promis
   const prekeys = body?.prekeys !== undefined ? validatePreKeyList(body.prekeys) : [];
   if (prekeys === null) {
     return jsonError(t.common.networkError, 400);
+  }
+
+  const prevDev = await env.DB.prepare(
+    'SELECT identity_key_pub, registration_id FROM e2ee_devices WHERE user_id = ? AND device_id = ?',
+  )
+    .bind(user.id, deviceId)
+    .first<{ identity_key_pub: string; registration_id: number }>();
+
+  if (
+    prevDev &&
+    (prevDev.identity_key_pub !== identityKeyPub || Number(prevDev.registration_id) !== registrationId)
+  ) {
+    await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?')
+      .bind(user.id, deviceId)
+      .run();
   }
 
   await env.DB.prepare(
@@ -195,12 +202,14 @@ export async function handleRegisterE2eeKeys(request: Request, env: Env): Promis
     }
   }
 
-  for (const pk of prekeys) {
-    await env.DB.prepare(
-      'INSERT OR IGNORE INTO e2ee_prekeys (user_id, device_id, key_id, public_key) VALUES (?, ?, ?, ?)',
-    )
-      .bind(user.id, deviceId, pk.key_id, pk.public_key)
-      .run();
+  const curPreRow = await env.DB.prepare(
+    'SELECT COUNT(*) AS cnt FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?',
+  )
+    .bind(user.id, deviceId)
+    .first<{ cnt: number }>();
+  const canInsert = Math.max(0, MAX_PREKEYS_PER_DEVICE - Number(curPreRow?.cnt || 0));
+  if (canInsert > 0) {
+    await insertPreKeysBatch(env, user.id, deviceId, prekeys.slice(0, canInsert));
   }
 
   const cntRow = await env.DB.prepare(
@@ -224,18 +233,17 @@ export async function handleUploadPreKeys(request: Request, env: Env): Promise<R
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  const allowed = await consumeRateLimit(env, `e2ee:pk:${user.id}`, REGISTER_LIMIT_PER_HOUR, 3600);
+  const allowed = await consumeRateLimitAtomic(env, `e2ee:pk:${user.id}`, REGISTER_LIMIT_PER_HOUR, 3600);
   if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
-  let body: { device_id?: unknown; prekeys?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const parsed = await readJsonWithLimit<{ device_id?: unknown; prekeys?: unknown }>(request, 65536);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
   }
+  const body = parsed.data;
 
-  const deviceId = Number(body?.device_id);
-  if (!Number.isInteger(deviceId) || deviceId <= 0 || deviceId > 2147483647) {
+  const deviceId = parsePositiveId(body?.device_id);
+  if (!deviceId) {
     return jsonError(t.common.networkError, 400);
   }
 
@@ -259,13 +267,7 @@ export async function handleUploadPreKeys(request: Request, env: Env): Promise<R
   const currentCount = Number(curRow?.cnt || 0);
   const canInsert = Math.max(0, MAX_PREKEYS_PER_DEVICE - currentCount);
 
-  for (const pk of prekeys.slice(0, canInsert)) {
-    await env.DB.prepare(
-      'INSERT OR IGNORE INTO e2ee_prekeys (user_id, device_id, key_id, public_key) VALUES (?, ?, ?, ?)',
-    )
-      .bind(user.id, deviceId, pk.key_id, pk.public_key)
-      .run();
-  }
+  await insertPreKeysBatch(env, user.id, deviceId, prekeys.slice(0, canInsert));
 
   await env.DB.prepare(
     "UPDATE e2ee_devices SET updated_at = datetime('now') WHERE user_id = ? AND device_id = ?",
@@ -287,8 +289,8 @@ export async function handlePreKeyCount(request: Request, env: Env, url: URL): P
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  const deviceId = parseInt(url.searchParams.get('device_id') || '0', 10);
-  if (!Number.isInteger(deviceId) || deviceId <= 0) {
+  const deviceId = parsePositiveId(url.searchParams.get('device_id'));
+  if (!deviceId) {
     return jsonResponse({ user_id: user.id, registered: false, prekey_count: 0 }, 200);
   }
 
@@ -350,14 +352,18 @@ async function claimDeviceBundles(
   for (const d of devices) {
     const devId = Number(d.device_id);
     const opk = await env.DB.prepare(
-      'SELECT id, key_id, public_key FROM e2ee_prekeys WHERE user_id = ? AND device_id = ? ORDER BY id ASC LIMIT 1',
+      `DELETE FROM e2ee_prekeys
+       WHERE id = (
+         SELECT id FROM e2ee_prekeys
+         WHERE user_id = ? AND device_id = ?
+         ORDER BY id ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING id, key_id, public_key`,
     )
       .bind(targetUserId, devId)
       .first<{ id: number; key_id: number; public_key: string }>();
-
-    if (opk) {
-      await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE id = ?').bind(opk.id).run();
-    }
 
     bundles.push({
       user_id: targetUserId,
@@ -376,26 +382,44 @@ async function claimDeviceBundles(
   return bundles;
 }
 
-export async function handleGetKeyBundle(request: Request, env: Env, url: URL): Promise<Response> {
+export async function handleGetKeyBundle(request: Request, env: Env): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  const allowed = await consumeRateLimit(env, `e2ee:bundle:${user.id}`, BUNDLE_LIMIT_PER_MIN, 60);
+  const allowed = await consumeRateLimitAtomic(env, `e2ee:bundle:${user.id}`, BUNDLE_LIMIT_PER_MIN, 60);
   if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
-  const targetUserId = parseInt(url.searchParams.get('user_id') || '0', 10);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+  const parsed = await readJsonWithLimit<{
+    user_id?: unknown;
+    include_self?: unknown;
+    self_device_id?: unknown;
+  }>(request, 4096);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
+  }
+  const body = parsed.data;
+
+  const targetUserId = parsePositiveId(body?.user_id);
+  if (!targetUserId) {
     return jsonError(t.common.networkError, 400);
   }
+
+  const pairAllowed = await consumeRateLimitAtomic(
+    env,
+    `e2ee:bp:${user.id}:${targetUserId}`,
+    BUNDLE_PAIR_LIMIT_PER_5MIN,
+    300,
+  );
+  if (!pairAllowed) return jsonError(t.messages.errRateLimit, 429);
 
   const targetExists = await env.DB.prepare('SELECT id FROM users WHERE id = ?')
     .bind(targetUserId)
     .first<{ id: number }>();
   if (!targetExists) return jsonError(t.explore.noResults, 404);
 
-  const includeSelf = url.searchParams.get('include_self') === '1';
-  const excludeDeviceId = parseInt(url.searchParams.get('self_device_id') || '0', 10) || 0;
+  const includeSelf = body?.include_self === true || body?.include_self === 1 || body?.include_self === '1';
+  const excludeDeviceId = parsePositiveId(body?.self_device_id) || 0;
 
   const devices = await claimDeviceBundles(env, targetUserId, 0);
   const selfDevices =
@@ -419,8 +443,11 @@ export async function handleGetIdentities(request: Request, env: Env, url: URL):
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
-  const targetUserId = parseInt(url.searchParams.get('user_id') || '0', 10);
-  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+  const allowed = await consumeRateLimitAtomic(env, `e2ee:id:${user.id}`, IDENTITIES_LIMIT_PER_MIN, 60);
+  if (!allowed) return jsonError(t.messages.errRateLimit, 429);
+
+  const targetUserId = parsePositiveId(url.searchParams.get('user_id'));
+  if (!targetUserId) {
     return jsonError(t.common.networkError, 400);
   }
 
@@ -442,4 +469,32 @@ export async function handleGetIdentities(request: Request, env: Env, url: URL):
     },
     200,
   );
+}
+
+export async function handleUnregisterE2eeDevice(request: Request, env: Env): Promise<Response> {
+  const t = getTranslations(detectLanguage(request));
+  const user = await getUserFromRequest(env, request);
+  if (!user) return jsonError(t.common.authRequired, 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `e2ee:unreg:${user.id}`, 20, 3600);
+  if (!allowed) return jsonError(t.messages.errRateLimit, 429);
+
+  const parsed = await readJsonWithLimit<{ device_id?: unknown }>(request, 2048);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
+  }
+
+  const deviceId = parsePositiveId(parsed.data?.device_id);
+  if (!deviceId) {
+    return jsonError(t.common.networkError, 400);
+  }
+
+  await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?')
+    .bind(user.id, deviceId)
+    .run();
+  await env.DB.prepare('DELETE FROM e2ee_devices WHERE user_id = ? AND device_id = ?')
+    .bind(user.id, deviceId)
+    .run();
+
+  return jsonResponse({ success: true }, 200);
 }

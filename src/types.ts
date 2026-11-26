@@ -64,6 +64,7 @@ export interface ProfileData {
   username_changes_left?: number;
   username_unlock_days?: number;
   current_user_id?: number;
+  is_admin?: boolean;
   posts: Post[];
 }
 
@@ -140,6 +141,12 @@ export interface CiphertextEnvelopeItem {
   b: string;
 }
 
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
 export interface DirectMessage {
   id: number;
   conversation_id: number;
@@ -150,7 +157,10 @@ export interface DirectMessage {
   sender_device_id?: number;
   ciphertext_envelope?: string;
   read_at: string | null;
+  edited_at?: string | null;
+  edit_version?: number;
   created_at: string;
+  reactions?: MessageReaction[];
 }
 
 export interface NotificationItem {

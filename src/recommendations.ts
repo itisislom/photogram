@@ -1,4 +1,5 @@
 import { Env, FeedPost, ExplorePost, ExploreUser } from './types';
+import { consumeBurstWithLockoutAtomic } from './security';
 
 const STOP_WORDS = new Set([
   'этот', 'эта', 'это', 'эти', 'тот', 'тоже', 'когда', 'куда', 'если', 'хотя',
@@ -70,7 +71,7 @@ export async function ensureTagsBackfilled(env: Env): Promise<void> {
       }
     }
     await runBatchChunked(env, statements);
-  } catch {}
+  } catch { }
 }
 
 export async function savePostTags(env: Env, postId: number, caption: string): Promise<string[]> {
@@ -81,7 +82,7 @@ export async function savePostTags(env: Env, postId: number, caption: string): P
       env.DB.prepare('INSERT INTO post_tags (post_id, tag) VALUES (?, ?) ON CONFLICT (post_id, tag) DO NOTHING').bind(postId, tag)
     );
     await runBatchChunked(env, stmts);
-  } catch {}
+  } catch { }
   return tags;
 }
 
@@ -121,7 +122,7 @@ export async function adjustAffinity(env: Env, userId: number, authorId: number,
   if (!userId || !authorId || userId === authorId || !Number.isFinite(delta) || delta === 0) return;
   try {
     await buildAuthorAffinityStmt(env, userId, authorId, delta).run();
-  } catch {}
+  } catch { }
 }
 
 export async function adjustTagAffinity(env: Env, userId: number, postId: number, delta: number): Promise<void> {
@@ -136,7 +137,7 @@ export async function adjustTagAffinity(env: Env, userId: number, postId: number
 
     const stmts = tags.map(tag => buildTagAffinityStmt(env, userId, tag, delta));
     await runBatchChunked(env, stmts);
-  } catch {}
+  } catch { }
 }
 
 interface RawCandidatePost {
@@ -554,7 +555,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
         is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
     }
-  } catch {}
+  } catch { }
 
   const allCaughtUp = followedPosts.length === 0 || unseenFollowedCount === 0;
   const followedIdSet = new Set(followedPosts.map(p => p.id));
@@ -580,7 +581,7 @@ export async function getPersonalizedFeed(env: Env, viewerId: number): Promise<P
       is_followed_author: false,
       is_verified: Number(p.is_verified) === 1 ? 1 : 0
     }));
-  } catch {}
+  } catch { }
 
   const recommendedUsers = await getRecommendedUsers(env, viewerId, 8);
 
@@ -790,13 +791,12 @@ export async function getPersonalizedExplore(
         is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
     }
-  } catch {}
+  } catch { }
 
   return { posts, tags, activeTag: cleanFilter };
 }
 
 export async function getPopularExploreTags(env: Env, limit: number = 10): Promise<string[]> {
-  await ensureTagsBackfilled(env);
   try {
     const rows = await env.DB.prepare(
       `SELECT LOWER(tag) AS tag, COUNT(*) AS cnt
@@ -1063,33 +1063,8 @@ export interface TelemetryBatchResult {
 }
 
 async function checkTelemetryRateLimit(env: Env, userId: number): Promise<boolean> {
-  const now = Math.floor(Date.now() / 1000);
-  const rateKey = `tel:${userId}`;
-  try {
-    const row = await env.DB.prepare(
-      'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?'
-    ).bind(rateKey).first<{ attempts: number; locked_until: number; updated_at: number }>();
-
-    if (row && Number(row.locked_until) > now) {
-      return false;
-    }
-
-    let attempts = 1;
-    if (row && (now - Number(row.updated_at)) <= 60) {
-      attempts = Number(row.attempts) + 1;
-    }
-
-    const isLocked = attempts > 30;
-    const lockUntil = isLocked ? now + 30 : 0;
-
-    await env.DB.prepare(
-      'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?'
-    ).bind(rateKey, attempts, lockUntil, now, attempts, lockUntil, now).run();
-
-    return !isLocked;
-  } catch {
-    return true;
-  }
+  const rl = await consumeBurstWithLockoutAtomic(env, `tel:${userId}`, 30, 60, 30);
+  return rl.allowed;
 }
 
 export async function handleTelemetryBatch(
@@ -1114,6 +1089,7 @@ export async function handleTelemetryBatch(
 
   const slice = rawEvents.slice(0, MAX_TELEMETRY_EVENTS);
   const validEvents: TelemetryEvent[] = [];
+  const seenEventKeys = new Set<string>();
   const postIdSet = new Set<number>();
   const profileAuthorIdSet = new Set<number>();
 
@@ -1140,6 +1116,10 @@ export async function handleTelemetryBatch(
       if (!Number.isFinite(parsed) || parsed < 0) continue;
       dwellMs = Math.max(0, Math.min(MAX_DWELL_MS, Math.round(parsed)));
     }
+
+    const dedupeKey = `${type}:${hasValidPostId ? rawPostId : 0}:${hasValidAuthorId ? rawAuthorId : 0}`;
+    if (seenEventKeys.has(dedupeKey)) continue;
+    seenEventKeys.add(dedupeKey);
 
     if (hasValidPostId) postIdSet.add(rawPostId);
     if (type === 'profile_visit' && hasValidAuthorId && rawAuthorId !== userId) {
@@ -1296,9 +1276,11 @@ export async function handleTelemetryBatch(
       }
     }
 
+    let tagCount = 0;
     for (const [tag, delta] of tagDeltaMap.entries()) {
-      if (delta !== 0) {
+      if (delta !== 0 && tagCount < 30) {
         interactionStmts.push(buildTagAffinityStmt(env, userId, tag, delta));
+        tagCount++;
       }
     }
   }

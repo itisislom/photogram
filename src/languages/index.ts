@@ -97,24 +97,82 @@ export function formatLocalizedFullDate(d: Date, lang: LangCode): string {
   return `${day} ${month} ${year}${cfg.yearSuffix}`;
 }
 
-export function formatLocalizedShortDate(d: Date, lang: LangCode): string {
+export function formatLocalizedShortDate(d: Date, lang: LangCode, timeZone?: string): string {
   const cfg = DATE_FORMATS[lang] || DATE_FORMATS.ru;
-  const day = d.getDate();
-  const month = cfg.monthsShort[d.getMonth()] || '';
+  let day = d.getDate();
+  let monthIdx = d.getMonth();
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        month: 'numeric',
+        day: 'numeric',
+      }).formatToParts(d);
+      const mPart = parts.find((p) => p.type === 'month')?.value;
+      const dPart = parts.find((p) => p.type === 'day')?.value;
+      if (mPart && dPart) {
+        monthIdx = Math.max(0, Math.min(11, parseInt(mPart, 10) - 1));
+        day = parseInt(dPart, 10);
+      }
+    } catch {}
+  }
+  const month = cfg.monthsShort[monthIdx] || '';
   if (cfg.fullPattern === 'mdy') {
     return `${month} ${day}`;
   }
   return `${day} ${month}`;
 }
 
-export function formatLocalizedTime(d: Date): string {
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
+export function formatLocalizedTime(d: Date, timeZone?: string): string {
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).formatToParts(d);
+      let hh = parts.find((p) => p.type === 'hour')?.value || '00';
+      const mm = parts.find((p) => p.type === 'minute')?.value || '00';
+      if (hh === '24') hh = '00';
+      return `${hh.padStart(2, '0')}:${mm.padStart(2, '0')}`;
+    } catch {}
+  }
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
 }
 
 export function getClientDateFormat(lang: LangCode): { monthsLong: string[]; monthsShort: string[]; fullPattern: string; yearSuffix: string } {
   return DATE_FORMATS[lang] || DATE_FORMATS.ru;
+}
+
+const COMPACT_COUNT_UNITS: Record<LangCode, { k: string; m: string; b: string }> = {
+  ru: { k: 'тыс.', m: 'млн', b: 'млрд' },
+  en: { k: 'K', m: 'M', b: 'B' },
+  uz: { k: 'ming', m: 'mln', b: 'mlrd' },
+  kz: { k: 'мың', m: 'млн', b: 'млрд' },
+};
+
+export function getCompactCountUnits(lang: LangCode): { k: string; m: string; b: string } {
+  return COMPACT_COUNT_UNITS[lang] || COMPACT_COUNT_UNITS.ru;
+}
+
+export function formatCompactCount(count: number, lang: LangCode): string {
+  const raw = Number(count);
+  if (!Number.isFinite(raw) || raw <= 0) return '0';
+  const n = Math.floor(raw);
+  if (n < 1000) return String(n);
+  const u = getCompactCountUnits(lang);
+  const sep = lang === 'en' ? '' : ' ';
+  const fmt = (val: number, unit: string) => {
+    const rounded = val >= 100 ? Math.floor(val) : Math.floor(val * 10) / 10;
+    const str = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(/\.0$/, '');
+    return `${str}${sep}${unit}`;
+  };
+  if (n >= 1_000_000_000) return fmt(n / 1_000_000_000, u.b);
+  if (n >= 1_000_000) return fmt(n / 1_000_000, u.m);
+  return fmt(n / 1_000, u.k);
 }
 
 export function renderLangSwitcherHtml(currentLang: LangCode, extraClass: string = ''): string {
@@ -218,10 +276,16 @@ export function renderLangScript(): string {
 
   var savedLang = null;
   try {
-    savedLang = localStorage.getItem('photogram_lang');
+    var rawSaved = localStorage.getItem('photogram_lang');
+    if (rawSaved === 'ru' || rawSaved === 'en' || rawSaved === 'uz' || rawSaved === 'kz') {
+      savedLang = rawSaved;
+    } else if (rawSaved) {
+      localStorage.removeItem('photogram_lang');
+    }
   } catch(e) {}
 
-  var cookieLang = getCookie('lang');
+  var rawCookieLang = getCookie('lang');
+  var cookieLang = (rawCookieLang === 'ru' || rawCookieLang === 'en' || rawCookieLang === 'uz' || rawCookieLang === 'kz') ? rawCookieLang : null;
 
   if (savedLang) {
     if (cookieLang !== savedLang) {

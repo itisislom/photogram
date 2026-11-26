@@ -147,12 +147,16 @@ CREATE INDEX IF NOT EXISTS idx_user_tag_affinity         ON user_tag_affinity(us
 CREATE INDEX IF NOT EXISTS idx_user_tag_affinity_updated ON user_tag_affinity(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS conversations (
-    id              SERIAL PRIMARY KEY,
-    user1_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    user2_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    last_message_id BIGINT,
-    last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id                      SERIAL PRIMARY KEY,
+    user1_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user2_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_message_id         BIGINT,
+    last_message_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user1_cleared_before_id BIGINT NOT NULL DEFAULT 0,
+    user2_cleared_before_id BIGINT NOT NULL DEFAULT 0,
+    user1_hidden            INTEGER NOT NULL DEFAULT 0,
+    user2_hidden            INTEGER NOT NULL DEFAULT 0,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (user1_id < user2_id),
     UNIQUE (user1_id, user2_id)
 );
@@ -171,11 +175,25 @@ CREATE TABLE IF NOT EXISTS messages (
     ciphertext_envelope TEXT    NOT NULL DEFAULT '',
     read_at             TIMESTAMPTZ,
     deleted_at          TIMESTAMPTZ,
+    deleted_for_user1   INTEGER NOT NULL DEFAULT 0,
+    deleted_for_user2   INTEGER NOT NULL DEFAULT 0,
+    edited_at           TIMESTAMPTZ,
+    edit_version        INTEGER NOT NULL DEFAULT 0,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conv_id_desc ON messages(conversation_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(conversation_id, sender_id) WHERE read_at IS NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reactions_msg ON message_reactions(message_id);
 
 CREATE TABLE IF NOT EXISTS notifications (
     id              BIGSERIAL PRIMARY KEY,

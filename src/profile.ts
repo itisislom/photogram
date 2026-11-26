@@ -4,6 +4,15 @@ import { adjustAffinity, getPersonalizedExplore } from './recommendations';
 import { isBlockedUsername } from './blockedUsernames';
 import { detectLanguage, getTranslations } from './languages';
 import { createNotification, removeNotification } from './notifications';
+import {
+  acquireCooldownAtomic,
+  checkContentLength,
+  consumeBurstWithLockoutAtomic,
+  consumeRateLimitAtomic,
+  parsePositiveId,
+  readJsonWithLimit,
+  validateImageBytes,
+} from './security';
 
 const MAX_DISPLAY_NAME_LEN = 50;
 const MAX_BIO_LEN = 150;
@@ -21,46 +30,14 @@ function jsonError(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
-function detectImageType(bytes: Uint8Array): { mime: string; ext: string } | null {
-  if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-    return { mime: 'image/jpeg', ext: 'jpg' };
-  }
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4E &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0D &&
-    bytes[5] === 0x0A &&
-    bytes[6] === 0x1A &&
-    bytes[7] === 0x0A
-  ) {
-    return { mime: 'image/png', ext: 'png' };
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  ) {
-    return { mime: 'image/webp', ext: 'webp' };
-  }
-  return null;
-}
-
 export async function getProfileData(
   env: Env,
   username: string,
   currentUserId?: number,
+  includePosts: boolean = true,
 ): Promise<ProfileData | null> {
   const user = await env.DB.prepare(
-    'SELECT id, username, email, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE username = ?',
+    'SELECT id, username, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE username = ?',
   )
     .bind(username)
     .first<User>();
@@ -74,29 +51,38 @@ export async function getProfileData(
   let followsYou = false;
 
   let userPosts: Post[] = [];
-  try {
-    const viewerId = currentUserId || 0;
-    const postRows = await env.DB.prepare(
-      `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
-              (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
-              (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
-              EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) AS is_liked
-       FROM posts p
-       WHERE p.user_id = ?
-       ORDER BY p.created_at DESC`
-    )
-      .bind(viewerId, user.id)
-      .all<Post & { likes_count: number; comments_count: number; is_liked: number | boolean }>();
-    if (postRows.results) {
-      userPosts = postRows.results.map(p => ({
-        ...p,
-        likes_count: Number(p.likes_count) || 0,
-        comments_count: Number(p.comments_count) || 0,
-        is_liked: Boolean(p.is_liked)
-      }));
-      postsCount = userPosts.length;
-    }
-  } catch { }
+  if (includePosts) {
+    try {
+      const cntRow = await env.DB.prepare('SELECT COUNT(*) as c FROM posts WHERE user_id = ?')
+        .bind(user.id)
+        .first<{ c: number }>();
+      if (cntRow) postsCount = Number(cntRow.c) || 0;
+    } catch { }
+    try {
+      const viewerId = currentUserId || 0;
+      const postRows = await env.DB.prepare(
+        `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
+                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
+                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
+                EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) AS is_liked
+         FROM posts p
+         WHERE p.user_id = ?
+         ORDER BY p.created_at DESC
+         LIMIT 120`
+      )
+        .bind(viewerId, user.id)
+        .all<Post & { likes_count: number; comments_count: number; is_liked: number | boolean }>();
+      if (postRows.results) {
+        userPosts = postRows.results.map(p => ({
+          ...p,
+          likes_count: Number(p.likes_count) || 0,
+          comments_count: Number(p.comments_count) || 0,
+          is_liked: Boolean(p.is_liked)
+        }));
+        if (!postsCount) postsCount = userPosts.length;
+      }
+    } catch { }
+  }
 
   try {
     const f1 = await env.DB.prepare('SELECT COUNT(*) as c FROM follows WHERE following_id = ?')
@@ -183,13 +169,25 @@ export async function handleUpdateProfile(request: Request, env: Env): Promise<R
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const form = await request.formData();
+  const allowed = await consumeRateLimitAtomic(env, `profile:upd:${currentUser.id}`, 15, 60);
+  if (!allowed) return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+
+  if (!checkContentLength(request, 16384)) {
+    return jsonError('Неверный формат запроса', 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError('Неверный формат запроса', 400);
+  }
   const usernameRaw = form.get('username');
   const targetUsername = typeof usernameRaw === 'string'
     ? usernameRaw.trim().toLowerCase()
     : currentUser.username;
-  const displayName = ((form.get('display_name') as string) ?? '').trim();
-  const bio = ((form.get('bio') as string) ?? '').trim();
+  const displayName = (typeof form.get('display_name') === 'string' ? (form.get('display_name') as string) : '').trim();
+  const bio = (typeof form.get('bio') === 'string' ? (form.get('bio') as string) : '').trim();
 
   if (!USERNAME_RE.test(targetUsername)) {
     return jsonError(
@@ -198,12 +196,25 @@ export async function handleUpdateProfile(request: Request, env: Env): Promise<R
     );
   }
 
+  if (displayName.length > MAX_DISPLAY_NAME_LEN) {
+    return jsonError(`Имя не должно превышать ${MAX_DISPLAY_NAME_LEN} символов`, 400);
+  }
+  if (bio.length > MAX_BIO_LEN) {
+    return jsonError(`Описание не должно превышать ${MAX_BIO_LEN} символов`, 400);
+  }
+
   let usernameChanged = false;
   if (targetUsername !== currentUser.username) {
     if (isBlockedUsername(targetUsername)) {
       const t = getTranslations(detectLanguage(request));
       return jsonError(t.auth.errUsernameForbidden, 400);
     }
+
+    const unameLock = await acquireCooldownAtomic(env, `uname:cd:${currentUser.id}`, 5);
+    if (!unameLock) {
+      return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+    }
+
     const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')
       .bind(targetUsername, currentUser.id)
       .first();
@@ -235,16 +246,13 @@ export async function handleUpdateProfile(request: Request, env: Env): Promise<R
     usernameChanged = true;
   }
 
-  if (displayName.length > MAX_DISPLAY_NAME_LEN) {
-    return jsonError(`Имя не должно превышать ${MAX_DISPLAY_NAME_LEN} символов`, 400);
+  try {
+    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, bio = ? WHERE id = ?')
+      .bind(targetUsername, displayName || targetUsername, bio, currentUser.id)
+      .run();
+  } catch {
+    return jsonError('Это имя пользователя уже занято', 409);
   }
-  if (bio.length > MAX_BIO_LEN) {
-    return jsonError(`Описание не должно превышать ${MAX_BIO_LEN} символов`, 400);
-  }
-
-  await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, bio = ? WHERE id = ?')
-    .bind(targetUsername, displayName || targetUsername, bio, currentUser.id)
-    .run();
 
   let changesLeft = USERNAME_CHANGE_LIMIT;
   let unlockDays = 0;
@@ -290,58 +298,69 @@ export async function handleUploadAvatar(request: Request, env: Env): Promise<Re
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const now = Math.floor(Date.now() / 1000);
-  const avatarRateKey = `avatar:${currentUser.id}`;
-  const rateRow = await env.DB.prepare(
-    'SELECT locked_until FROM auth_rate_limits WHERE key = ?',
-  )
-    .bind(avatarRateKey)
-    .first<{ locked_until: number }>();
-
-  if (rateRow && rateRow.locked_until > now) {
+  const burstAllowed = await consumeRateLimitAtomic(env, `avatar:burst:${currentUser.id}`, 15, 60);
+  if (!burstAllowed) {
     return jsonError('Слишком часто. Менять аватар можно не чаще одного раза в 10 секунд', 429);
   }
 
-  const form = await request.formData();
+  if (!checkContentLength(request, MAX_AVATAR_SIZE + 65536)) {
+    return jsonError('Максимальный размер файла — 2 МБ', 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError('Неверный формат запроса', 400);
+  }
   const file = form.get('avatar');
   if (!file || typeof file === 'string') {
     return jsonError('Файл аватара не передан', 400);
   }
 
-
-  if (file.size > MAX_AVATAR_SIZE) {
+  if (file.size <= 0 || file.size > MAX_AVATAR_SIZE) {
     return jsonError('Максимальный размер файла — 2 МБ', 400);
   }
 
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  const detected = detectImageType(bytes);
+  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_AVATAR_SIZE) {
+    return jsonError('Максимальный размер файла — 2 МБ', 400);
+  }
+  const detected = validateImageBytes(bytes);
 
   if (!detected) {
     return jsonError('Разрешены только форматы JPEG, PNG, WEBP', 400);
   }
 
-  const key = `avatars/${currentUser.id}_${Date.now()}.${detected.ext}`;
-
-  if (currentUser.avatar_key) {
-    try {
-      await env.STORAGE.delete(currentUser.avatar_key);
-    } catch { }
+  const cdAllowed = await acquireCooldownAtomic(env, `avatar:${currentUser.id}`, 10);
+  if (!cdAllowed) {
+    return jsonError('Слишком часто. Менять аватар можно не чаще одного раза в 10 секунд', 429);
   }
 
-  await env.STORAGE.put(key, buf, {
+  const oldAvatarKey = currentUser.avatar_key || '';
+  const key = `avatars/${currentUser.id}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${detected.ext}`;
+
+  await env.STORAGE.put(key, bytes, {
     httpMetadata: { contentType: detected.mime },
   });
 
-  await env.DB.prepare('UPDATE users SET avatar_key = ? WHERE id = ?')
-    .bind(key, currentUser.id)
-    .run();
+  try {
+    await env.DB.prepare('UPDATE users SET avatar_key = ? WHERE id = ?')
+      .bind(key, currentUser.id)
+      .run();
+  } catch {
+    try {
+      await env.STORAGE.delete(key);
+    } catch { }
+    return jsonError('Ошибка обновления аватара', 500);
+  }
 
-  await env.DB.prepare(
-    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, 1, ?, ?) ON CONFLICT(key) DO UPDATE SET locked_until = ?, updated_at = ?',
-  )
-    .bind(avatarRateKey, now + 10, now, now + 10, now)
-    .run();
+  if (oldAvatarKey && oldAvatarKey !== key) {
+    try {
+      await env.STORAGE.delete(oldAvatarKey);
+    } catch { }
+  }
 
   return jsonResponse({
     success: true,
@@ -351,6 +370,12 @@ export async function handleUploadAvatar(request: Request, env: Env): Promise<Re
 }
 
 export async function handleSearchUsers(request: Request, env: Env): Promise<Response> {
+  const currentUser = await getUserFromRequest(env, request);
+  if (!currentUser) return jsonError('Необходима авторизация', 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `search:user:${currentUser.id}`, 30, 60);
+  if (!allowed) return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+
   const url = new URL(request.url);
   let q = (url.searchParams.get('q') || '').trim();
   q = q.replace(/^@+/, '').trim();
@@ -395,59 +420,30 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const now = Math.floor(Date.now() / 1000);
-  const followRateKey = `follow:${currentUser.id}`;
-
-  const rateRow = await env.DB.prepare(
-    'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?'
-  )
-    .bind(followRateKey)
-    .first<{ attempts: number; locked_until: number; updated_at: number }>();
-
-  if (rateRow && rateRow.locked_until > now) {
-    return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
-  }
-
-  let attempts = 1;
-  if (rateRow) {
-    if (now - rateRow.updated_at > 5) {
-      attempts = 1;
-    } else {
-      attempts = rateRow.attempts + 1;
-    }
-  }
-
-  const isLocked = attempts > 10;
-  const lockUntil = isLocked ? now + 10 : 0;
-
-  await env.DB.prepare(
-    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?'
-  )
-    .bind(followRateKey, attempts, lockUntil, now, attempts, lockUntil, now)
-    .run();
-
-  if (isLocked) {
+  const rl = await consumeBurstWithLockoutAtomic(env, `follow:${currentUser.id}`, 10, 5, 10);
+  if (!rl.allowed) {
     return jsonError('Слишком много запросов. Действие временно заблокировано на 10 секунд', 429);
   }
 
+  const parsed = await readJsonWithLimit<{ following_id?: unknown; target_id?: unknown; username?: unknown }>(request, 4096);
+  if (!parsed.ok) {
+    return jsonError('Неверный формат запроса', parsed.status);
+  }
+  const body = parsed.data;
+
   let targetId: number | null = null;
-  try {
-    const body = await request.json() as { following_id?: number; target_id?: number; username?: string };
-    if (typeof body.following_id === 'number') {
-      targetId = body.following_id;
-    } else if (typeof body.target_id === 'number') {
-      targetId = body.target_id;
-    } else if (body.username) {
-      const u = await env.DB.prepare('SELECT id FROM users WHERE username = ?')
-        .bind(body.username.toLowerCase().trim())
-        .first<{ id: number }>();
-      if (u) targetId = u.id;
-    }
-  } catch {
-    return jsonError('Неверный формат запроса', 400);
+  if (body?.following_id !== undefined) {
+    targetId = parsePositiveId(body.following_id);
+  } else if (body?.target_id !== undefined) {
+    targetId = parsePositiveId(body.target_id);
+  } else if (typeof body?.username === 'string' && body.username.trim()) {
+    const u = await env.DB.prepare('SELECT id FROM users WHERE username = ?')
+      .bind(body.username.toLowerCase().trim())
+      .first<{ id: number }>();
+    if (u) targetId = u.id;
   }
 
-  if (!targetId || isNaN(targetId)) {
+  if (!targetId) {
     return jsonError('ID пользователя не указан', 400);
   }
 
@@ -472,23 +468,27 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
 
     let isFollowing = false;
     if (existing) {
-      await env.DB.prepare(
-        'DELETE FROM follows WHERE follower_id = ? AND following_id = ?'
+      const delRow = await env.DB.prepare(
+        'DELETE FROM follows WHERE follower_id = ? AND following_id = ? RETURNING follower_id'
       )
         .bind(currentUser.id, targetId)
-        .run();
+        .first<{ follower_id: number }>();
       isFollowing = false;
-      await adjustAffinity(env, currentUser.id, targetId, -8.0);
-      await removeNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+      if (delRow) {
+        await adjustAffinity(env, currentUser.id, targetId, -8.0);
+        await removeNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+      }
     } else {
-      await env.DB.prepare(
-        'INSERT INTO follows (follower_id, following_id) VALUES (?, ?)'
+      const insRow = await env.DB.prepare(
+        'INSERT INTO follows (follower_id, following_id) VALUES (?, ?) ON CONFLICT (follower_id, following_id) DO NOTHING RETURNING follower_id'
       )
         .bind(currentUser.id, targetId)
-        .run();
+        .first<{ follower_id: number }>();
       isFollowing = true;
-      await adjustAffinity(env, currentUser.id, targetId, 10.0);
-      await createNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+      if (insRow) {
+        await adjustAffinity(env, currentUser.id, targetId, 10.0);
+        await createNotification(env, { userId: targetId, actorId: currentUser.id, type: 'follow' });
+      }
     }
 
     const countRow = await env.DB.prepare(
@@ -497,7 +497,7 @@ export async function handleToggleFollow(request: Request, env: Env): Promise<Re
       .bind(targetId)
       .first<{ c: number }>();
 
-    const followersCount = countRow ? countRow.c : 0;
+    const followersCount = countRow ? Number(countRow.c) : 0;
 
     return jsonResponse({
       success: true,
@@ -525,7 +525,8 @@ export async function getFollowersList(
        FROM follows f
        JOIN users u ON u.id = f.follower_id
        WHERE f.following_id = ?2
-       ORDER BY f.created_at DESC`
+       ORDER BY f.created_at DESC
+       LIMIT 200`
     )
       .bind(currentUserId || 0, targetUserId)
       .all<{
@@ -568,7 +569,8 @@ export async function getFollowingList(
        FROM follows f
        JOIN users u ON u.id = f.following_id
        WHERE f.follower_id = ?2
-       ORDER BY f.created_at DESC`
+       ORDER BY f.created_at DESC
+       LIMIT 200`
     )
       .bind(currentUserId || 0, targetUserId)
       .all<{

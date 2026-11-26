@@ -1,4 +1,4 @@
-import { layout, esc, renderVerifiedBadge } from './layout';
+import { layout, esc, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav } from './nav';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
@@ -57,9 +57,9 @@ export function sublistPage(
         <div class="sublist-user-row" data-username="${esc(u.username)}" data-name="${esc(u.display_name)}">
           <a href="/u/${encodeURIComponent(u.username)}" class="sublist-user-avatar">
             ${u.avatar_key
-              ? `<img src="/media/${esc(u.avatar_key)}" alt="${esc(u.username)}">`
-              : `<span>${esc((u.display_name || u.username).charAt(0).toUpperCase())}</span>`
-            }
+      ? `<img src="/media/${esc(u.avatar_key)}" alt="${esc(u.username)}">`
+      : `<span>${esc((u.display_name || u.username).charAt(0).toUpperCase())}</span>`
+    }
           </a>
           <a href="/u/${encodeURIComponent(u.username)}" class="sublist-user-meta">
             <div class="sublist-user-username">
@@ -149,7 +149,7 @@ export function sublistPage(
           var isNowFollowing = Boolean(data.is_following);
           this.dataset.following = isNowFollowing ? '1' : '0';
           this.className = 'btn btn-sm ' + (isNowFollowing ? 'btn-secondary' : 'btn-primary') + ' sublist-follow-btn';
-          this.textContent = isNowFollowing ? ${JSON.stringify(t.profile.following)} : ${JSON.stringify(t.profile.follow)};
+          this.textContent = isNowFollowing ? ${safeJsonForScript(t.profile.following)} : ${safeJsonForScript(t.profile.follow)};
         }
       } catch(err) {}
       this.disabled = false;

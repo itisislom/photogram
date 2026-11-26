@@ -1,6 +1,6 @@
 import { SavedAccountItem } from '../types';
 import { MAX_SAVED_ACCOUNTS } from '../auth';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav } from './nav';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
@@ -50,7 +50,7 @@ export function accountListPage(
             <span>${escapeHtml(t.auth.activeAccount)}</span>
           </span>` : ''}
         ${mainTagClose}
-        <button type="button" class="accountlist-remove-btn" data-remove-user-id="${acc.id}" data-remove-username="${unameSafe}" aria-label="${escapeHtml(t.auth.removeAccountBtn)}" title="${escapeHtml(t.auth.removeAccountBtn)}">
+        <button type="button" class="accountlist-remove-btn" data-remove-user-id="${acc.id}" data-remove-username="${unameSafe}" data-remove-current="${acc.is_current ? '1' : '0'}" aria-label="${escapeHtml(t.auth.removeAccountBtn)}" title="${escapeHtml(t.auth.removeAccountBtn)}">
           ${REMOVE_ICON}
         </button>
       </div>`;
@@ -101,7 +101,7 @@ export function accountListPage(
   ${renderBottomNav('profile', t)}
 </div>`;
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     networkError: t.common.networkError,
     addAccount: t.auth.addAccount,
     removeTitle: t.auth.removeAccountTitle,
@@ -153,10 +153,21 @@ export function accountListPage(
       if (isBusy) return;
       var targetId = parseInt(this.getAttribute('data-remove-user-id'), 10);
       var uname = this.getAttribute('data-remove-username') || '';
+      var isCurrentAcc = this.getAttribute('data-remove-current') === '1';
       if (!targetId) return;
 
-      function doRemove() {
+      async function doRemove() {
         isBusy = true;
+        try {
+          if (isCurrentAcc && window.unsubscribePushNotifications) {
+            await window.unsubscribePushNotifications();
+          }
+        } catch (e1) {}
+        try {
+          if (window.wipeLocalAccountData) {
+            await window.wipeLocalAccountData(targetId);
+          }
+        } catch (e2) {}
         fetch('/api/auth/remove-account', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -164,7 +175,7 @@ export function accountListPage(
         }).then(function(res) {
           return res.json().then(function(data) {
             if (res.ok && data && data.success) {
-              if (data.redirect) {
+              if (data.redirect && typeof data.redirect === 'string' && data.redirect.startsWith('/') && !data.redirect.startsWith('//')) {
                 window.location.href = data.redirect;
                 return;
               }

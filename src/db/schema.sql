@@ -147,12 +147,16 @@ CREATE TABLE IF NOT EXISTS user_tag_affinity (
 CREATE INDEX IF NOT EXISTS idx_user_tag_affinity ON user_tag_affinity(user_id, score DESC);
 
 CREATE TABLE IF NOT EXISTS conversations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user1_id        INTEGER NOT NULL,
-    user2_id        INTEGER NOT NULL,
-    last_message_id INTEGER,
-    last_message_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user1_id                INTEGER NOT NULL,
+    user2_id                INTEGER NOT NULL,
+    last_message_id         INTEGER,
+    last_message_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+    user1_cleared_before_id INTEGER NOT NULL DEFAULT 0,
+    user2_cleared_before_id INTEGER NOT NULL DEFAULT 0,
+    user1_hidden            INTEGER NOT NULL DEFAULT 0,
+    user2_hidden            INTEGER NOT NULL DEFAULT 0,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     CHECK (user1_id < user2_id),
     UNIQUE (user1_id, user2_id),
     FOREIGN KEY (user1_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -173,12 +177,28 @@ CREATE TABLE IF NOT EXISTS messages (
     ciphertext_envelope TEXT    NOT NULL DEFAULT '',
     read_at             TEXT,
     deleted_at          TEXT,
+    deleted_for_user1   INTEGER NOT NULL DEFAULT 0,
+    deleted_for_user2   INTEGER NOT NULL DEFAULT 0,
+    edited_at           TEXT,
+    edit_version        INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conv_id_desc ON messages(conversation_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    emoji      TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (message_id, user_id),
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reactions_msg ON message_reactions(message_id);
 
 CREATE TABLE IF NOT EXISTS notifications (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

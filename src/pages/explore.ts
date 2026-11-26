@@ -1,10 +1,11 @@
 import { ExploreData, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { formatLocalizedFullDate, formatLocalizedTime, getClientDateFormat } from '../languages';
+import { isAdminUser } from '../security';
 
 const SEARCH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -55,6 +56,7 @@ export function explorePage(
   t: Translations = ru,
   theme?: string
 ): string {
+  const isAdmin = isAdminUser(currentUser);
   const postList = data.posts || [];
   const tagsList = (data as any).tags || [];
   const activeTag = ((data as any).activeTag || 'all').toLowerCase().trim();
@@ -169,7 +171,10 @@ export function explorePage(
     <div class="pics-top-bar">
       <button type="button" class="pics-close-btn" id="closePicsBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       <div class="pics-title">Pics</div>
-      <button type="button" class="pics-more-btn" id="picsMoreBtn" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
+      <div class="pics-top-actions">
+        ${isAdmin ? `<button type="button" class="pics-more-btn pics-delete-btn" id="picsDeletePostBtn" aria-label="${escapeHtml(t.post.deletePost)}" title="${escapeHtml(t.post.deletePost)}">${TRASH_POST_ICON}</button>` : ''}
+        <button type="button" class="pics-more-btn" id="picsMoreBtn" aria-label="${escapeHtml(t.post.moreOptions)}" title="${escapeHtml(t.post.moreOptions)}">${MORE_DOTS_ICON}</button>
+      </div>
     </div>
     <div class="pics-feed" id="picsFeed">
       ${picsSlidesHtml}
@@ -177,7 +182,7 @@ export function explorePage(
   </div>
 </div>`;
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     noResults: t.explore.noResults,
     networkError: t.common.networkError,
     noPosts: t.profile.noPosts,
@@ -185,7 +190,11 @@ export function explorePage(
     minShort: t.common.minutesShort,
     hoursShort: t.common.hoursShort,
     daysShort: t.common.daysShort,
-    dateFmt: getClientDateFormat(t.code)
+    dateFmt: getClientDateFormat(t.code),
+    deletePostTitle: t.profile.deletePostConfirmTitle,
+    deletePostDesc: t.profile.deletePostConfirmDesc,
+    deleteBtn: t.common.delete,
+    cancelBtn: t.common.cancel
   });
 
   const script = `
@@ -358,23 +367,29 @@ ${renderCommentsSheetScript(t)}
     closePicsBtn.addEventListener('click', closePics);
   }
 
+  function getActivePicsSlide() {
+    if (!picsFeed) return null;
+    var slides = picsFeed.querySelectorAll('.pics-slide');
+    if (!slides.length) return null;
+    var feedRect = picsFeed.getBoundingClientRect();
+    var activeSlide = slides[0];
+    var bestDist = Infinity;
+    slides.forEach(function(s) {
+      var r = s.getBoundingClientRect();
+      var dist = Math.abs(r.top - feedRect.top);
+      if (dist < bestDist) {
+        bestDist = dist;
+        activeSlide = s;
+      }
+    });
+    return activeSlide;
+  }
+
   var picsMoreBtn = document.getElementById('picsMoreBtn');
   if (picsMoreBtn && picsFeed) {
     picsMoreBtn.addEventListener('click', function(e) {
       e.stopPropagation();
-      var slides = picsFeed.querySelectorAll('.pics-slide');
-      if (!slides.length) return;
-      var feedRect = picsFeed.getBoundingClientRect();
-      var activeSlide = slides[0];
-      var bestDist = Infinity;
-      slides.forEach(function(s) {
-        var r = s.getBoundingClientRect();
-        var dist = Math.abs(r.top - feedRect.top);
-        if (dist < bestDist) {
-          bestDist = dist;
-          activeSlide = s;
-        }
-      });
+      var activeSlide = getActivePicsSlide();
       if (!activeSlide) return;
       var imgEl = activeSlide.querySelector('.pics-image');
       var imgUrl = activeSlide.dataset.postImg || (imgEl ? imgEl.getAttribute('src') : '');
@@ -384,6 +399,59 @@ ${renderCommentsSheetScript(t)}
           postId: activeSlide.dataset.postId || '',
           username: activeSlide.dataset.postUsername || ''
         });
+      }
+    });
+  }
+
+  var picsDeleteBtn = document.getElementById('picsDeletePostBtn');
+  if (picsDeleteBtn && picsFeed) {
+    picsDeleteBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (picsDeleteBtn.disabled) return;
+      var activeSlide = getActivePicsSlide();
+      if (!activeSlide) return;
+      var pid = parseInt(activeSlide.dataset.postId, 10);
+      if (!pid) return;
+
+      function doDeletePicsPost() {
+        picsDeleteBtn.disabled = true;
+        fetch('/api/posts/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ post_id: pid })
+        }).then(function(r) {
+          return r.json().then(function(d) { return { ok: r.ok, d: d }; });
+        }).then(function(res) {
+          picsDeleteBtn.disabled = false;
+          if (res.ok && res.d && res.d.success) {
+            activeSlide.remove();
+            var gridBtn = document.querySelector('#exploreGrid .post-item-btn[data-post-id="' + pid + '"]');
+            if (gridBtn) gridBtn.remove();
+            if (!picsFeed.querySelector('.pics-slide')) {
+              closePics();
+            }
+          } else if (window.showAppAlert) {
+            window.showAppAlert({ message: (res.d && res.d.error) || i18n.networkError });
+          }
+        }).catch(function() {
+          picsDeleteBtn.disabled = false;
+          if (window.showAppAlert) {
+            window.showAppAlert({ message: i18n.networkError });
+          }
+        });
+      }
+
+      if (window.showAppConfirm) {
+        window.showAppConfirm({
+          title: i18n.deletePostTitle,
+          message: i18n.deletePostDesc,
+          okText: i18n.deleteBtn,
+          cancelText: i18n.cancelBtn,
+          danger: true,
+          onOk: doDeletePicsPost
+        });
+      } else if (window.confirm(i18n.deletePostDesc)) {
+        doDeletePicsPost();
       }
     });
   }
@@ -812,15 +880,15 @@ ${renderCommentsSheetScript(t)}
       gridHtml += '<button class="explore-grid-item post-item-btn" type="button" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-index="' + idx + '" data-likes-count="' + likes + '" data-comments-count="' + comments + '" data-is-liked="' + liked + '">' +
         '<img src="/media/' + encodeURIComponent(p.image_key) + '" alt="Explore" loading="' + (idx < 6 ? 'eager' : 'lazy') + '">' +
         '<div class="explore-item-likes-badge">' +
-          '<span class="explore-badge-part">' + ${JSON.stringify(MINI_HEART_ICON)} + ' <span class="badge-count">' + likes + '</span></span>' +
-          '<span class="explore-badge-part">' + ${JSON.stringify(MINI_COMMENT_ICON)} + ' <span class="badge-comments-count">' + comments + '</span></span>' +
+          '<span class="explore-badge-part">' + ${safeJsonForScript(MINI_HEART_ICON)} + ' <span class="badge-count">' + likes + '</span></span>' +
+          '<span class="explore-badge-part">' + ${safeJsonForScript(MINI_COMMENT_ICON)} + ' <span class="badge-comments-count">' + comments + '</span></span>' +
         '</div>' +
       '</button>';
 
       slidesHtml += '<div class="pics-slide" data-post-id="' + p.id + '" data-author-id="' + p.user_id + '" data-post-img="/media/' + encodeURIComponent(p.image_key) + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-index="' + idx + '">' +
         '<div class="pics-image-wrap">' +
           '<img class="pics-image" src="/media/' + encodeURIComponent(p.image_key) + '" alt="Explore" loading="' + (idx < 3 ? 'eager' : 'lazy') + '">' +
-          '<div class="post-like-burst">' + ${JSON.stringify(HEART_BURST_ICON)} + '</div>' +
+          '<div class="post-like-burst">' + ${safeJsonForScript(HEART_BURST_ICON)} + '</div>' +
         '</div>' +
         '<div class="pics-gradient-overlay"></div>' +
         '<div class="pics-bottom-info">' +
@@ -833,11 +901,11 @@ ${renderCommentsSheetScript(t)}
         '</div>' +
         '<div class="pics-side-bar">' +
           '<button class="pics-action-btn pics-like-btn ' + (p.is_liked ? 'liked' : '') + '" type="button">' +
-            ${JSON.stringify(HEART_ICON)} +
+            ${safeJsonForScript(HEART_ICON)} +
             '<span class="pics-action-count">' + likes + '</span>' +
           '</button>' +
           '<button class="pics-action-btn pics-comment-btn" type="button" data-post-id="' + p.id + '" data-comments-count="' + comments + '">' +
-            ${JSON.stringify(COMMENT_ICON)} +
+            ${safeJsonForScript(COMMENT_ICON)} +
             '<span class="pics-action-count pics-comment-count">' + comments + '</span>' +
           '</button>' +
         '</div>' +
@@ -879,7 +947,10 @@ ${renderCommentsSheetScript(t)}
   var urlParams = new URLSearchParams(window.location.search);
   var qTag = (urlParams.get('tag') || '').toLowerCase().trim();
   if (qTag && qTag !== 'all') {
-    var pill = document.querySelector('.explore-tag-pill[data-tag="' + qTag + '"]');
+    var pill = null;
+    document.querySelectorAll('.explore-tag-pill').forEach(function(p) {
+      if (!pill && p.dataset && p.dataset.tag === qTag) pill = p;
+    });
     if (pill) {
       document.querySelectorAll('.explore-tag-pill').forEach(function(p) { p.classList.remove('active'); });
       pill.classList.add('active');

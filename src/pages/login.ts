@@ -1,4 +1,4 @@
-import { layout, esc, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
+import { layout, esc, safeJsonForScript, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
 import { Translations, ru, renderLangSwitcherHtml } from '../languages';
 
 const LOGO = `<svg viewBox="0 0 24 24" fill="white"><path d="M9.4 4L7.6 6H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-3.6L14.6 4H9.4zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/><circle cx="12" cy="12" r="3"/></svg>`;
@@ -89,12 +89,12 @@ if (togglePasswordBtn && passwordInput) {
     }
     if (shouldReveal) {
       togglePasswordBtn.classList.add('is-revealed');
-      togglePasswordBtn.setAttribute('aria-label', ${JSON.stringify(t.auth.hidePassword)});
-      togglePasswordBtn.setAttribute('title', ${JSON.stringify(t.auth.hidePassword)});
+      togglePasswordBtn.setAttribute('aria-label', ${safeJsonForScript(t.auth.hidePassword)});
+      togglePasswordBtn.setAttribute('title', ${safeJsonForScript(t.auth.hidePassword)});
     } else {
       togglePasswordBtn.classList.remove('is-revealed');
-      togglePasswordBtn.setAttribute('aria-label', ${JSON.stringify(t.auth.showPassword)});
-      togglePasswordBtn.setAttribute('title', ${JSON.stringify(t.auth.showPassword)});
+      togglePasswordBtn.setAttribute('aria-label', ${safeJsonForScript(t.auth.showPassword)});
+      togglePasswordBtn.setAttribute('title', ${safeJsonForScript(t.auth.showPassword)});
     }
     passwordInput.focus();
   });
@@ -106,7 +106,7 @@ document.getElementById('form').addEventListener('submit', async function(e) {
   var err = document.getElementById('err');
   err.classList.remove('visible');
   btn.disabled = true;
-  btn.textContent = ${JSON.stringify(t.common.loading)};
+  btn.textContent = ${safeJsonForScript(t.common.loading)};
   try {
     var loginInput = document.getElementById('login');
     var fd = new FormData();
@@ -125,11 +125,11 @@ document.getElementById('form').addEventListener('submit', async function(e) {
       err.classList.add('visible');
     }
   } catch (x) {
-    err.textContent = ${JSON.stringify(t.common.networkError)};
+    err.textContent = ${safeJsonForScript(t.common.networkError)};
     err.classList.add('visible');
   }
   btn.disabled = false;
-  btn.textContent = ${JSON.stringify(t.auth.loginBtn)};
+  btn.textContent = ${safeJsonForScript(t.auth.loginBtn)};
 });`;
 
   return layout(t.auth.loginTitle, body, script, t, theme);

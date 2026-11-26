@@ -5,7 +5,7 @@ export function formatBioHtml(bio?: string | null): string {
 }
 
 import { ProfileData } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { SEND_COMMENT_ICON } from './commentsModal';
 import { Translations } from '../languages/types';
@@ -239,7 +239,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   }
 </div>`;
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     lang: t.code,
     dateFmt: getClientDateFormat(t.code),
     justNow: t.common.justNow,
@@ -274,6 +274,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 (function() {
   var i18n = ${clientI18n};
   var isOwner = ${is_owner ? 'true' : 'false'};
+  var isAdmin = ${data.is_admin ? 'true' : 'false'};
   var currentUserId = ${Number(data.current_user_id || (is_owner ? user.id : 0))};
 
   function syncBodyOverflow() {
@@ -586,8 +587,8 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   function formatCaptionHtml(caption) {
     if (!caption) return '';
     var safe = escapeHtmlClient(caption);
-    safe = safe.replace(/#([a-zA-Zа-яА-ЯёЁ0-9_]{2,30})/g, function(match, tag) {
-      return '<a href="/explore?tag=' + encodeURIComponent(tag.toLowerCase()) + '" class="caption-hashtag">#' + tag + '</a>';
+    safe = safe.replace(/(^|[^&])#([a-zA-Zа-яА-ЯёЁ0-9_]{2,30})/g, function(match, pre, tag) {
+      return pre + '<a href="/explore?tag=' + encodeURIComponent(tag.toLowerCase()) + '" class="caption-hashtag">#' + tag + '</a>';
     });
     return safe.replace(/@([a-z0-9._]{3,24})/gi, '<a href="/u/$1" class="mention-link">@$1</a>');
   }
@@ -728,14 +729,14 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     updateLikeUI(isLiked, likesCount);
 
     var postAuthorId = Number(btn.dataset.authorId || '${user.id}');
-    var postAuthorUsername = btn.dataset.authorUsername || '${usernameSafe}';
+    var postAuthorUsername = btn.dataset.authorUsername || ${safeJsonForScript(user.username)};
     var postAuthorAvatar = btn.dataset.authorAvatar || '';
     var postAuthorVerified = btn.dataset.authorVerified !== undefined ? btn.dataset.authorVerified : '${user.is_verified ? '1' : '0'}';
 
     updateAuthorHeader(postAuthorUsername, postAuthorAvatar, postAuthorVerified);
 
     if (openDeleteBtn) {
-      if (Number(postAuthorId) === Number(currentUserId) && Number(currentUserId) > 0) {
+      if (isAdmin || (Number(postAuthorId) === Number(currentUserId) && Number(currentUserId) > 0)) {
         openDeleteBtn.style.display = 'flex';
       } else {
         openDeleteBtn.style.display = 'none';
@@ -1035,15 +1036,18 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
         });
         var data = await res.json();
         if (res.ok) {
+          var wasInProfileGrid = Boolean(document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deletedPostId + '"]'));
           hideDeleteModal();
           closePostView();
           document.querySelectorAll('.post-item-btn[data-post-id="' + deletedPostId + '"]').forEach(function(item) {
             item.remove();
           });
-          var countEl = document.querySelector('.profile-stats .stat-item:first-child .stat-number');
-          if (countEl) {
-            var cur = parseInt(countEl.textContent, 10) || 1;
-            countEl.textContent = Math.max(0, cur - 1);
+          if (wasInProfileGrid) {
+            var countEl = document.querySelector('.profile-stats .stat-item:first-child .stat-number');
+            if (countEl) {
+              var cur = parseInt(countEl.textContent, 10) || 1;
+              countEl.textContent = Math.max(0, cur - 1);
+            }
           }
           var grid = document.getElementById('profileGrid');
           if (grid && grid.children.length === 0) {
@@ -1178,7 +1182,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     followBtn.addEventListener('click', function() {
       if (isFollowingRequest) return;
       var wasFollowing = followBtn.dataset.isFollowing === '1';
-      var targetUsername = followBtn.dataset.username || '${usernameSafe}';
+      var targetUsername = followBtn.dataset.username || ${safeJsonForScript(user.username)};
 
       function executeFollowChange() {
         if (isFollowingRequest) return;

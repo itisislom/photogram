@@ -26,6 +26,7 @@ import {
   handlePreKeyCount,
   handleGetKeyBundle,
   handleGetIdentities,
+  handleUnregisterE2eeDevice,
 } from './e2ee';
 import {
   getChatPageData,
@@ -37,6 +38,9 @@ import {
   handleSendMessage,
   handleMarkRead,
   handleDeleteMessage,
+  handleDeleteConversation,
+  handleToggleReaction,
+  handleEditMessage,
   handleUnreadCount,
 } from './messages';
 import { sublistPage } from './pages/sublist';
@@ -58,6 +62,21 @@ import {
   handleTelemetryBatch
 } from './recommendations';
 import { createPostgresClient } from './db/client';
+import {
+  consumeRateLimitAtomic,
+  getClientIp,
+  isAdminUser,
+  parsePositiveId,
+  readJsonWithLimit,
+} from './security';
+
+function safeDecode(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -79,6 +98,33 @@ export default {
   },
 };
 
+function isValidTimeZone(tz: string): boolean {
+  if (!tz || tz.length > 64 || !/^[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+){0,2}$/.test(tz)) {
+    return false;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detectTimeZone(request: Request, cookieHeader: string): string {
+  const m = /(?:^|;\s*)tz=([^;]+)/.exec(cookieHeader);
+  if (m && m[1]) {
+    try {
+      const decoded = decodeURIComponent(m[1]).trim();
+      if (isValidTimeZone(decoded)) return decoded;
+    } catch {}
+  }
+  const cfTz = (request as Request & { cf?: { timezone?: unknown } }).cf?.timezone;
+  if (typeof cfTz === 'string' && isValidTimeZone(cfTz.trim())) {
+    return cfTz.trim();
+  }
+  return 'UTC';
+}
+
 async function handleRequest(request: Request, env: Env, url: URL): Promise<Response> {
   const pathname = url.pathname;
   const method = request.method;
@@ -90,9 +136,11 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
   const setLangCookie = !hasLangCookie ? userLang : undefined;
   const t = getTranslations(userLang);
   const userTheme = /(?:^|;\s*)theme=(dark|light)/.exec(cookieHeader)?.[1];
+  const userTimeZone = detectTimeZone(request, cookieHeader);
 
     if (method === 'POST') {
       const origin = request.headers.get('Origin');
+      const secFetchSite = request.headers.get('Sec-Fetch-Site');
       if (origin) {
         try {
           const originUrl = new URL(origin);
@@ -103,9 +151,21 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
           return new Response('Forbidden: Invalid origin', { status: 403 });
         }
       }
-      const secFetchSite = request.headers.get('Sec-Fetch-Site');
       if (secFetchSite === 'cross-site') {
         return new Response('Forbidden: Cross-site request rejected', { status: 403 });
+      }
+      if (!origin && !secFetchSite) {
+        const referer = request.headers.get('Referer');
+        if (referer) {
+          try {
+            const refUrl = new URL(referer);
+            if (refUrl.host !== url.host) {
+              return new Response('Forbidden: Cross-site request rejected', { status: 403 });
+            }
+          } catch {
+            return new Response('Forbidden: Invalid referer', { status: 403 });
+          }
+        }
       }
     }
 
@@ -220,7 +280,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const chatData = await getChatPageData(env, user);
-      return html(messagesPage(chatData, user, t, userTheme), setLangCookie, isHttps);
+      return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
 
     if ((pathname === '/notifications' || pathname === '/notifications.ts') && method === 'GET') {
@@ -234,11 +294,13 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
     if (pathname.startsWith('/messages/') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
-      const targetUsername = decodeURIComponent(pathname.slice('/messages/'.length)).replace(/\/+$/, '').trim();
+      const decodedTarget = safeDecode(pathname.slice('/messages/'.length));
+      if (decodedTarget === null) return new Response('Bad Request', { status: 400 });
+      const targetUsername = decodedTarget.replace(/\/+$/, '').trim();
       if (!targetUsername) return redirect('/messages', request, setLangCookie);
       const chatData = await getChatPageData(env, user, targetUsername);
       if (chatData.notFound) return redirect('/messages', request, setLangCookie);
-      return html(messagesPage(chatData, user, t, userTheme), setLangCookie, isHttps);
+      return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
 
     if ((pathname === '/publishpost' || pathname === '/publishpost.ts') && method === 'GET') {
@@ -251,9 +313,13 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       const rest = pathname.slice(3);
       const sublistMatch = /^([^\/]+)\/sublist(?:\.ts)?$/i.exec(rest);
       if (sublistMatch) {
-        const sublistUsername = decodeURIComponent(sublistMatch[1]).toLowerCase().trim();
+        const decodedSub = safeDecode(sublistMatch[1]);
+        if (decodedSub === null) return new Response('Bad Request', { status: 400 });
+        const sublistUsername = decodedSub.toLowerCase().trim();
         const currentUser = await getUserFromRequest(env, request);
-        const targetUser = await env.DB.prepare('SELECT * FROM users WHERE username = ?')
+        const targetUser = await env.DB.prepare(
+          'SELECT id, username, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE username = ?',
+        )
           .bind(sublistUsername)
           .first<User>();
         if (!targetUser) {
@@ -264,9 +330,13 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       }
       const subslistMatch = /^([^\/]+)\/subslist(?:\.ts)?$/i.exec(rest);
       if (subslistMatch) {
-        const subslistUsername = decodeURIComponent(subslistMatch[1]).toLowerCase().trim();
+        const decodedSubs = safeDecode(subslistMatch[1]);
+        if (decodedSubs === null) return new Response('Bad Request', { status: 400 });
+        const subslistUsername = decodedSubs.toLowerCase().trim();
         const currentUser = await getUserFromRequest(env, request);
-        const targetUser = await env.DB.prepare('SELECT * FROM users WHERE username = ?')
+        const targetUser = await env.DB.prepare(
+          'SELECT id, username, display_name, bio, avatar_key, is_verified, created_at FROM users WHERE username = ?',
+        )
           .bind(subslistUsername)
           .first<User>();
         if (!targetUser) {
@@ -278,7 +348,9 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
       const editprofileMatch = /^([^\/]+)\/editprofile(?:\.ts)?$/i.exec(rest);
       if (editprofileMatch) {
-        const requestedUsername = decodeURIComponent(editprofileMatch[1]).toLowerCase().trim();
+        const decodedEdit = safeDecode(editprofileMatch[1]);
+        if (decodedEdit === null) return new Response('Bad Request', { status: 400 });
+        const requestedUsername = decodedEdit.toLowerCase().trim();
         const currentUser = await getUserFromRequest(env, request);
         if (!currentUser) {
           return redirect('/login', request, setLangCookie);
@@ -286,26 +358,38 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
         if (currentUser.username.toLowerCase() !== requestedUsername) {
           return redirect(`/u/${encodeURIComponent(currentUser.username)}/editprofile`, request, setLangCookie);
         }
-        const profile = await getProfileData(env, currentUser.username, currentUser.id);
+        const profile = await getProfileData(env, currentUser.username, currentUser.id, false);
         if (!profile) {
           return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
         return html(editProfilePage(profile, t, userTheme), setLangCookie, isHttps);
       }
 
-      const targetUsername = decodeURIComponent(rest).toLowerCase().trim();
+      const decodedProfile = safeDecode(rest);
+      if (decodedProfile === null) return new Response('Bad Request', { status: 400 });
+      const targetUsername = decodedProfile.toLowerCase().trim();
       const currentUser = await getUserFromRequest(env, request);
       const profile = await getProfileData(env, targetUsername, currentUser?.id);
       if (!profile) {
         return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
       }
+      profile.is_admin = isAdminUser(currentUser);
       return html(profilePage(profile, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname.startsWith('/media/') && (method === 'GET' || method === 'HEAD')) {
-      const key = decodeURIComponent(pathname.slice('/media/'.length));
+      const key = safeDecode(pathname.slice('/media/'.length));
+      if (key === null) {
+        return new Response('Bad Request', { status: 400 });
+      }
       const isDmMedia = key.startsWith('dm/');
-      if (!key || key.includes('..') || (!key.startsWith('posts/') && !key.startsWith('avatars/') && !isDmMedia)) {
+      if (
+        !key ||
+        key.includes('..') ||
+        key.includes('\\') ||
+        /[\x00-\x1f\x7f]/.test(key) ||
+        (!key.startsWith('posts/') && !key.startsWith('avatars/') && !isDmMedia)
+      ) {
         return new Response('Not Found', { status: 404 });
       }
       if (isDmMedia) {
@@ -321,7 +405,7 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       const headers = new Headers();
       object.writeHttpMetadata(headers);
       headers.set('etag', object.httpEtag);
-      headers.set('Cache-Control', isDmMedia ? 'private, max-age=3600' : 'public, max-age=31536000, immutable');
+      headers.set('Cache-Control', isDmMedia ? 'private, no-store' : 'public, max-age=31536000, immutable');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Content-Security-Policy', "default-src 'none'");
       if (!headers.has('Content-Type')) {
@@ -396,29 +480,41 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      try {
-        const body = (await request.json()) as { events?: unknown };
-        const result = await handleTelemetryBatch(env, user.id, body?.events);
-        return new Response(
-          JSON.stringify(result.ok ? { success: true, accepted: result.accepted || 0 } : { error: result.error || 'Bad request' }),
-          {
-            status: result.status,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-      } catch {
-        return new Response(JSON.stringify({ error: 'Bad request' }), {
-          status: 400,
+      const parsed = await readJsonWithLimit<{ events?: unknown }>(request, 16384);
+      if (!parsed.ok) {
+        return new Response(JSON.stringify({ error: parsed.status === 413 ? 'Payload too large' : 'Bad request' }), {
+          status: parsed.status,
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      const result = await handleTelemetryBatch(env, user.id, parsed.data?.events);
+      return new Response(
+        JSON.stringify(result.ok ? { success: true, accepted: result.accepted || 0 } : { error: result.error || 'Bad request' }),
+        {
+          status: result.status,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
     if (pathname === '/api/recommendations/explore' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
-      const tag = url.searchParams.get('tag') || 'all';
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const allowed = await consumeRateLimitAtomic(env, `explore:user:${user.id}`, 40, 60);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const tag = (url.searchParams.get('tag') || 'all').slice(0, 40);
       const limit = parseInt(url.searchParams.get('limit') || '36', 10);
-      const data = await getPersonalizedExplore(env, user?.id || 0, tag, limit);
+      const data = await getPersonalizedExplore(env, user.id, tag, limit);
       return new Response(JSON.stringify(data), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -426,7 +522,15 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
     if (pathname === '/api/posts/related' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
-      const postId = parseInt(url.searchParams.get('post_id') || '0', 10);
+      const rlKey = user ? `related:u:${user.id}` : `related:ip:${getClientIp(request)}`;
+      const allowed = await consumeRateLimitAtomic(env, rlKey, 40, 60);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const postId = parsePositiveId(url.searchParams.get('post_id'));
       if (!postId) {
         return new Response(JSON.stringify({ posts: [] }), {
           headers: { 'Content-Type': 'application/json' },
@@ -441,7 +545,15 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
     if (pathname === '/api/recommendations/users' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) {
-        return new Response(JSON.stringify({ users: [] }), {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const allowed = await consumeRateLimitAtomic(env, `recusers:u:${user.id}`, 40, 60);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
           headers: { 'Content-Type': 'application/json' },
         });
       }
@@ -453,7 +565,15 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
 
     if (pathname === '/api/authors/similar' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
-      const authorId = parseInt(url.searchParams.get('author_id') || '0', 10);
+      const rlKey = user ? `similar:u:${user.id}` : `similar:ip:${getClientIp(request)}`;
+      const allowed = await consumeRateLimitAtomic(env, rlKey, 40, 60);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const authorId = parsePositiveId(url.searchParams.get('author_id'));
       if (!authorId) {
         return new Response(JSON.stringify({ users: [] }), {
           headers: { 'Content-Type': 'application/json' },
@@ -505,6 +625,18 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       return handleDeleteMessage(request, env);
     }
 
+    if (pathname === '/api/messages/conversation/delete' && method === 'POST') {
+      return handleDeleteConversation(request, env);
+    }
+
+    if (pathname === '/api/messages/react' && method === 'POST') {
+      return handleToggleReaction(request, env);
+    }
+
+    if (pathname === '/api/messages/edit' && method === 'POST') {
+      return handleEditMessage(request, env);
+    }
+
     if (pathname === '/api/messages/unread' && method === 'GET') {
       return handleUnreadCount(request, env);
     }
@@ -541,38 +673,39 @@ async function handleRequest(request: Request, env: Env, url: URL): Promise<Resp
       return handlePreKeyCount(request, env, url);
     }
 
-    if (pathname === '/api/e2ee/keys/bundle' && method === 'GET') {
-      return handleGetKeyBundle(request, env, url);
+    if (pathname === '/api/e2ee/keys/bundle' && method === 'POST') {
+      return handleGetKeyBundle(request, env);
     }
 
     if (pathname === '/api/e2ee/keys/identities' && method === 'GET') {
       return handleGetIdentities(request, env, url);
     }
 
-
+    if (pathname === '/api/e2ee/keys/unregister' && method === 'POST') {
+      return handleUnregisterE2eeDevice(request, env);
+    }
 
     if (pathname === '/api/lang' && method === 'POST') {
-      try {
-        const body = (await request.json()) as { lang?: string };
-        const valid = normalizeLang(body?.lang);
-        if (!valid) {
-          return new Response(JSON.stringify({ error: 'Invalid language' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(JSON.stringify({ success: true, lang: valid }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Set-Cookie': `lang=${valid}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`,
-          },
-        });
-      } catch {
+      const parsed = await readJsonWithLimit<{ lang?: string }>(request, 1024);
+      if (!parsed.ok) {
         return new Response(JSON.stringify({ error: 'Bad request' }), {
+          status: parsed.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const valid = normalizeLang(parsed.data?.lang);
+      if (!valid) {
+        return new Response(JSON.stringify({ error: 'Invalid language' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      return new Response(JSON.stringify({ success: true, lang: valid }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': `lang=${valid}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`,
+        },
+      });
     }
 
     return new Response('Not Found', { status: 404 });
@@ -591,7 +724,7 @@ function withSecurityHeaders(response: Response, isMedia = false): Response {
   } else {
     headers.set(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     );
   }
 

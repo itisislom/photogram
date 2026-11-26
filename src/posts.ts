@@ -2,6 +2,16 @@ import { Env, Post, FeedPost, Comment } from './types';
 import { getUserFromRequest } from './auth';
 import { savePostTags, adjustAffinity, adjustTagAffinity } from './recommendations';
 import { createNotification, removeNotification } from './notifications';
+import {
+  acquireCooldownAtomic,
+  checkContentLength,
+  consumeBurstWithLockoutAtomic,
+  consumeRateLimitAtomic,
+  isAdminUser,
+  parsePositiveId,
+  readJsonWithLimit,
+  validateImageBytes,
+} from './security';
 
 const MAX_POST_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_CAPTION_LEN = 1000;
@@ -17,75 +27,51 @@ function jsonError(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
-function detectImageType(bytes: Uint8Array): { mime: string; ext: string } | null {
-  if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-    return { mime: 'image/jpeg', ext: 'jpg' };
-  }
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4E &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0D &&
-    bytes[5] === 0x0A &&
-    bytes[6] === 0x1A &&
-    bytes[7] === 0x0A
-  ) {
-    return { mime: 'image/png', ext: 'png' };
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  ) {
-    return { mime: 'image/webp', ext: 'webp' };
-  }
-  return null;
-}
-
 export async function handleCreatePost(request: Request, env: Env): Promise<Response> {
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const lastPost = await env.DB.prepare(
-    'SELECT created_at FROM posts WHERE user_id = ? ORDER BY id DESC LIMIT 1'
-  )
-    .bind(currentUser.id)
-    .first<{ created_at: string }>();
-
-  if (lastPost && lastPost.created_at) {
-    const postTime = new Date(lastPost.created_at.includes('T') ? lastPost.created_at : lastPost.created_at.replace(' ', 'T') + 'Z').getTime();
-    if (!isNaN(postTime) && (Date.now() - postTime) < 10000) {
-      return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
-    }
+  const burstAllowed = await consumeRateLimitAtomic(env, `post:burst:${currentUser.id}`, 20, 60);
+  if (!burstAllowed) {
+    return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
   }
 
-  const form = await request.formData();
+  if (!checkContentLength(request, MAX_POST_IMAGE_SIZE + 65536)) {
+    return jsonError('Максимальный размер фото — 5 МБ', 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError('Неверный формат запроса', 400);
+  }
   const file = form.get('image');
   if (!file || typeof file === 'string') {
     return jsonError('Файл изображения не передан', 400);
   }
 
-  if (file.size > MAX_POST_IMAGE_SIZE) {
+  if (file.size <= 0 || file.size > MAX_POST_IMAGE_SIZE) {
     return jsonError('Максимальный размер фото — 5 МБ', 400);
   }
 
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  const detected = detectImageType(bytes);
+  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_POST_IMAGE_SIZE) {
+    return jsonError('Максимальный размер фото — 5 МБ', 400);
+  }
+  const detected = validateImageBytes(bytes);
 
   if (!detected) {
     return jsonError('Разрешены только форматы JPEG, PNG, WEBP', 400);
   }
 
-  const captionRaw = (form.get('caption') as string) ?? '';
+  const cdAllowed = await acquireCooldownAtomic(env, `post:cd:${currentUser.id}`, 10);
+  if (!cdAllowed) {
+    return jsonError('Слишком часто. Публиковать можно не чаще одного раза в 10 секунд', 429);
+  }
+
+  const captionRaw = typeof form.get('caption') === 'string' ? (form.get('caption') as string) : '';
   const caption = captionRaw.trim().slice(0, MAX_CAPTION_LEN);
 
   const STOP_WORDS_18_PLUS = /(18\+|nsfw|nude|onlyfans|нюдс|интим|порно|секс|эротика|сиськи|писька|член|вагина|дикпик)/i;
@@ -131,23 +117,25 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
+  const allowed = await consumeRateLimitAtomic(env, `post:del:${currentUser.id}`, 20, 60);
+  if (!allowed) return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+
   let postId: number | null = null;
   const contentType = request.headers.get('content-type') || '';
 
   if (contentType.includes('application/json')) {
-    try {
-      const data = (await request.json()) as { post_id?: number };
-      if (data && typeof data.post_id === 'number') postId = data.post_id;
-    } catch { }
+    const parsed = await readJsonWithLimit<{ post_id?: unknown }>(request, 4096);
+    if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+    postId = parsePositiveId(parsed.data?.post_id);
   } else {
     try {
+      if (!checkContentLength(request, 8192)) return jsonError('Неверный формат запроса', 413);
       const form = await request.formData();
-      const raw = form.get('post_id');
-      if (raw) postId = parseInt(raw as string, 10);
+      postId = parsePositiveId(form.get('post_id'));
     } catch { }
   }
 
-  if (!postId || isNaN(postId)) {
+  if (!postId) {
     return jsonError('Идентификатор публикации не указан', 400);
   }
 
@@ -159,7 +147,7 @@ export async function handleDeletePost(request: Request, env: Env): Promise<Resp
     return jsonError('Публикация не найдена', 404);
   }
 
-  if (post.user_id !== currentUser.id) {
+  if (post.user_id !== currentUser.id && !isAdminUser(currentUser)) {
     return jsonError('Нет прав на удаление этой публикации', 403);
   }
 
@@ -181,38 +169,8 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
-  const now = Math.floor(Date.now() / 1000);
-  const likeRateKey = `like:${currentUser.id}`;
-
-  const rateRow = await env.DB.prepare(
-    'SELECT attempts, locked_until, updated_at FROM auth_rate_limits WHERE key = ?'
-  )
-    .bind(likeRateKey)
-    .first<{ attempts: number; locked_until: number; updated_at: number }>();
-
-  if (rateRow && rateRow.locked_until > now) {
-    return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
-  }
-
-  let attempts = 1;
-  if (rateRow) {
-    if (now - rateRow.updated_at > 5) {
-      attempts = 1;
-    } else {
-      attempts = rateRow.attempts + 1;
-    }
-  }
-
-  const isLocked = attempts > 15;
-  const lockUntil = isLocked ? now + 10 : 0;
-
-  await env.DB.prepare(
-    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?'
-  )
-    .bind(likeRateKey, attempts, lockUntil, now, attempts, lockUntil, now)
-    .run();
-
-  if (isLocked) {
+  const rl = await consumeBurstWithLockoutAtomic(env, `like:${currentUser.id}`, 15, 5, 10);
+  if (!rl.allowed) {
     return jsonError('Слишком много запросов. Действие временно заблокировано на 10 секунд', 429);
   }
 
@@ -220,19 +178,18 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
   const contentType = request.headers.get('content-type') || '';
 
   if (contentType.includes('application/json')) {
-    try {
-      const data = (await request.json()) as { post_id?: number };
-      if (data && typeof data.post_id === 'number') postId = data.post_id;
-    } catch { }
+    const parsed = await readJsonWithLimit<{ post_id?: unknown }>(request, 4096);
+    if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+    postId = parsePositiveId(parsed.data?.post_id);
   } else {
     try {
+      if (!checkContentLength(request, 8192)) return jsonError('Неверный формат запроса', 413);
       const form = await request.formData();
-      const raw = form.get('post_id');
-      if (raw) postId = parseInt(raw as string, 10);
+      postId = parsePositiveId(form.get('post_id'));
     } catch { }
   }
 
-  if (!postId || isNaN(postId)) {
+  if (!postId) {
     return jsonError('Идентификатор публикации не указан', 400);
   }
 
@@ -249,27 +206,35 @@ export async function handleToggleLike(request: Request, env: Env): Promise<Resp
 
   let liked = false;
   if (existing) {
-    await env.DB.prepare('DELETE FROM likes WHERE post_id = ? AND user_id = ?')
+    const delRow = await env.DB.prepare(
+      'DELETE FROM likes WHERE post_id = ? AND user_id = ? RETURNING post_id',
+    )
       .bind(postId, currentUser.id)
-      .run();
+      .first<{ post_id: number }>();
     liked = false;
-    await adjustAffinity(env, currentUser.id, post.user_id, -3.5);
-    await adjustTagAffinity(env, currentUser.id, postId, -2.0);
-    await removeNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+    if (delRow) {
+      await adjustAffinity(env, currentUser.id, post.user_id, -3.5);
+      await adjustTagAffinity(env, currentUser.id, postId, -2.0);
+      await removeNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+    }
   } else {
-    await env.DB.prepare('INSERT OR IGNORE INTO likes (post_id, user_id) VALUES (?, ?)')
+    const insRow = await env.DB.prepare(
+      'INSERT INTO likes (post_id, user_id) VALUES (?, ?) ON CONFLICT (post_id, user_id) DO NOTHING RETURNING post_id',
+    )
       .bind(postId, currentUser.id)
-      .run();
+      .first<{ post_id: number }>();
     liked = true;
-    await adjustAffinity(env, currentUser.id, post.user_id, 3.5);
-    await adjustTagAffinity(env, currentUser.id, postId, 2.0);
-    await createNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+    if (insRow) {
+      await adjustAffinity(env, currentUser.id, post.user_id, 3.5);
+      await adjustTagAffinity(env, currentUser.id, postId, 2.0);
+      await createNotification(env, { userId: post.user_id, actorId: currentUser.id, type: 'like', postId });
+    }
   }
 
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM likes WHERE post_id = ?')
     .bind(postId)
     .first<{ count: number }>();
-  const likesCount = countRow ? countRow.count : 0;
+  const likesCount = countRow ? Number(countRow.count) : 0;
 
   return jsonResponse({
     success: true,
@@ -318,10 +283,9 @@ export async function getFeedPosts(env: Env, viewerId: number): Promise<FeedPost
 export async function handleGetComments(request: Request, env: Env): Promise<Response> {
   const currentUser = await getUserFromRequest(env, request);
   const url = new URL(request.url);
-  const postIdRaw = url.searchParams.get('post_id');
-  const postId = postIdRaw ? parseInt(postIdRaw, 10) : null;
+  const postId = parsePositiveId(url.searchParams.get('post_id'));
 
-  if (!postId || isNaN(postId)) {
+  if (!postId) {
     return jsonError('Идентификатор публикации не указан', 400);
   }
 
@@ -339,7 +303,8 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
      FROM comments c
      JOIN users u ON c.user_id = u.id
      WHERE c.post_id = ?
-     ORDER BY c.created_at ASC, c.id ASC`
+     ORDER BY c.created_at ASC, c.id ASC
+     LIMIT 100`
   )
     .bind(postId)
     .all<{
@@ -353,6 +318,10 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
       avatar_key: string;
       is_verified?: number | boolean;
     }>();
+
+  const totalRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
+    .bind(postId)
+    .first<{ count: number }>();
 
   const comments: Comment[] = (rows.results || []).map(c => ({
     id: c.id,
@@ -371,7 +340,7 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
     success: true,
     post_id: postId,
     comments,
-    comments_count: comments.length
+    comments_count: totalRow ? Number(totalRow.count) : comments.length
   }, 200);
 }
 
@@ -379,27 +348,31 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
+  const burstAllowed = await consumeRateLimitAtomic(env, `comment:burst:${currentUser.id}`, 30, 60);
+  if (!burstAllowed) {
+    return jsonError('Слишком часто, подождите пару секунд', 429);
+  }
+
   let postId: number | null = null;
   let content = '';
 
   const contentType = request.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
-    try {
-      const data = (await request.json()) as { post_id?: number; content?: string };
-      if (data && typeof data.post_id === 'number') postId = data.post_id;
-      if (data && typeof data.content === 'string') content = data.content;
-    } catch { }
+    const parsed = await readJsonWithLimit<{ post_id?: unknown; content?: unknown }>(request, 8192);
+    if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+    postId = parsePositiveId(parsed.data?.post_id);
+    if (typeof parsed.data?.content === 'string') content = parsed.data.content;
   } else {
     try {
+      if (!checkContentLength(request, 16384)) return jsonError('Неверный формат запроса', 413);
       const form = await request.formData();
-      const raw = form.get('post_id');
-      if (raw) postId = parseInt(raw as string, 10);
+      postId = parsePositiveId(form.get('post_id'));
       const rawContent = form.get('content');
       if (typeof rawContent === 'string') content = rawContent;
     } catch { }
   }
 
-  if (!postId || isNaN(postId)) {
+  if (!postId) {
     return jsonError('Идентификатор публикации не указан', 400);
   }
 
@@ -419,17 +392,9 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
     return jsonError('Публикация не найдена', 404);
   }
 
-  const lastComment = await env.DB.prepare(
-    'SELECT created_at FROM comments WHERE user_id = ? ORDER BY id DESC LIMIT 1'
-  )
-    .bind(currentUser.id)
-    .first<{ created_at: string }>();
-
-  if (lastComment && lastComment.created_at) {
-    const commentTime = new Date(lastComment.created_at.includes('T') ? lastComment.created_at : lastComment.created_at.replace(' ', 'T') + 'Z').getTime();
-    if (!isNaN(commentTime) && (Date.now() - commentTime) < 3000) {
-      return jsonError('Слишком часто, подождите пару секунд', 429);
-    }
+  const cdAllowed = await acquireCooldownAtomic(env, `comment:cd:${currentUser.id}`, 3);
+  if (!cdAllowed) {
+    return jsonError('Слишком часто, подождите пару секунд', 429);
   }
 
   const insertResult = await env.DB.prepare(
@@ -454,7 +419,7 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
   const countRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(postId)
     .first<{ count: number }>();
-  const commentsCount = countRow ? countRow.count : 1;
+  const commentsCount = countRow ? Number(countRow.count) : 1;
 
   const newComment: Comment = {
     id: commentId,
@@ -480,23 +445,25 @@ export async function handleDeleteComment(request: Request, env: Env): Promise<R
   const currentUser = await getUserFromRequest(env, request);
   if (!currentUser) return jsonError('Необходима авторизация', 401);
 
+  const allowed = await consumeRateLimitAtomic(env, `comment:del:${currentUser.id}`, 30, 60);
+  if (!allowed) return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+
   let commentId: number | null = null;
   const contentType = request.headers.get('content-type') || '';
 
   if (contentType.includes('application/json')) {
-    try {
-      const data = (await request.json()) as { comment_id?: number };
-      if (data && typeof data.comment_id === 'number') commentId = data.comment_id;
-    } catch { }
+    const parsed = await readJsonWithLimit<{ comment_id?: unknown }>(request, 4096);
+    if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+    commentId = parsePositiveId(parsed.data?.comment_id);
   } else {
     try {
+      if (!checkContentLength(request, 8192)) return jsonError('Неверный формат запроса', 413);
       const form = await request.formData();
-      const raw = form.get('comment_id');
-      if (raw) commentId = parseInt(raw as string, 10);
+      commentId = parsePositiveId(form.get('comment_id'));
     } catch { }
   }
 
-  if (!commentId || isNaN(commentId)) {
+  if (!commentId) {
     return jsonError('Идентификатор комментария не указан', 400);
   }
 

@@ -1,7 +1,7 @@
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { getClientDateFormat } from '../languages';
-import { esc } from './layout';
+import { esc, safeJsonForScript } from './layout';
 
 export const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
 
@@ -35,7 +35,7 @@ export function renderCommentsSheetHtml(t: Translations = ru): string {
 }
 
 export function renderCommentsSheetScript(t: Translations = ru): string {
-  const i18n = JSON.stringify({
+  const i18n = safeJsonForScript({
     dateFmt: getClientDateFormat(t.code),
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,

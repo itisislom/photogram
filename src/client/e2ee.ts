@@ -3,7 +3,6 @@ import {
   SignalProtocolAddress,
   SessionBuilder,
   SessionCipher,
-  FingerprintGenerator,
   Direction,
   StorageType,
   KeyPairType,
@@ -14,6 +13,7 @@ import {
 const INITIAL_PREKEY_COUNT = 50;
 const LOW_PREKEY_THRESHOLD = 15;
 const REFILL_PREKEY_COUNT = 40;
+const SPK_ROTATE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_PLAIN_TEXT_LEN = 2000;
 const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MEDIA_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -29,6 +29,8 @@ export interface DecryptedPayload {
   v: number;
   text: string;
   media?: DecryptedMediaMeta | null;
+  editOf?: number;
+  editVersion?: number;
 }
 
 export interface CipherEnvelopeItem {
@@ -46,12 +48,14 @@ export interface IncomingEncryptedMessage {
   body?: string;
   image_key?: string;
   ciphertext_envelope?: string;
+  edit_version?: number;
 }
 
 export interface KeyValueBackend {
   get<T = unknown>(store: string, key: string): Promise<T | undefined>;
   put(store: string, key: string, value: unknown): Promise<void>;
   del(store: string, key: string): Promise<void>;
+  close?(): Promise<void>;
 }
 
 export type BrowserFetch = (
@@ -84,6 +88,7 @@ interface MiniIdbDatabase {
   objectStoreNames: { contains(name: string): boolean };
   createObjectStore(name: string): void;
   transaction(name: string, mode: string): MiniIdbTransaction;
+  close?: () => void;
 }
 
 function bytesToBase64(buf: ArrayBuffer | Uint8Array): string {
@@ -211,6 +216,14 @@ function createIdbBackend(userId: number): KeyValueBackend {
         tx.onerror = () => reject(tx.error);
       });
     },
+    async close(): Promise<void> {
+      if (!dbPromise) return;
+      try {
+        const db = await dbPromise;
+        if (db && typeof db.close === 'function') db.close();
+      } catch {}
+      dbPromise = null;
+    },
   };
 }
 
@@ -285,6 +298,31 @@ class SignalStore implements StorageType {
     await this.backend.put('meta', 'signedPreKeySig', sigB64);
   }
 
+  async getSignedPreKeyCreatedAt(): Promise<number> {
+    const v = await this.backend.get<number>('meta', 'spkCreatedAt');
+    return v && v > 0 ? v : 0;
+  }
+
+  async setSignedPreKeyCreatedAt(ts: number): Promise<void> {
+    await this.backend.put('meta', 'spkCreatedAt', ts);
+  }
+
+  async getKnownDevices(partnerUserId: number): Promise<number[]> {
+    const raw = await this.backend.get<number[]>('meta', `known_devices_${partnerUserId}`);
+    return Array.isArray(raw) ? raw.map((x) => Number(x)).filter((x) => x > 0) : [];
+  }
+
+  async setKnownDevices(partnerUserId: number, deviceIds: number[]): Promise<void> {
+    const clean = Array.from(new Set(deviceIds.map((x) => Number(x)).filter((x) => x > 0)));
+    await this.backend.put('meta', `known_devices_${partnerUserId}`, clean);
+  }
+
+  async closeBackend(): Promise<void> {
+    if (this.backend.close) {
+      await this.backend.close();
+    }
+  }
+
   async isTrustedIdentity(
     identifier: string,
     identityKey: ArrayBuffer,
@@ -304,8 +342,21 @@ class SignalStore implements StorageType {
     const key = normalizeAddrName(encodedAddress);
     const nextB64 = bytesToBase64(publicKey);
     const existing = await this.backend.get<string>('identityKeys', key);
+    if (existing && existing !== nextB64) {
+      throw Object.assign(new Error('Identity key changed'), {
+        code: 'KEY_CHANGED',
+        address: key,
+        identityKey: nextB64,
+      });
+    }
     await this.backend.put('identityKeys', key, nextB64);
-    return Boolean(existing && existing !== nextB64);
+    return false;
+  }
+
+  async forceSaveIdentity(encodedAddress: string, publicKey: ArrayBuffer): Promise<void> {
+    const key = normalizeAddrName(encodedAddress);
+    const nextB64 = bytesToBase64(publicKey);
+    await this.backend.put('identityKeys', key, nextB64);
   }
 
   async loadPreKey(keyId: string | number): Promise<KeyPairType | undefined> {
@@ -354,16 +405,8 @@ class SignalStore implements StorageType {
     await this.backend.put('msgCache', String(msgId), payload);
   }
 
-  async getVerifiedFingerprint(partnerUserId: number): Promise<string | undefined> {
-    return this.backend.get<string>('verified', String(partnerUserId));
-  }
-
-  async setVerifiedFingerprint(partnerUserId: number, fp: string | null): Promise<void> {
-    if (fp) {
-      await this.backend.put('verified', String(partnerUserId), fp);
-    } else {
-      await this.backend.del('verified', String(partnerUserId));
-    }
+  async removeCachedMessage(msgId: number): Promise<void> {
+    await this.backend.del('msgCache', String(msgId));
   }
 }
 
@@ -373,7 +416,10 @@ export class E2eeClient {
   private fetchImpl: BrowserFetch;
   private initPromise: Promise<number> | null = null;
   private mediaUrlCache = new Map<string, string>();
-  private decryptLocks = new Map<number, Promise<{ ok: boolean; payload?: DecryptedPayload; reason?: string }>>();
+  private decryptLocks = new Map<
+    string,
+    Promise<{ ok: boolean; payload?: DecryptedPayload; reason?: string; userId?: number; deviceId?: number; identityKey?: string }>
+  >();
 
   constructor(userId: number, backend?: KeyValueBackend, fetchImpl?: BrowserFetch) {
     this.userId = userId;
@@ -417,6 +463,7 @@ export class E2eeClient {
       await this.store.setIdentityKeyPair(identityKp);
       await this.store.setSignedPreKeyId(spkId);
       await this.store.setSignedPreKeySig(spkSigB64);
+      await this.store.setSignedPreKeyCreatedAt(Date.now());
       await this.store.storeSignedPreKey(spkId, spkKp);
       await this.store.setNextPreKeyId(1);
     }
@@ -425,19 +472,36 @@ export class E2eeClient {
     let prekeyCount = 0;
 
     if (!freshlyCreated) {
+      const spkCreatedAt = await this.store.getSignedPreKeyCreatedAt();
+      if (!spkCreatedAt) {
+        await this.store.setSignedPreKeyCreatedAt(Date.now());
+      } else if (Date.now() - spkCreatedAt > SPK_ROTATE_MS) {
+        spkId = (spkId || 1) + 1;
+        const rotatedSpk = await KeyHelper.generateSignedPreKey(identityKp, spkId);
+        spkKp = rotatedSpk.keyPair;
+        spkSigB64 = bytesToBase64(rotatedSpk.signature);
+        await this.store.setSignedPreKeyId(spkId);
+        await this.store.setSignedPreKeySig(spkSigB64);
+        await this.store.setSignedPreKeyCreatedAt(Date.now());
+        await this.store.storeSignedPreKey(spkId, spkKp);
+        needRegister = true;
+      }
+
       const cntRes = await this.fetchImpl(`/api/e2ee/keys/count?device_id=${deviceId}`, {
         credentials: 'same-origin',
         cache: 'no-store',
       });
       if (cntRes.ok) {
         const cntData = (await cntRes.json()) as { registered?: boolean; prekey_count?: number };
-        needRegister = !cntData.registered;
+        if (!cntData.registered) needRegister = true;
         prekeyCount = Number(cntData.prekey_count || 0);
       }
     }
 
     if (needRegister) {
-      const prekeys = await this.generateAndStorePreKeys(INITIAL_PREKEY_COUNT);
+      const prekeys = prekeyCount < LOW_PREKEY_THRESHOLD
+        ? await this.generateAndStorePreKeys(INITIAL_PREKEY_COUNT)
+        : [];
       const regRes = await this.fetchImpl('/api/e2ee/keys/register', {
         method: 'POST',
         credentials: 'same-origin',
@@ -529,6 +593,8 @@ export class E2eeClient {
     text: string;
     fileBytes?: ArrayBuffer | null;
     fileMime?: string;
+    existingMedia?: DecryptedMediaMeta | null;
+    editOf?: number;
   }): Promise<{
     senderDeviceId: number;
     envelopes: CipherEnvelopeItem[];
@@ -538,7 +604,7 @@ export class E2eeClient {
   }> {
     const myDeviceId = await this.ensureInitialized();
     const cleanText = (opts.text || '').trim();
-    if (!cleanText && !opts.fileBytes) {
+    if (!cleanText && !opts.fileBytes && !opts.existingMedia) {
       throw Object.assign(new Error('Empty message'), { code: 'EMPTY' });
     }
     if (cleanText.length > MAX_PLAIN_TEXT_LEN) {
@@ -554,11 +620,16 @@ export class E2eeClient {
       encryptedBlob = enc.encryptedBlob;
       encryptedBytes = enc.encryptedBytes;
       mediaMeta = enc.mediaMeta;
+    } else if (opts.existingMedia) {
+      mediaMeta = opts.existingMedia;
     }
 
     const payload: DecryptedPayload = mediaMeta
       ? { v: 1, text: cleanText, media: mediaMeta }
       : { v: 1, text: cleanText };
+    if (opts.editOf && Number(opts.editOf) > 0) {
+      payload.editOf = Number(opts.editOf);
+    }
     const plaintextBytes = new TextEncoder().encode(JSON.stringify(payload));
     const plaintextBuf = plaintextBytes.buffer.slice(
       plaintextBytes.byteOffset,
@@ -592,6 +663,26 @@ export class E2eeClient {
     const partnerDevs = partnerIdsData.devices || [];
     if (partnerDevs.length === 0) {
       throw Object.assign(new Error('Partner has no E2EE keys'), { code: 'PARTNER_NOT_READY' });
+    }
+
+    const knownPartnerDevs = await this.store.getKnownDevices(opts.partnerUserId);
+    if (knownPartnerDevs.length > 0) {
+      for (const pd of partnerDevs) {
+        const pdId = Number(pd.device_id);
+        if (!knownPartnerDevs.includes(pdId)) {
+          throw Object.assign(new Error('New device detected'), {
+            code: 'KEY_CHANGED',
+            userId: opts.partnerUserId,
+            deviceId: pdId,
+            identityKey: pd.identity_key_pub,
+          });
+        }
+      }
+    } else {
+      await this.store.setKnownDevices(
+        opts.partnerUserId,
+        partnerDevs.map((d) => Number(d.device_id)),
+      );
     }
 
     const selfOtherDevs = (selfIdsData.devices || []).filter(
@@ -631,10 +722,17 @@ export class E2eeClient {
     }
 
     if (needSessionKeys.size > 0) {
-      const bRes = await this.fetchImpl(
-        `/api/e2ee/keys/bundle?user_id=${opts.partnerUserId}&include_self=1&self_device_id=${myDeviceId}`,
-        { credentials: 'same-origin', cache: 'no-store' },
-      );
+      const bRes = await this.fetchImpl('/api/e2ee/keys/bundle', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: opts.partnerUserId,
+          include_self: true,
+          self_device_id: myDeviceId,
+        }),
+      });
       if (!bRes.ok) {
         throw Object.assign(new Error('Bundle fetch failed'), { code: 'NETWORK' });
       }
@@ -678,7 +776,19 @@ export class E2eeClient {
               }
             : undefined,
         };
-        await builder.processPreKey(deviceBundle);
+        try {
+          await builder.processPreKey(deviceBundle);
+        } catch (err: unknown) {
+          const e = err as { code?: string };
+          if (e && e.code === 'KEY_CHANGED') {
+            throw Object.assign(new Error('Identity key changed'), {
+              code: 'KEY_CHANGED',
+              userId: Number(b.user_id),
+              deviceId: Number(b.device_id),
+              identityKey: b.identity_key_pub,
+            });
+          }
+        }
       }
     }
 
@@ -686,14 +796,18 @@ export class E2eeClient {
     for (const target of targets) {
       const addr = makeDeviceAddress(target.userId, target.deviceId);
       const cipher = new SessionCipher(this.store, addr);
-      const encResult = await cipher.encrypt(plaintextBuf);
-      if (!encResult || !encResult.body) continue;
-      envelopes.push({
-        u: target.userId,
-        d: target.deviceId,
-        t: Number(encResult.type),
-        b: binaryStringToBase64(encResult.body),
-      });
+      try {
+        const hasSession = await cipher.hasOpenSession();
+        if (!hasSession) continue;
+        const encResult = await cipher.encrypt(plaintextBuf);
+        if (!encResult || !encResult.body) continue;
+        envelopes.push({
+          u: target.userId,
+          d: target.deviceId,
+          t: Number(encResult.type),
+          b: binaryStringToBase64(encResult.body),
+        });
+      } catch {}
     }
 
     if (!envelopes.some((e) => e.u === opts.partnerUserId)) {
@@ -709,9 +823,12 @@ export class E2eeClient {
     };
   }
 
-  async cacheSentMessage(msgId: number, payload: DecryptedPayload): Promise<void> {
+  async cacheSentMessage(msgId: number, payload: DecryptedPayload, editVersion: number = 0): Promise<void> {
     if (msgId > 0) {
-      await this.store.setCachedMessage(msgId, payload);
+      await this.store.setCachedMessage(msgId, {
+        ...payload,
+        editVersion: Math.max(0, Number(editVersion || 0)),
+      });
     }
   }
 
@@ -722,30 +839,49 @@ export class E2eeClient {
 
   async decryptMessage(
     msg: IncomingEncryptedMessage,
-  ): Promise<{ ok: boolean; payload?: DecryptedPayload; reason?: string }> {
+  ): Promise<{
+    ok: boolean;
+    payload?: DecryptedPayload;
+    reason?: string;
+    userId?: number;
+    deviceId?: number;
+    identityKey?: string;
+  }> {
     const msgId = Number(msg.id || 0);
+    const expectedVersion = Math.max(0, Number(msg.edit_version || 0));
     if (!msg.is_encrypted) {
-      return { ok: true, payload: { v: 0, text: msg.body || '' } };
+      return { ok: true, payload: { v: 0, text: msg.body || '', editVersion: expectedVersion } };
     }
 
+    const lockKey = `${msgId}:${expectedVersion}`;
     if (msgId > 0) {
       const cached = await this.store.getCachedMessage(msgId);
-      if (cached) return { ok: true, payload: cached };
-      const inFlight = this.decryptLocks.get(msgId);
+      if (cached && Number(cached.editVersion || 0) >= expectedVersion) {
+        return { ok: true, payload: cached };
+      }
+      const inFlight = this.decryptLocks.get(lockKey);
       if (inFlight) return inFlight;
     }
 
     const work = this.doDecryptMessage(msg).finally(() => {
-      if (msgId > 0) this.decryptLocks.delete(msgId);
+      if (msgId > 0) this.decryptLocks.delete(lockKey);
     });
-    if (msgId > 0) this.decryptLocks.set(msgId, work);
+    if (msgId > 0) this.decryptLocks.set(lockKey, work);
     return work;
   }
 
   private async doDecryptMessage(
     msg: IncomingEncryptedMessage,
-  ): Promise<{ ok: boolean; payload?: DecryptedPayload; reason?: string }> {
+  ): Promise<{
+    ok: boolean;
+    payload?: DecryptedPayload;
+    reason?: string;
+    userId?: number;
+    deviceId?: number;
+    identityKey?: string;
+  }> {
     const myDeviceId = await this.ensureInitialized();
+    const senderId = Number(msg.sender_id || 0);
     const senderDeviceId = Number(msg.sender_device_id || 0);
     if (!senderDeviceId || !msg.ciphertext_envelope) {
       return { ok: false, reason: 'NO_ENVELOPE' };
@@ -766,8 +902,35 @@ export class E2eeClient {
       return { ok: false, reason: 'NOT_FOR_THIS_DEVICE' };
     }
 
+    if (senderId > 0 && senderId !== Number(this.userId)) {
+      const known = await this.store.getKnownDevices(senderId);
+      if (known.length > 0 && !known.includes(senderDeviceId)) {
+        let identityKey = '';
+        try {
+          const idRes = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${senderId}`, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (idRes.ok) {
+            const idData = (await idRes.json()) as {
+              devices?: Array<{ device_id: number; identity_key_pub: string }>;
+            };
+            const found = (idData.devices || []).find((d) => Number(d.device_id) === senderDeviceId);
+            if (found) identityKey = found.identity_key_pub;
+          }
+        } catch {}
+        return {
+          ok: false,
+          reason: 'KEY_CHANGED',
+          userId: senderId,
+          deviceId: senderDeviceId,
+          identityKey,
+        };
+      }
+    }
+
     try {
-      const senderAddr = makeDeviceAddress(Number(msg.sender_id), senderDeviceId);
+      const senderAddr = makeDeviceAddress(senderId, senderDeviceId);
       const cipher = new SessionCipher(this.store, senderAddr);
       const binStr = base64ToBinaryString(target.b);
       const plainBuf =
@@ -777,17 +940,58 @@ export class E2eeClient {
 
       const rawText = new TextDecoder().decode(plainBuf);
       const parsed = JSON.parse(rawText) as DecryptedPayload;
+      const expectedVersion = Math.max(0, Number(msg.edit_version || 0));
+      if (expectedVersion > 0 && Number(parsed?.editOf) !== Number(msg.id)) {
+        return { ok: false, reason: 'TAMPERED_EDIT' };
+      }
+      const rawMedia = parsed?.media;
+      const safeMedia: DecryptedMediaMeta | null =
+        rawMedia &&
+        typeof rawMedia === 'object' &&
+        typeof rawMedia.aesKey === 'string' &&
+        typeof rawMedia.iv === 'string' &&
+        typeof rawMedia.sha256 === 'string' &&
+        typeof rawMedia.mime === 'string' &&
+        rawMedia.aesKey.length <= 128 &&
+        rawMedia.iv.length <= 64 &&
+        rawMedia.sha256.length <= 128 &&
+        rawMedia.mime.length <= 64
+          ? {
+              aesKey: rawMedia.aesKey,
+              iv: rawMedia.iv,
+              sha256: rawMedia.sha256,
+              mime: rawMedia.mime,
+            }
+          : null;
       const payload: DecryptedPayload = {
         v: Number(parsed?.v || 1),
-        text: typeof parsed?.text === 'string' ? parsed.text : '',
-        media: parsed?.media || null,
+        text: typeof parsed?.text === 'string' ? parsed.text.slice(0, MAX_PLAIN_TEXT_LEN) : '',
+        media: safeMedia,
+        editVersion: expectedVersion,
       };
+
+      if (senderId > 0 && senderId !== Number(this.userId)) {
+        const known = await this.store.getKnownDevices(senderId);
+        if (known.length === 0) {
+          await this.store.setKnownDevices(senderId, [senderDeviceId]);
+        }
+      }
 
       if (msg.id > 0) {
         await this.store.setCachedMessage(msg.id, payload);
       }
       return { ok: true, payload };
-    } catch {
+    } catch (err: unknown) {
+      const e = err as { code?: string; identityKey?: string };
+      if (e && e.code === 'KEY_CHANGED') {
+        return {
+          ok: false,
+          reason: 'KEY_CHANGED',
+          userId: senderId,
+          deviceId: senderDeviceId,
+          identityKey: e.identityKey || '',
+        };
+      }
       return { ok: false, reason: 'DECRYPT_ERROR' };
     }
   }
@@ -840,57 +1044,17 @@ export class E2eeClient {
     this.mediaUrlCache.clear();
   }
 
-  async getSafetyNumber(partnerUserId: number): Promise<{
-    ready: boolean;
-    fingerprint: string;
-    formatted: string;
-    verified: boolean;
-    partnerDeviceCount: number;
-  }> {
+  async isPartnerReady(partnerUserId: number): Promise<boolean> {
     await this.ensureInitialized();
-    const myIdentity = await this.store.getIdentityKeyPair();
-    if (!myIdentity) {
-      return { ready: false, fingerprint: '', formatted: '', verified: false, partnerDeviceCount: 0 };
-    }
-
     const res = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${partnerUserId}`, {
       credentials: 'same-origin',
       cache: 'no-store',
     });
-    if (!res.ok) {
-      return { ready: false, fingerprint: '', formatted: '', verified: false, partnerDeviceCount: 0 };
-    }
+    if (!res.ok) return false;
     const data = (await res.json()) as {
       devices?: Array<{ device_id: number; identity_key_pub: string }>;
     };
-    const devs = data.devices || [];
-    if (devs.length === 0) {
-      return { ready: false, fingerprint: '', formatted: '', verified: false, partnerDeviceCount: 0 };
-    }
-
-    const primaryPartnerKey = base64ToArrayBuffer(devs[0].identity_key_pub);
-    const gen = new FingerprintGenerator(5200);
-    const fp = await gen.createFor(
-      String(this.userId),
-      myIdentity.pubKey,
-      String(partnerUserId),
-      primaryPartnerKey,
-    );
-    const groups = fp.match(/.{1,5}/g) || [fp];
-    const formatted = groups.join(' ');
-    const savedVerified = await this.store.getVerifiedFingerprint(partnerUserId);
-
-    return {
-      ready: true,
-      fingerprint: fp,
-      formatted,
-      verified: Boolean(savedVerified && savedVerified === fp),
-      partnerDeviceCount: devs.length,
-    };
-  }
-
-  async setVerified(partnerUserId: number, fingerprint: string | null): Promise<void> {
-    await this.store.setVerifiedFingerprint(partnerUserId, fingerprint);
+    return Boolean(data.devices && data.devices.length > 0);
   }
 
   async acceptKeyChange(
@@ -899,9 +1063,45 @@ export class E2eeClient {
     newIdentityKeyB64: string,
   ): Promise<void> {
     const addr = makeDeviceAddress(targetUserId, targetDeviceId);
-    await this.store.saveIdentity(addr.toString(), base64ToArrayBuffer(newIdentityKeyB64));
+    if (newIdentityKeyB64) {
+      await this.store.forceSaveIdentity(addr.toString(), base64ToArrayBuffer(newIdentityKeyB64));
+    }
+    const known = await this.store.getKnownDevices(targetUserId);
+    if (!known.includes(targetDeviceId)) {
+      await this.store.setKnownDevices(targetUserId, [...known, targetDeviceId]);
+    }
     await this.store.removeSession(addr.toString());
-    await this.store.setVerifiedFingerprint(targetUserId, null);
+  }
+
+  async unregisterDevice(): Promise<void> {
+    try {
+      const deviceId = await this.store.getDeviceId();
+      if (deviceId && deviceId > 0) {
+        await this.fetchImpl('/api/e2ee/keys/unregister', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_id: deviceId }),
+        });
+      }
+    } catch {}
+  }
+
+  async clearCachedMessages(msgIds: number[]): Promise<void> {
+    if (!Array.isArray(msgIds) || msgIds.length === 0) return;
+    for (const rawId of msgIds) {
+      const id = Number(rawId);
+      if (Number.isInteger(id) && id > 0) {
+        try {
+          await this.store.removeCachedMessage(id);
+        } catch {}
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    this.revokeAllMediaUrls();
+    await this.store.closeBackend();
   }
 }
 
@@ -916,10 +1116,50 @@ export function getE2eeClient(userId: number): E2eeClient {
   return c;
 }
 
+export async function wipeLocalData(userId: number): Promise<void> {
+  const uid = Number(userId || 0);
+  if (!uid || uid <= 0) return;
+  const existing = clientCache.get(uid);
+  if (existing) {
+    try {
+      await existing.unregisterDevice();
+    } catch {}
+    try {
+      await existing.close();
+    } catch {}
+    clientCache.delete(uid);
+  }
+  const idbFactory = (
+    globalThis as unknown as {
+      indexedDB?: {
+        deleteDatabase?: (name: string) => {
+          onsuccess?: (() => void) | null;
+          onerror?: (() => void) | null;
+          onblocked?: (() => void) | null;
+        };
+      };
+    }
+  ).indexedDB;
+  if (idbFactory && typeof idbFactory.deleteDatabase === 'function') {
+    await new Promise<void>((resolve) => {
+      try {
+        const req = idbFactory.deleteDatabase!(`pg_signal_e2ee_u_${uid}`);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+        setTimeout(resolve, 1500);
+      } catch {
+        resolve();
+      }
+    });
+  }
+}
+
 const globalObj = globalThis as unknown as { PhotogramE2EE?: unknown };
 if (globalObj) {
   globalObj.PhotogramE2EE = {
     getClient: getE2eeClient,
+    wipeLocalData,
     E2eeClient,
   };
 }

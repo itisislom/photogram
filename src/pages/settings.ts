@@ -1,5 +1,5 @@
 import { User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, EYE_OPEN_ICON, EYE_CLOSED_ICON } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { renderLangSwitcherHtml } from '../languages';
 import { Translations } from '../languages/types';
@@ -290,7 +290,7 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
   var closeNotifBlockedBtn = document.getElementById('closeNotifBlockedBtn');
   var okNotifBlockedBtn = document.getElementById('okNotifBlockedBtn');
   var pendingNotifEnable = false;
-  var notifI18n = ${JSON.stringify({
+  var notifI18n = ${safeJsonForScript({
     enabled: t.notifications.enabledToast,
     disabled: t.notifications.disabledToast,
     networkError: t.common.networkError,
@@ -476,7 +476,7 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
   var curPwInput = document.getElementById('currentPasswordInput');
   var newPwInput = document.getElementById('newPasswordInput');
   var confPwInput = document.getElementById('confirmPasswordInput');
-  var pwI18n = ${JSON.stringify({
+  var pwI18n = ${safeJsonForScript({
     showPassword: t.auth.showPassword,
     hidePassword: t.auth.hidePassword,
     save: t.common.save,
@@ -704,10 +704,23 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
       confirmLogoutBtn.disabled = true;
       confirmLogoutBtn.textContent = '...';
       var nextUrl = '/login';
+      var currentUserId = ${Number(currentUser.id)};
+      try {
+        if (window.unsubscribePushNotifications) {
+          await window.unsubscribePushNotifications();
+        }
+      } catch(e) {}
+      try {
+        if (window.wipeLocalAccountData) {
+          await window.wipeLocalAccountData(currentUserId);
+        }
+      } catch(e) {}
       try {
         var r = await fetch('/api/auth/logout', { method: 'POST' });
         var d = await r.json();
-        if (d && d.redirect) nextUrl = d.redirect;
+        if (d && typeof d.redirect === 'string' && d.redirect.startsWith('/') && !d.redirect.startsWith('//')) {
+          nextUrl = d.redirect;
+        }
       } catch(e) {}
       window.location.href = nextUrl;
     });

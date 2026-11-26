@@ -1,4 +1,4 @@
-import { layout, esc, renderVerifiedBadge } from './layout';
+import { layout, esc, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav } from './nav';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
@@ -34,7 +34,7 @@ export function editProfilePage(
     hintText = t.profile.usernameLimitNormal;
   }
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     networkError: t.common.networkError,
     limitWarningTpl: t.profile.usernameLimitWarning(3, 14),
     limitNormal: t.profile.usernameLimitNormal
@@ -137,7 +137,7 @@ export function editProfilePage(
   if (backBtn) {
     backBtn.addEventListener('click', function(e) {
       e.preventDefault();
-      var href = this.getAttribute('href') || '/u/${encodeURIComponent(user.username)}';
+      var href = this.getAttribute('href') || ('/u/' + encodeURIComponent(${safeJsonForScript(user.username)}));
       if (window.spaNavigate) {
         window.spaNavigate(href);
       } else {
@@ -220,7 +220,7 @@ export function editProfilePage(
         });
         var data = await res.json();
         if (res.ok) {
-          var targetUsername = data.username || (usernameInput ? usernameInput.value.trim().toLowerCase() : '${encodeURIComponent(user.username)}');
+          var targetUsername = data.username || (usernameInput ? usernameInput.value.trim().toLowerCase() : ${safeJsonForScript(user.username)});
           var targetUrl = '/u/' + encodeURIComponent(targetUsername);
           if (window.spaNavigate) {
             window.spaNavigate(targetUrl);

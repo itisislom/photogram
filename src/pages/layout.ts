@@ -15,16 +15,26 @@ export function esc(str: any): string {
 
 export const escapeHtml = esc;
 
+export function safeJsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 export const EYE_OPEN_ICON = `<svg class="eye-icon eye-open" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 
 export const EYE_CLOSED_ICON = `<svg class="eye-icon eye-closed" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 
 export const MORE_DOTS_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v9';
+const APP_STYLE_VERSION = '20261126-v19';
 
 export function renderVerifiedBadge(size: number = 13.5): string {
   return `<svg class="verified-badge" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>`;
@@ -43,7 +53,7 @@ export function layout(title: string, body: string, script: string = '', t: Tran
 <meta charset="UTF-8">
 <meta http-equiv="Content-Language" content="${langCode}">
 <meta name="google" content="notranslate">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="${metaThemeColor}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -60,7 +70,10 @@ export function layout(title: string, body: string, script: string = '', t: Tran
 (function() {
   var t;
   try {
-    t = localStorage.getItem('theme');
+    var rawTheme = localStorage.getItem('theme');
+    if (rawTheme === 'dark' || rawTheme === 'light') {
+      t = rawTheme;
+    }
   } catch(e) {}
   if (!t) {
     var m = (document.cookie || '').match(/(?:^|;\\s*)theme=(dark|light)/);
@@ -159,15 +172,15 @@ window.showAppAlert = function(opts) {
   iconBox.className = 'app-alert-icon-box ' + (isAuth ? 'auth' : (opts.type || 'error'));
   if (isAuth) {
     iconBox.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-    titleEl.textContent = opts.title || ${JSON.stringify(t.common.authRequired)};
-    msgEl.textContent = opts.message || ${JSON.stringify(t.common.authRequiredMsg)};
+    titleEl.textContent = opts.title || ${safeJsonForScript(t.common.authRequired)};
+    msgEl.textContent = opts.message || ${safeJsonForScript(t.common.authRequiredMsg)};
     okBtn.className = 'btn btn-sm ' + (opts.danger ? 'btn-danger' : (opts.okClass || 'btn-primary'));
-  okBtn.textContent = opts.okText || ${JSON.stringify(t.auth.loginBtn)};
+    okBtn.textContent = opts.okText || ${safeJsonForScript(t.auth.loginBtn)};
   } else {
     iconBox.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-    titleEl.textContent = opts.title || ${JSON.stringify(t.common.attention)};
-    msgEl.textContent = opts.message || ${JSON.stringify(t.common.networkError)};
-    okBtn.textContent = opts.okText || ${JSON.stringify(t.common.understood)};
+    titleEl.textContent = opts.title || ${safeJsonForScript(t.common.attention)};
+    msgEl.textContent = opts.message || ${safeJsonForScript(t.common.networkError)};
+    okBtn.textContent = opts.okText || ${safeJsonForScript(t.common.understood)};
   }
 
   cancelBtn.style.display = 'none';
@@ -201,11 +214,11 @@ window.showAppConfirm = function(opts) {
     iconBox.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
   }
 
-  titleEl.textContent = opts.title || ${JSON.stringify(t.common.attention)};
+  titleEl.textContent = opts.title || ${safeJsonForScript(t.common.attention)};
   msgEl.textContent = opts.message || '';
-  okBtn.textContent = opts.okText || ${JSON.stringify(t.common.delete)};
+  okBtn.textContent = opts.okText || ${safeJsonForScript(t.common.delete)};
   okBtn.className = 'btn ' + (opts.danger !== false ? 'btn-danger' : 'btn-primary') + ' btn-sm';
-  cancelBtn.textContent = opts.cancelText || ${JSON.stringify(t.common.cancel)};
+  cancelBtn.textContent = opts.cancelText || ${safeJsonForScript(t.common.cancel)};
   cancelBtn.style.display = 'block';
 
   cancelBtn.onclick = function() {
@@ -287,7 +300,7 @@ window.showAppConfirm = function(opts) {
     });
   };
 
-  var notifToastLabels = ${JSON.stringify({
+  var notifToastLabels = ${safeJsonForScript({
     like: t.notifications.likedYourPost,
     comment: t.notifications.commentedYourPost,
     follow: t.notifications.startedFollowingYou
@@ -398,6 +411,46 @@ window.showAppConfirm = function(opts) {
     } catch (e) {}
   };
 
+  if (!window.__pgTzSynced) {
+    window.__pgTzSynced = true;
+    try {
+      var deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (deviceTz && /^[A-Za-z0-9_+-]+(?:\\/[A-Za-z0-9_+-]+){0,2}$/.test(deviceTz)) {
+        var curTzMatch = (document.cookie || '').match(/(?:^|;\\s*)tz=([^;]+)/);
+        var curTz = curTzMatch ? decodeURIComponent(curTzMatch[1]) : '';
+        if (curTz !== deviceTz) {
+          var tzSec = window.location.protocol === 'https:' ? '; Secure' : '';
+          document.cookie = 'tz=' + encodeURIComponent(deviceTz) + '; Path=/; Max-Age=31536000; SameSite=Lax' + tzSec;
+        }
+      }
+    } catch (e) {}
+  }
+
+  window.wipeLocalAccountData = async function(userId) {
+    try {
+      sessionStorage.removeItem('pg_last_notif_id');
+    } catch (e) {}
+    var uid = Number(userId || 0);
+    if (!uid || uid <= 0) return;
+    try {
+      if (window.PhotogramE2EE && typeof window.PhotogramE2EE.wipeLocalData === 'function') {
+        await window.PhotogramE2EE.wipeLocalData(uid);
+        return;
+      }
+    } catch (e) {}
+    try {
+      if (typeof indexedDB !== 'undefined' && typeof indexedDB.deleteDatabase === 'function') {
+        await new Promise(function(resolve) {
+          var req = indexedDB.deleteDatabase('pg_signal_e2ee_u_' + uid);
+          req.onsuccess = function() { resolve(); };
+          req.onerror = function() { resolve(); };
+          req.onblocked = function() { resolve(); };
+          setTimeout(resolve, 1500);
+        });
+      }
+    } catch (e) {}
+  };
+
   window.loadPhotogramE2ee = function() {
     if (window.PhotogramE2EE) return Promise.resolve(window.PhotogramE2EE);
     if (window.__pgE2eeLoadPromise) return window.__pgE2eeLoadPromise;
@@ -492,14 +545,14 @@ window.showAppConfirm = function(opts) {
     if (!imgUrl || isDownloadingPostPhoto) return;
     var cleanUrl = String(imgUrl).trim();
     if (cleanUrl.indexOf('/media/posts/') !== 0 && cleanUrl.indexOf('/media/posts%2F') !== 0) {
-      window.showAppToast(${JSON.stringify(t.post.downloadError)});
+      window.showAppToast(${safeJsonForScript(t.post.downloadError)});
       return;
     }
     isDownloadingPostPhoto = true;
     try {
       var res = await fetch(cleanUrl, { credentials: 'same-origin' });
       if (!res.ok) {
-        window.showAppToast(${JSON.stringify(t.post.downloadError)});
+        window.showAppToast(${safeJsonForScript(t.post.downloadError)});
         return;
       }
       var blob = await res.blob();
@@ -525,9 +578,9 @@ window.showAppConfirm = function(opts) {
       } else {
         window.location.href = cleanUrl + (cleanUrl.indexOf('?') === -1 ? '?download=1' : '&download=1');
       }
-      window.showAppToast(${JSON.stringify(t.post.downloadSuccess)});
+      window.showAppToast(${safeJsonForScript(t.post.downloadSuccess)});
     } catch (err) {
-      window.showAppToast(${JSON.stringify(t.post.downloadError)});
+      window.showAppToast(${safeJsonForScript(t.post.downloadError)});
     } finally {
       isDownloadingPostPhoto = false;
     }
@@ -1087,7 +1140,7 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
-<script type="text/plain" data-initial-page-script="true" data-page-script="true">(function(){var s=document.getElementById('appMainStyles');if(!s||s.getAttribute('data-app-v')!=='${APP_STYLE_VERSION}'){var k='pg_css_reload_${APP_STYLE_VERSION}';try{if(sessionStorage.getItem(k)!=='1'){sessionStorage.setItem(k,'1');window.location.reload();return;}}catch(e){window.location.reload();return;}}})();
+<script type="text/plain" id="appPageScript" data-initial-page-script="true" data-page-script="true">(function(){var s=document.getElementById('appMainStyles');if(!s||s.getAttribute('data-app-v')!=='${APP_STYLE_VERSION}'){var k='pg_css_reload_${APP_STYLE_VERSION}';try{if(sessionStorage.getItem(k)!=='1'){sessionStorage.setItem(k,'1');window.location.reload();return;}}catch(e){window.location.reload();return;}}})();
 ${script || ''}</script>
 
 <script>
@@ -1145,7 +1198,9 @@ ${script || ''}</script>
     try {
       targetUrl = new URL(targetHref, window.location.href);
     } catch (e) {
-      window.location.href = targetHref;
+      return;
+    }
+    if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
       return;
     }
 
@@ -1204,10 +1259,13 @@ ${script || ''}</script>
         return;
       }
 
-      var nextScripts = doc.querySelectorAll('script[data-page-script="true"]');
+      nextRoot.querySelectorAll('script').forEach(function(sc) { sc.remove(); });
+      var nextScripts = doc.querySelectorAll('body > script#appPageScript[data-page-script="true"]');
       var nextScriptCode = '';
       nextScripts.forEach(function(sc) {
-        nextScriptCode += (sc.textContent || '') + '\\n';
+        if (!nextRoot.contains(sc)) {
+          nextScriptCode += (sc.textContent || '') + '\\n';
+        }
         sc.remove();
       });
 
@@ -1283,10 +1341,13 @@ ${script || ''}</script>
         return false;
       }
 
-      var nextScripts = doc.querySelectorAll('script[data-page-script="true"]');
+      nextRoot.querySelectorAll('script').forEach(function(sc) { sc.remove(); });
+      var nextScripts = doc.querySelectorAll('body > script#appPageScript[data-page-script="true"]');
       var nextScriptCode = '';
       nextScripts.forEach(function(sc) {
-        nextScriptCode += (sc.textContent || '') + '\\n';
+        if (!nextRoot.contains(sc)) {
+          nextScriptCode += (sc.textContent || '') + '\\n';
+        }
         sc.remove();
       });
 

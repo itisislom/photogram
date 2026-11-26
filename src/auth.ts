@@ -1,6 +1,14 @@
 import { Env, User, SavedAccountItem } from './types';
 import { detectLanguage, getTranslations } from './languages';
 import { isBlockedUsername } from './blockedUsernames';
+import {
+  checkContentLength,
+  consumeRateLimitAtomic,
+  getClientIp,
+  parsePositiveId,
+  readJsonWithLimit,
+  recordFailureAtomic,
+} from './security';
 
 const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
@@ -10,8 +18,12 @@ const SESSION_MAX_AGE = 2_592_000;
 const USERNAME_RE = /^[a-z0-9_]{3,24}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LEN = 8;
+const MAX_PASSWORD_LEN = 256;
+const MAX_DISPLAY_NAME_LEN = 40;
+const MAX_EMAIL_LEN = 254;
 const TOKEN_HEX_RE = /^[a-f0-9]{64}$/;
 export const MAX_SAVED_ACCOUNTS = 5;
+const MAX_CANDIDATE_TOKENS = MAX_SAVED_ACCOUNTS + 2;
 
 
 function hex(buf: ArrayBuffer | Uint8Array): string {
@@ -163,6 +175,7 @@ async function resolveDeviceSessions(env: Env, request: Request): Promise<{
   const seenRaw = new Set<string>();
 
   for (const part of rawCookieValue.split('.')) {
+    if (candidateTokens.length >= MAX_CANDIDATE_TOKENS) break;
     const trimmed = part.trim().toLowerCase();
     if (TOKEN_HEX_RE.test(trimmed) && !seenRaw.has(trimmed)) {
       seenRaw.add(trimmed);
@@ -174,6 +187,9 @@ async function resolveDeviceSessions(env: Env, request: Request): Promise<{
     if (!seenRaw.has(cleanActive)) {
       seenRaw.add(cleanActive);
       candidateTokens.unshift(cleanActive);
+      if (candidateTokens.length > MAX_CANDIDATE_TOKENS) {
+        candidateTokens.length = MAX_CANDIDATE_TOKENS;
+      }
     }
   }
 
@@ -253,12 +269,13 @@ export async function getSavedAccountsForPage(
   return { accounts, syncCookie };
 }
 
-function getClientIp(request: Request): string {
-  const cf = request.headers.get('cf-connecting-ip');
-  if (cf) return cf.trim();
-  const fwd = request.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return '127.0.0.1';
+export async function getDeviceSessionUserIds(env: Env, request: Request): Promise<Set<number>> {
+  const resolved = await resolveDeviceSessions(env, request);
+  const out = new Set<number>();
+  for (const entry of resolved.entries) {
+    out.add(Number(entry.user.id));
+  }
+  return out;
 }
 
 async function createSession(env: Env, userId: number): Promise<string> {
@@ -322,12 +339,25 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     return jsonError(t.auth.errTooManyRegAttempts(remainingMinutes), 429);
   }
 
-  const form = await request.formData();
-  const username = (form.get('username') as string ?? '').toLowerCase().trim();
-  const rawEmail = (form.get('email') as string ?? '').toLowerCase().trim();
+  if (!checkContentLength(request, 65536)) {
+    return jsonError(t.common.networkError, 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError(t.common.networkError, 400);
+  }
+
+  const username = (typeof form.get('username') === 'string' ? (form.get('username') as string) : '').toLowerCase().trim();
+  const rawEmail = (typeof form.get('email') === 'string' ? (form.get('email') as string) : '').toLowerCase().trim();
+  if (rawEmail.length > MAX_EMAIL_LEN) {
+    return jsonError(t.common.networkError, 400);
+  }
   const email = rawEmail && EMAIL_RE.test(rawEmail) ? rawEmail : `${username}@photogram.local`;
-  const password = form.get('password') as string ?? '';
-  const displayName = (form.get('display_name') as string ?? '').trim();
+  const password = typeof form.get('password') === 'string' ? (form.get('password') as string) : '';
+  const displayName = (typeof form.get('display_name') === 'string' ? (form.get('display_name') as string) : '').trim();
 
   if (!USERNAME_RE.test(username)) {
     return jsonError(t.auth.errUsernameFormat, 400);
@@ -337,7 +367,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     return jsonError(t.auth.errUsernameForbidden, 400);
   }
 
-  if (!displayName) {
+  if (!displayName || displayName.length > MAX_DISPLAY_NAME_LEN) {
     return jsonError(t.auth.errDisplayNameRequired, 400);
   }
 
@@ -346,7 +376,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     return jsonError(t.auth.errTermsRequired, 400);
   }
 
-  if (password.length < MIN_PASSWORD_LEN) {
+  if (password.length < MIN_PASSWORD_LEN || password.length > MAX_PASSWORD_LEN) {
     return jsonError(t.auth.errPasswordMin, 400);
   }
 
@@ -365,11 +395,15 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const pwHash = await hashPassword(password);
 
-  await env.DB.prepare(
-    'INSERT INTO users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)',
-  )
-    .bind(username, email, pwHash, displayName || username)
-    .run();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)',
+    )
+      .bind(username, email, pwHash, displayName || username)
+      .run();
+  } catch {
+    return jsonError(t.auth.errUsernameTaken, 409);
+  }
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE username = ?')
     .bind(username)
@@ -377,20 +411,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   if (!user) return jsonError(t.auth.errAccountCreate, 500);
 
-  let newAttempts = 1;
-  if (regCheck) {
-    if (now - regCheck.updated_at > 3600 || (regCheck.locked_until > 0 && regCheck.locked_until <= now)) {
-      newAttempts = 1;
-    } else {
-      newAttempts = regCheck.attempts + 1;
-    }
-  }
-  const lockUntil = newAttempts >= 5 ? now + 3600 : 0;
-  await env.DB.prepare(
-    'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?',
-  )
-    .bind(rateKey, newAttempts, lockUntil, now, newAttempts, lockUntil, now)
-    .run();
+  await recordFailureAtomic(env, rateKey, 5, 3600, 3600);
 
   const secure = isSecure(request);
   const token = await createSession(env, user.id);
@@ -427,11 +448,23 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
     return jsonError(t.auth.errTooManyIpAttempts(remainingMinutes), 429);
   }
 
-  const form = await request.formData();
-  const login = (form.get('login') as string ?? '').toLowerCase().trim();
-  const password = form.get('password') as string ?? '';
+  if (!checkContentLength(request, 65536)) {
+    return jsonError(t.common.networkError, 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError(t.common.networkError, 400);
+  }
+  const login = (typeof form.get('login') === 'string' ? (form.get('login') as string) : '').toLowerCase().trim();
+  const password = typeof form.get('password') === 'string' ? (form.get('password') as string) : '';
 
   if (!login || !password) return jsonError(t.auth.errLoginRequired, 400);
+  if (login.length > MAX_EMAIL_LEN || password.length > MAX_PASSWORD_LEN) {
+    return jsonError(t.auth.errInvalidCredentials, 400);
+  }
 
   const userRateKey = `login:user:${login}`;
   const userRateRow = await env.DB.prepare(
@@ -459,37 +492,12 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
   }
 
   if (!user || !valid) {
-    let ipAttempts = 1;
-    if (ipRateRow) {
-      if (now - ipRateRow.updated_at > 900 || (ipRateRow.locked_until > 0 && ipRateRow.locked_until <= now)) {
-        ipAttempts = 1;
-      } else {
-        ipAttempts = ipRateRow.attempts + 1;
-      }
-    }
-    const ipLock = ipAttempts >= 5 ? now + 900 : 0;
-    await env.DB.prepare(
-      'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?',
-    )
-      .bind(ipRateKey, ipAttempts, ipLock, now, ipAttempts, ipLock, now)
-      .run();
+    const [ipFail, userFail] = await Promise.all([
+      recordFailureAtomic(env, ipRateKey, 5, 900, 900),
+      recordFailureAtomic(env, userRateKey, 5, 900, 900),
+    ]);
 
-    let userAttempts = 1;
-    if (userRateRow) {
-      if (now - userRateRow.updated_at > 900 || (userRateRow.locked_until > 0 && userRateRow.locked_until <= now)) {
-        userAttempts = 1;
-      } else {
-        userAttempts = userRateRow.attempts + 1;
-      }
-    }
-    const userLock = userAttempts >= 5 ? now + 900 : 0;
-    await env.DB.prepare(
-      'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?',
-    )
-      .bind(userRateKey, userAttempts, userLock, now, userAttempts, userLock, now)
-      .run();
-
-    if (ipAttempts >= 5 || userAttempts >= 5) {
+    if (ipFail.attempts >= 5 || userFail.attempts >= 5) {
       return jsonError(t.auth.errLoginLocked15m, 429);
     }
     return jsonError(t.auth.errInvalidCredentials, 401);
@@ -527,7 +535,14 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
 export async function handleLogout(request: Request, env: Env): Promise<Response> {
   const cookieHeader = request.headers.get('Cookie');
   const secure = isSecure(request);
+  const ip = getClientIp(request);
+  const allowed = await consumeRateLimitAtomic(env, `logout:ip:${ip}`, 30, 60);
+  if (!allowed) {
+    return jsonError('Too many requests', 429);
+  }
   const resolved = await resolveDeviceSessions(env, request);
+  const activeEntry = resolved.entries.find((e) => e.rawToken === resolved.activeRaw);
+  const loggedOutUserId = activeEntry ? activeEntry.user.id : 0;
 
   if (cookieHeader) {
     const raw = parseCookie(cookieHeader, 'session');
@@ -540,13 +555,13 @@ export async function handleLogout(request: Request, env: Env): Promise<Response
   const remaining = resolved.entries.filter((e) => e.rawToken !== resolved.activeRaw);
   if (remaining.length > 0) {
     const nextActive = remaining[0].rawToken;
-    return jsonResponse({ success: true, redirect: '/feed' }, 200, undefined, [
+    return jsonResponse({ success: true, redirect: '/feed', logged_out_user_id: loggedOutUserId }, 200, undefined, [
       sessionCookie(nextActive, secure),
       buildAccountsCookie(remaining.map((e) => e.rawToken), secure),
     ]);
   }
 
-  return jsonResponse({ success: true, redirect: '/login' }, 200, undefined, [
+  return jsonResponse({ success: true, redirect: '/login', logged_out_user_id: loggedOutUserId }, 200, undefined, [
     clearSessionCookie(secure),
     buildAccountsCookie([], secure),
   ]);
@@ -573,16 +588,15 @@ export async function handleChangePassword(request: Request, env: Env): Promise<
     return jsonError(t.auth.errTooManyPwChangeAttempts(remainingMinutes), 429);
   }
 
-  let body: { current_password?: unknown; new_password?: unknown; confirm_password?: unknown };
-  try {
-    body = (await request.json()) as {
-      current_password?: unknown;
-      new_password?: unknown;
-      confirm_password?: unknown;
-    };
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const parsed = await readJsonWithLimit<{
+    current_password?: unknown;
+    new_password?: unknown;
+    confirm_password?: unknown;
+  }>(request, 8192);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
   }
+  const body = parsed.data;
 
   const currentPassword = typeof body?.current_password === 'string' ? body.current_password : '';
   const newPassword = typeof body?.new_password === 'string' ? body.new_password : '';
@@ -592,7 +606,7 @@ export async function handleChangePassword(request: Request, env: Env): Promise<
     return jsonError(t.auth.errCurrentPasswordRequired, 400);
   }
 
-  if (currentPassword.length > 256 || newPassword.length > 256 || confirmPassword.length > 256) {
+  if (currentPassword.length > MAX_PASSWORD_LEN || newPassword.length > MAX_PASSWORD_LEN || confirmPassword.length > MAX_PASSWORD_LEN) {
     return jsonError(t.auth.errPasswordMin, 400);
   }
 
@@ -618,22 +632,8 @@ export async function handleChangePassword(request: Request, env: Env): Promise<
 
   const valid = await verifyPassword(currentPassword, userRow.password_hash);
   if (!valid) {
-    let attempts = 1;
-    if (rateRow) {
-      if (now - rateRow.updated_at > 900 || (rateRow.locked_until > 0 && rateRow.locked_until <= now)) {
-        attempts = 1;
-      } else {
-        attempts = rateRow.attempts + 1;
-      }
-    }
-    const lockUntil = attempts >= 5 ? now + 900 : 0;
-    await env.DB.prepare(
-      'INSERT INTO auth_rate_limits (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?',
-    )
-      .bind(rateKey, attempts, lockUntil, now, attempts, lockUntil, now)
-      .run();
-
-    if (attempts >= 5) {
+    const fail = await recordFailureAtomic(env, rateKey, 5, 900, 900);
+    if (fail.attempts >= 5) {
       return jsonError(t.auth.errTooManyPwChangeAttempts(15), 429);
     }
     return jsonError(t.auth.errCurrentPasswordWrong, 400);
@@ -676,15 +676,18 @@ export async function handleSwitchAccount(request: Request, env: Env): Promise<R
     return jsonError(t.common.authRequired, 401);
   }
 
-  let body: { user_id?: unknown };
-  try {
-    body = (await request.json()) as { user_id?: unknown };
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const allowed = await consumeRateLimitAtomic(env, `switch:user:${currentUser.id}`, 30, 60);
+  if (!allowed) {
+    return jsonError(t.common.networkError, 429);
   }
 
-  const targetId = Number(body?.user_id);
-  if (!Number.isInteger(targetId) || targetId <= 0) {
+  const parsed = await readJsonWithLimit<{ user_id?: unknown }>(request, 4096);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
+  }
+
+  const targetId = parsePositiveId(parsed.data?.user_id);
+  if (!targetId) {
     return jsonError(t.common.networkError, 400);
   }
 
@@ -713,15 +716,18 @@ export async function handleRemoveAccount(request: Request, env: Env): Promise<R
     return jsonError(t.common.authRequired, 401);
   }
 
-  let body: { user_id?: unknown };
-  try {
-    body = (await request.json()) as { user_id?: unknown };
-  } catch {
-    return jsonError(t.common.networkError, 400);
+  const allowed = await consumeRateLimitAtomic(env, `removeacc:user:${currentUser.id}`, 20, 60);
+  if (!allowed) {
+    return jsonError(t.common.networkError, 429);
   }
 
-  const targetId = Number(body?.user_id);
-  if (!Number.isInteger(targetId) || targetId <= 0) {
+  const parsed = await readJsonWithLimit<{ user_id?: unknown }>(request, 4096);
+  if (!parsed.ok) {
+    return jsonError(t.common.networkError, parsed.status);
+  }
+
+  const targetId = parsePositiveId(parsed.data?.user_id);
+  if (!targetId) {
     return jsonError(t.common.networkError, 400);
   }
 

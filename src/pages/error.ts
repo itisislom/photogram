@@ -1,5 +1,5 @@
 import { Translations, ru, en, uz, kz } from '../languages';
-import { esc } from './layout';
+import { esc, safeJsonForScript } from './layout';
 
 const OFFLINE_WIFI_ICON = `<svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="#2196F3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <line x1="1" y1="1" x2="23" y2="23"/>
@@ -275,7 +275,7 @@ body {
 
   <script>
   (function() {
-    var I18N = ${JSON.stringify(OFFLINE_I18N_MAP)};
+    var I18N = ${safeJsonForScript(OFFLINE_I18N_MAP)};
 
     function normalizeCode(raw) {
       if (!raw) return null;

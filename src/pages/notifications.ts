@@ -1,5 +1,5 @@
 import { NotificationItem, User } from '../types';
-import { layout, escapeHtml, renderVerifiedBadge } from './layout';
+import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge } from './layout';
 import { renderBottomNav } from './nav';
 import { Translations, ru, formatLocalizedShortDate } from '../languages';
 
@@ -118,7 +118,7 @@ export function notificationsPage(
   ${renderBottomNav('feed', t)}
 </div>`;
 
-  const clientI18n = JSON.stringify({
+  const clientI18n = safeJsonForScript({
     following: t.profile.following,
     followBack: t.profile.followBack,
     unfollowTitle: t.profile.unfollowTitle,
