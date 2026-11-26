@@ -179,6 +179,10 @@ export const uz: Translations = {
     replyingTo: '@{username} ga javob',
     showReplies: 'Javoblar ({n})',
     hideReplies: 'Javoblarni yashirish',
+    pin: 'Qadash',
+    unpin: 'Qadashdan olish',
+    pinned: 'Qadalgan',
+    likedByAuthor: 'Muallifga yoqdi',
   },
 
   sublist: {

@@ -181,6 +181,10 @@ export interface Translations {
     replyingTo: string;
     showReplies: string;
     hideReplies: string;
+    pin: string;
+    unpin: string;
+    pinned: string;
+    likedByAuthor: string;
   };
 
   sublist: {

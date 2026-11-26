@@ -179,6 +179,10 @@ export const en: Translations = {
     replyingTo: 'Replying to @{username}',
     showReplies: '{n} replies',
     hideReplies: 'Hide replies',
+    pin: 'Pin',
+    unpin: 'Unpin',
+    pinned: 'Pinned',
+    likedByAuthor: 'Liked by author',
   },
 
   sublist: {

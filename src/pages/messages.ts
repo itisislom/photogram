@@ -214,6 +214,7 @@ export function messagesPage(
       image_key: m.image_key || '',
       ciphertext_envelope: m.ciphertext_envelope || '',
       edited_at: m.edited_at || null,
+      listened_at: m.listened_at || null,
       edit_version: Number(m.edit_version || 0),
       created_at: m.created_at,
     }));
@@ -247,7 +248,7 @@ export function messagesPage(
             }
             if (isEnc) {
               return `${dateSepHtml}
-            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-encrypted="1" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}">
+            <div class="dm-msg-row ${isMine ? 'mine' : 'theirs'}" data-msg-id="${m.id}" data-encrypted="1" data-edit-version="${editVer}" data-image-key="${escapeHtml(m.image_key || '')}" data-listened="${m.listened_at ? '1' : '0'}">
               <div class="dm-msg-stack">
                 <div class="dm-msg-bubble">
                   <div class="dm-msg-text dm-msg-decrypt-err" data-enc-slot="1">${escapeHtml(t.messages.e2eeInitializing)}</div>
@@ -1228,7 +1229,11 @@ export function messagesPage(
     }
   }
 
-  function buildVoicePlayerEl(mediaMeta, imageKey, localMediaUrl) {
+  function buildVoicePlayerEl(mediaMeta, imageKey, localMediaUrl, voiceOpts) {
+    var vOpts = voiceOpts || {};
+    var vMsgId = Number(vOpts.msgId || 0);
+    var vIsMine = Boolean(vOpts.isMine);
+    var vIsListened = Boolean(vOpts.isListened);
     var wrap = document.createElement('div');
     wrap.className = 'dm-voice-msg';
 
@@ -1258,18 +1263,47 @@ export function messagesPage(
     }
 
     var totalMs = Math.max(0, Number(mediaMeta && mediaMeta.durationMs) || 0);
+    var metaRow = document.createElement('div');
+    metaRow.className = 'dm-voice-meta';
     var durEl = document.createElement('div');
     durEl.className = 'dm-voice-dur';
     durEl.textContent = formatVoiceDuration(totalMs);
+    metaRow.appendChild(durEl);
+
+    var unheardDot = null;
+    if (!vIsListened) {
+      unheardDot = document.createElement('span');
+      unheardDot.className = 'dm-voice-unheard-dot';
+      unheardDot.setAttribute('aria-hidden', 'true');
+      metaRow.appendChild(unheardDot);
+    }
 
     body.appendChild(wave);
-    body.appendChild(durEl);
+    body.appendChild(metaRow);
     wrap.appendChild(playBtn);
     wrap.appendChild(body);
 
     var resolvedUrl = localMediaUrl || '';
     var audioEl = null;
     var isLoading = false;
+    var listenedReported = vIsListened;
+
+    function markListenedOnce() {
+      if (vIsMine || listenedReported || !vMsgId) return;
+      listenedReported = true;
+      if (unheardDot && unheardDot.parentNode) {
+        unheardDot.parentNode.removeChild(unheardDot);
+        unheardDot = null;
+      }
+      var rowEl = wrap.closest ? wrap.closest('.dm-msg-row') : null;
+      if (rowEl) rowEl.setAttribute('data-listened', '1');
+      fetch('/api/messages/listened', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: vMsgId })
+      }).catch(function() {});
+    }
 
     var uiHandle = {
       totalMs: totalMs,
@@ -1351,6 +1385,7 @@ export function messagesPage(
             activeVoiceUi = uiHandle;
             uiHandle.setPlaying(true);
             await a.play();
+            markListenedOnce();
           }
           return;
         }
@@ -1365,6 +1400,7 @@ export function messagesPage(
         activeVoiceUi = uiHandle;
         uiHandle.setPlaying(true);
         await a.play();
+        markListenedOnce();
       } catch (err) {
         uiHandle.setPlaying(false);
         if (window.showAppToast) window.showAppToast(state.networkError);
@@ -1387,7 +1423,7 @@ export function messagesPage(
     return wrap;
   }
 
-  function hydrateBubbleContent(bubble, timeEl, payload, imageKey, localMediaUrl) {
+  function hydrateBubbleContent(bubble, timeEl, payload, imageKey, localMediaUrl, voiceOpts) {
     while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
     var isVoice = Boolean(payload && payload.media && payload.media.kind === 'voice' && (imageKey || localMediaUrl));
     var hasImg = !isVoice && Boolean((payload && payload.media && imageKey) || localMediaUrl);
@@ -1398,9 +1434,14 @@ export function messagesPage(
       else parentRow.removeAttribute('data-msg-kind');
     }
     if (isVoice) {
+      var resolvedVoiceOpts = voiceOpts || {
+        msgId: parentRow ? parseInt(parentRow.getAttribute('data-msg-id') || '0', 10) : 0,
+        isMine: parentRow ? parentRow.classList.contains('mine') : false,
+        isListened: parentRow ? parentRow.getAttribute('data-listened') === '1' : false
+      };
       bubble.classList.remove('img-only');
       bubble.classList.add('voice-bubble');
-      bubble.appendChild(buildVoicePlayerEl(payload.media, imageKey, localMediaUrl));
+      bubble.appendChild(buildVoicePlayerEl(payload.media, imageKey, localMediaUrl, resolvedVoiceOpts));
       bubble.appendChild(timeEl);
       return;
     }
@@ -1459,6 +1500,7 @@ export function messagesPage(
     if (m.is_encrypted) row.setAttribute('data-encrypted', '1');
     row.setAttribute('data-edit-version', String(Number(m.edit_version || 0)));
     row.setAttribute('data-image-key', m.image_key || '');
+    row.setAttribute('data-listened', m.listened_at ? '1' : '0');
 
     var bubble = document.createElement('div');
     bubble.className = 'dm-msg-bubble';
@@ -1469,7 +1511,11 @@ export function messagesPage(
 
     if (m.is_encrypted) {
       if (decryptedPayload) {
-        hydrateBubbleContent(bubble, timeEl, decryptedPayload, m.image_key || '', localMediaUrl || '');
+        hydrateBubbleContent(bubble, timeEl, decryptedPayload, m.image_key || '', localMediaUrl || '', {
+          msgId: Number(m.id || 0),
+          isMine: isMine,
+          isListened: Boolean(m.listened_at)
+        });
       } else {
         var err = document.createElement('div');
         err.className = 'dm-msg-text dm-msg-decrypt-err';
@@ -1726,7 +1772,11 @@ export function messagesPage(
         if (!bubble || !timeEl) continue;
         var res = await c.decryptMessage(m);
         if (res.ok && res.payload) {
-          hydrateBubbleContent(bubble, timeEl, res.payload, m.image_key || '', '');
+          hydrateBubbleContent(bubble, timeEl, res.payload, m.image_key || '', '', {
+            msgId: Number(m.id || 0),
+            isMine: Number(m.sender_id) === Number(state.currentUserId),
+            isListened: Boolean(m.listened_at)
+          });
           if (Number(m.id) === Number(state.lastMsgId) && Number(m.edit_version || 0) > 0) {
             updateSidebarPreview(state.activeConversationId, m.sender_id, res.payload.text, Boolean(res.payload.media));
           }
@@ -3919,6 +3969,18 @@ export function messagesPage(
               setConvItemCheck(rConvItem, true, true);
             }
           }
+        }
+      }
+      return;
+    }
+
+    if (ev.type === 'message.listened') {
+      if (Number(ev.conversation_id) === Number(state.activeConversationId) && listEl && ev.message_id) {
+        var lRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + String(ev.message_id) + '"]');
+        if (lRow) {
+          lRow.setAttribute('data-listened', '1');
+          var lDot = lRow.querySelector('.dm-voice-unheard-dot');
+          if (lDot && lDot.parentNode) lDot.parentNode.removeChild(lDot);
         }
       }
       return;

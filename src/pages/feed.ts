@@ -67,7 +67,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
         <div class="feed-card-author-meta">
           <span class="feed-card-username">${escapeHtml(p.username)}${p.is_verified ? renderVerifiedBadge(13) : ''}</span>
           <span class="feed-card-dot">•</span>
-          <span class="feed-card-time">${formatFeedTime(p.created_at, t)}</span>
+          <span class="feed-card-time" data-ts="${escapeHtml(p.created_at || '')}">${formatFeedTime(p.created_at, t)}</span>
         </div>
       </a>
       <div class="feed-card-header-right">
@@ -110,7 +110,7 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
       ${p.comments_count && p.comments_count > 0 ? t.feed.viewAllComments(p.comments_count) : t.feed.addComment}
     </div>
 
-    <div class="feed-card-date">${formatFullDate(p.created_at, t)}</div>
+    <div class="feed-card-date" data-ts="${escapeHtml(p.created_at || '')}">${formatFullDate(p.created_at, t)}</div>
   </article>`;
 }
 
@@ -794,6 +794,19 @@ ${renderCommentsSheetScript(t)}
       loadNextFeedPage();
     }
   }
+
+  function syncRenderedFeedDates() {
+    document.querySelectorAll('.feed-card-time[data-ts]').forEach(function(el) {
+      var ts = el.getAttribute('data-ts');
+      if (ts) el.textContent = formatFeedTimeClient(ts);
+    });
+    document.querySelectorAll('.feed-card-date[data-ts]').forEach(function(el) {
+      var ts = el.getAttribute('data-ts');
+      if (ts) el.textContent = formatFullDateClient(ts);
+    });
+  }
+
+  syncRenderedFeedDates();
 
   if (feedHasMore && feedContainer) {
     setTimeout(prefetchNextFeedPage, 150);

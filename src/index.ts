@@ -1,7 +1,7 @@
 import { Env, User } from './types';
 import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
 import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleResolveMentions, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
-import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike } from './posts';
+import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike, handleToggleCommentPin } from './posts';
 import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
 import { profilePage, userNotFoundPage } from './pages/profile';
@@ -38,6 +38,7 @@ import {
   handlePollMessages,
   handleSendMessage,
   handleMarkRead,
+  handleMarkListened,
   handleDeleteMessage,
   handleDeleteConversation,
   handleToggleReaction,
@@ -694,6 +695,10 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return handleToggleCommentLike(request, env);
     }
 
+    if (pathname === '/api/posts/comment/pin' && method === 'POST') {
+      return handleToggleCommentPin(request, env);
+    }
+
     if (pathname === '/api/realtime/ws' && method === 'GET') {
       return handleRealtimeWs(request, env, url);
     }
@@ -720,6 +725,10 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
 
     if (pathname === '/api/messages/read' && method === 'POST') {
       return handleMarkRead(request, env, ctx);
+    }
+
+    if (pathname === '/api/messages/listened' && method === 'POST') {
+      return handleMarkListened(request, env, ctx);
     }
 
     if (pathname === '/api/messages/delete' && method === 'POST') {

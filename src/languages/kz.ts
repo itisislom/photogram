@@ -179,6 +179,10 @@ export const kz: Translations = {
     replyingTo: '@{username} пайдаланушысына жауап',
     showReplies: 'Жауаптар ({n})',
     hideReplies: 'Жауаптарды жасыру',
+    pin: 'Бекіту',
+    unpin: 'Бекітуді алу',
+    pinned: 'Бекітілген',
+    likedByAuthor: 'Авторға ұнады',
   },
 
   sublist: {

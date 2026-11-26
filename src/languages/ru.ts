@@ -184,6 +184,10 @@ export const ru: Translations = {
     replyingTo: 'Ответ @{username}',
     showReplies: 'Ответы ({n})',
     hideReplies: 'Скрыть ответы',
+    pin: 'Закрепить',
+    unpin: 'Открепить',
+    pinned: 'Закреплено',
+    likedByAuthor: 'Понравилось автору',
   },
 
   sublist: {

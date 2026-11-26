@@ -132,7 +132,7 @@ export function explorePage(
           <span class="pics-author-name">${escapeHtml(p.username)}${p.is_verified ? renderVerifiedBadge(13) : ''}</span>
         </a>
         ${p.caption ? `<div class="pics-caption">${escapeHtml(p.caption)}</div>` : ''}
-        <div class="pics-date">${escapeHtml(p.created_at ? formatPostDateTime(p.created_at, t) : '')}</div>
+        <div class="pics-date" data-ts="${escapeHtml(p.created_at || '')}">${escapeHtml(p.created_at ? formatPostDateTime(p.created_at, t) : '')}</div>
       </div>
       <div class="pics-side-bar">
         <button class="pics-action-btn pics-like-btn ${p.is_liked ? 'liked' : ''}" type="button" aria-label="${escapeHtml(t.common.likesCount(1))}">
@@ -1106,6 +1106,14 @@ ${renderCommentsSheetScript(t)}
     }
   }
 
+  function syncRenderedExploreDates() {
+    document.querySelectorAll('.pics-date[data-ts]').forEach(function(el) {
+      var ts = el.getAttribute('data-ts');
+      if (ts) el.textContent = formatExploreDateClient(ts);
+    });
+  }
+
+  syncRenderedExploreDates();
   bindExploreInteractions();
 })();
 `;

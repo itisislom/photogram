@@ -418,7 +418,7 @@ export async function getConversationMessages(
   const delCond = viewerDelCond(viewerSlot);
   const res = beforeId && beforeId > 0
     ? await env.DB.prepare(
-        `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, edited_at, edit_version, created_at
+        `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, listened_at, edited_at, edit_version, created_at
          FROM messages
          WHERE conversation_id = ? AND deleted_at IS NULL${delCond} AND id > ? AND id < ?
          ORDER BY id DESC
@@ -427,7 +427,7 @@ export async function getConversationMessages(
         .bind(conversationId, minAfterId, beforeId, fetchLimit)
         .all<DirectMessage>()
     : await env.DB.prepare(
-        `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, edited_at, edit_version, created_at
+        `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, listened_at, edited_at, edit_version, created_at
          FROM messages
          WHERE conversation_id = ? AND deleted_at IS NULL${delCond} AND id > ?
          ORDER BY id DESC
@@ -448,6 +448,7 @@ export async function getConversationMessages(
       sender_device_id: Number(m.sender_device_id || 0),
       ciphertext_envelope: encrypted ? filterEnvelopeForUser(m.ciphertext_envelope, viewerUserId) : '',
       read_at: m.read_at || null,
+      listened_at: m.listened_at || null,
       edited_at: m.edited_at || null,
       edit_version: Number(m.edit_version || 0),
       created_at: m.created_at,
@@ -806,7 +807,7 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
   const delCond = viewerDelCond(viewerSlot);
   const effectiveAfterId = Math.max(0, afterId, conv.cleared_before_id);
   const res = await env.DB.prepare(
-    `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, edited_at, edit_version, created_at
+    `SELECT id, conversation_id, sender_id, body, image_key, is_encrypted, sender_device_id, ciphertext_envelope, read_at, listened_at, edited_at, edit_version, created_at
      FROM messages
      WHERE conversation_id = ? AND deleted_at IS NULL${delCond} AND id > ?
      ORDER BY id ASC
@@ -827,6 +828,7 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
       sender_device_id: Number(m.sender_device_id || 0),
       ciphertext_envelope: encrypted ? filterEnvelopeForUser(m.ciphertext_envelope, user.id) : '',
       read_at: m.read_at || null,
+      listened_at: m.listened_at || null,
       edited_at: m.edited_at || null,
       edit_version: Number(m.edit_version || 0),
       created_at: m.created_at,
@@ -1054,6 +1056,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
     is_encrypted: 1,
     sender_device_id: senderDeviceId,
     read_at: null,
+    listened_at: null,
     edited_at: null,
     edit_version: 0,
     created_at: createdAt,
@@ -1463,6 +1466,83 @@ export async function handleDeleteMessage(request: Request, env: Env, ctx?: Exec
   return jsonResponse({ success: true, deleted_id: msgId, for_both: forBoth, unread_total: unreadTotal }, 200);
 }
 
+export async function handleMarkListened(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+  const t = getTranslations(detectLanguage(request));
+  const user = await getUserFromRequest(env, request);
+  if (!user) return jsonError(t.common.authRequired, 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `dm:listened:user:${user.id}`, 60, 60);
+  if (!allowed) return jsonError(t.messages.errRateLimit, 429);
+
+  const parsed = await readJsonWithLimit<{ message_id?: unknown }>(request, 1024);
+  if (!parsed.ok) return jsonError(t.common.networkError, parsed.status);
+
+  const msgId = parsePositiveId(parsed.data?.message_id);
+  if (!msgId) return jsonError(t.common.networkError, 400);
+
+  const msg = await env.DB.prepare(
+    `SELECT m.id, m.conversation_id, m.sender_id, m.image_key, m.listened_at
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE m.id = ?
+       AND m.deleted_at IS NULL
+       AND (
+         (c.user1_id = ? AND m.id > c.user1_cleared_before_id AND m.deleted_for_user1 = 0)
+         OR (c.user2_id = ? AND m.id > c.user2_cleared_before_id AND m.deleted_for_user2 = 0)
+       )
+     LIMIT 1`,
+  )
+    .bind(msgId, user.id, user.id)
+    .first<{
+      id: number;
+      conversation_id: number;
+      sender_id: number;
+      image_key: string;
+      listened_at: string | null;
+    }>();
+
+  if (!msg || !msg.image_key) return jsonError(t.common.networkError, 404);
+  if (Number(msg.sender_id) === Number(user.id)) {
+    return jsonResponse({ success: true, ignored: true, listened_at: msg.listened_at || null }, 200);
+  }
+  if (msg.listened_at) {
+    return jsonResponse({ success: true, listened_at: msg.listened_at }, 200);
+  }
+
+  const listenedAt = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE messages SET listened_at = datetime('now') WHERE id = ? AND listened_at IS NULL",
+  )
+    .bind(msgId)
+    .run();
+
+  const senderSessionHash = await getSessionHashFromRequest(request);
+  const senderSessionKey = senderSessionHash ? senderSessionHash.slice(0, 32) : undefined;
+  await runBackground(ctx, () =>
+    Promise.all([
+      emitUserEvent(env, Number(msg.sender_id), {
+        type: 'message.listened',
+        conversation_id: Number(msg.conversation_id),
+        message_id: msgId,
+        listened_at: listenedAt,
+      }),
+      emitUserEvent(
+        env,
+        user.id,
+        {
+          type: 'message.listened',
+          conversation_id: Number(msg.conversation_id),
+          message_id: msgId,
+          listened_at: listenedAt,
+        },
+        { excludeSession: senderSessionKey },
+      ),
+    ]),
+  );
+
+  return jsonResponse({ success: true, listened_at: listenedAt }, 200);
+}
+
 export async function handleToggleReaction(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
@@ -1556,7 +1636,7 @@ export async function handleToggleReaction(request: Request, env: Env, ctx?: Exe
       const reactPushAllowed = await acquireCooldownAtomic(
         env,
         `push:dm_react:${partnerId}:${user.id}:${msgId}`,
-        5,
+        300,
       );
       if (reactPushAllowed) {
         await sendPushToUser(env, partnerId, {

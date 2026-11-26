@@ -53,6 +53,9 @@ export interface Comment {
   display_name: string;
   avatar_key: string;
   can_delete: boolean;
+  can_pin?: boolean;
+  is_pinned?: boolean;
+  liked_by_author?: boolean;
   is_verified?: number | boolean;
   likes_count?: number;
   is_liked?: boolean;
@@ -166,6 +169,7 @@ export interface DirectMessage {
   sender_device_id?: number;
   ciphertext_envelope?: string;
   read_at: string | null;
+  listened_at?: string | null;
   edited_at?: string | null;
   edit_version?: number;
   created_at: string;

@@ -396,9 +396,14 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
     return jsonError('Идентификатор публикации не указан', 400);
   }
 
-  const post = await env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?')
+  const post = await env.DB.prepare(
+    `SELECT p.id, p.user_id, u.username, u.display_name, u.avatar_key
+     FROM posts p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.id = ?`,
+  )
     .bind(postId)
-    .first<{ id: number; user_id: number }>();
+    .first<{ id: number; user_id: number; username: string; display_name: string; avatar_key: string }>();
 
   if (!post) {
     return jsonError('Публикация не найдена', 404);
@@ -406,23 +411,25 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
 
   const viewerId = currentUser ? Number(currentUser.id) : 0;
   const rows = await env.DB.prepare(
-    `SELECT c.id, c.post_id, c.user_id, c.parent_id, c.content, c.created_at,
+    `SELECT c.id, c.post_id, c.user_id, c.parent_id, c.content, c.is_pinned, c.created_at,
             u.username, u.display_name, u.avatar_key, u.is_verified,
             (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes_count,
-            EXISTS(SELECT 1 FROM comment_likes cl WHERE cl.comment_id = c.id AND cl.user_id = ?) AS is_liked
+            EXISTS(SELECT 1 FROM comment_likes cl WHERE cl.comment_id = c.id AND cl.user_id = ?) AS is_liked,
+            EXISTS(SELECT 1 FROM comment_likes cl WHERE cl.comment_id = c.id AND cl.user_id = ?) AS liked_by_author
      FROM comments c
      JOIN users u ON c.user_id = u.id
      WHERE c.post_id = ?
-     ORDER BY c.created_at ASC, c.id ASC
+     ORDER BY c.is_pinned DESC, c.created_at ASC, c.id ASC
      LIMIT 200`
   )
-    .bind(viewerId, postId)
+    .bind(viewerId, post.user_id, postId)
     .all<{
       id: number;
       post_id: number;
       user_id: number;
       parent_id?: number | null;
       content: string;
+      is_pinned?: number | boolean;
       created_at: string;
       username: string;
       display_name: string;
@@ -430,31 +437,45 @@ export async function handleGetComments(request: Request, env: Env): Promise<Res
       is_verified?: number | boolean;
       likes_count?: number;
       is_liked?: number | boolean;
+      liked_by_author?: number | boolean;
     }>();
 
   const totalRow = await env.DB.prepare('SELECT COUNT(*) as count FROM comments WHERE post_id = ?')
     .bind(postId)
     .first<{ count: number }>();
 
-  const comments: Comment[] = (rows.results || []).map(c => ({
-    id: c.id,
-    post_id: c.post_id,
-    user_id: c.user_id,
-    parent_id: c.parent_id ? Number(c.parent_id) : null,
-    content: c.content,
-    created_at: c.created_at,
-    username: c.username,
-    display_name: c.display_name,
-    avatar_key: c.avatar_key,
-    is_verified: c.is_verified,
-    can_delete: Boolean(currentUser && (currentUser.id === c.user_id || currentUser.id === post.user_id)),
-    likes_count: Number(c.likes_count || 0),
-    is_liked: Boolean(c.is_liked),
-  }));
+  const isPostAuthorViewer = Boolean(currentUser && Number(currentUser.id) === Number(post.user_id));
+  const comments: Comment[] = (rows.results || []).map(c => {
+    const parentId = c.parent_id ? Number(c.parent_id) : null;
+    return {
+      id: c.id,
+      post_id: c.post_id,
+      user_id: c.user_id,
+      parent_id: parentId,
+      content: c.content,
+      created_at: c.created_at,
+      username: c.username,
+      display_name: c.display_name,
+      avatar_key: c.avatar_key,
+      is_verified: c.is_verified,
+      can_delete: Boolean(currentUser && (currentUser.id === c.user_id || currentUser.id === post.user_id)),
+      can_pin: Boolean(isPostAuthorViewer && !parentId),
+      is_pinned: Boolean(c.is_pinned && !parentId),
+      likes_count: Number(c.likes_count || 0),
+      is_liked: Boolean(c.is_liked),
+      liked_by_author: Boolean(c.liked_by_author),
+    };
+  });
 
   return jsonResponse({
     success: true,
     post_id: postId,
+    post_author: {
+      id: Number(post.user_id),
+      username: post.username || '',
+      display_name: post.display_name || post.username || '',
+      avatar_key: post.avatar_key || '',
+    },
     comments,
     comments_count: totalRow ? Number(totalRow.count) : comments.length
   }, 200);
@@ -613,6 +634,9 @@ export async function handleCreateComment(request: Request, env: Env): Promise<R
     avatar_key: currentUser.avatar_key,
     is_verified: currentUser.is_verified,
     can_delete: true,
+    can_pin: Boolean(Number(currentUser.id) === Number(post.user_id) && !resolvedParentId),
+    is_pinned: false,
+    liked_by_author: false,
     likes_count: 0,
     is_liked: false,
   };
@@ -715,9 +739,14 @@ export async function handleToggleCommentLike(request: Request, env: Env): Promi
     return jsonError('Идентификатор комментария не указан', 400);
   }
 
-  const comment = await env.DB.prepare('SELECT id, post_id, user_id, content FROM comments WHERE id = ?')
+  const comment = await env.DB.prepare(
+    `SELECT c.id, c.post_id, c.user_id, c.content, p.user_id AS post_author_id
+     FROM comments c
+     JOIN posts p ON p.id = c.post_id
+     WHERE c.id = ?`,
+  )
     .bind(commentId)
-    .first<{ id: number; post_id: number; user_id: number; content: string }>();
+    .first<{ id: number; post_id: number; user_id: number; content: string; post_author_id: number }>();
   if (!comment) {
     return jsonError('Комментарий не найден', 404);
   }
@@ -762,15 +791,97 @@ export async function handleToggleCommentLike(request: Request, env: Env): Promi
     }
   }
 
-  const countRow = await env.DB.prepare('SELECT COUNT(*) AS count FROM comment_likes WHERE comment_id = ?')
-    .bind(commentId)
-    .first<{ count: number }>();
+  const [countRow, authorLikedRow] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS count FROM comment_likes WHERE comment_id = ?')
+      .bind(commentId)
+      .first<{ count: number }>(),
+    Number(currentUser.id) === Number(comment.post_author_id)
+      ? Promise.resolve(liked ? { ok: 1 } : null)
+      : env.DB.prepare('SELECT 1 AS ok FROM comment_likes WHERE comment_id = ? AND user_id = ?')
+          .bind(commentId, comment.post_author_id)
+          .first<{ ok: number }>(),
+  ]);
   const likesCount = countRow ? Number(countRow.count) : 0;
 
   return jsonResponse({
     success: true,
     liked,
+    liked_by_author: Boolean(authorLikedRow),
     likes_count: likesCount,
     comment_id: commentId,
+  }, 200);
+}
+
+export async function handleToggleCommentPin(request: Request, env: Env): Promise<Response> {
+  const currentUser = await getUserFromRequest(env, request);
+  if (!currentUser) return jsonError('Необходима авторизация', 401);
+
+  const allowed = await consumeRateLimitAtomic(env, `comment_pin:${currentUser.id}`, 30, 60);
+  if (!allowed) {
+    return jsonError('Слишком много запросов. Подождите несколько секунд', 429);
+  }
+
+  const parsed = await readJsonWithLimit<{ comment_id?: unknown }>(request, 4096);
+  if (!parsed.ok) return jsonError('Неверный формат запроса', parsed.status);
+
+  const commentId = parsePositiveId(parsed.data?.comment_id);
+  if (!commentId) {
+    return jsonError('Идентификатор комментария не указан', 400);
+  }
+
+  const comment = await env.DB.prepare(
+    `SELECT c.id, c.post_id, c.parent_id, c.is_pinned, p.user_id AS post_author_id
+     FROM comments c
+     JOIN posts p ON p.id = c.post_id
+     WHERE c.id = ?`,
+  )
+    .bind(commentId)
+    .first<{
+      id: number;
+      post_id: number;
+      parent_id?: number | null;
+      is_pinned?: number | boolean;
+      post_author_id: number;
+    }>();
+
+  if (!comment) {
+    return jsonError('Комментарий не найден', 404);
+  }
+
+  if (Number(currentUser.id) !== Number(comment.post_author_id)) {
+    return jsonError('Закреплять комментарии может только автор публикации', 403);
+  }
+
+  if (comment.parent_id) {
+    return jsonError('Закрепить можно только основной комментарий', 400);
+  }
+
+  const currentlyPinned = Boolean(comment.is_pinned);
+  if (currentlyPinned) {
+    await env.DB.prepare('UPDATE comments SET is_pinned = 0 WHERE id = ?')
+      .bind(commentId)
+      .run();
+    return jsonResponse({
+      success: true,
+      comment_id: commentId,
+      post_id: Number(comment.post_id),
+      is_pinned: false,
+      pinned_comment_id: null,
+    }, 200);
+  }
+
+  await env.DB.prepare('UPDATE comments SET is_pinned = 0 WHERE post_id = ? AND is_pinned = 1')
+    .bind(comment.post_id)
+    .run();
+  await env.DB.prepare('UPDATE comments SET is_pinned = 1 WHERE id = ?')
+    .bind(commentId)
+    .run();
+
+  return jsonResponse({
+    success: true,
+    comment_id: commentId,
+    post_id: Number(comment.post_id),
+    is_pinned: true,
+    pinned_comment_id: commentId,
   }, 200);
 }

@@ -2572,6 +2572,136 @@ body {
   text-decoration: underline;
 }
 
+.comment-like-cluster {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.comment-author-liked-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.comment-author-liked-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 9px;
+  font-weight: 700;
+  border: 1px solid var(--border-color);
+}
+
+.comment-author-liked-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.comment-author-liked-heart {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  color: var(--like-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.comment-author-liked-heart svg {
+  width: 8px;
+  height: 8px;
+  fill: var(--like-color);
+  display: block;
+}
+
+.comment-pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.comment-pinned-badge svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.comment-item[data-can-pin="1"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.comment-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25000;
+  background: transparent;
+}
+
+.comment-ctx-menu {
+  position: fixed;
+  z-index: 25001;
+  min-width: 168px;
+  max-width: 240px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.comment-ctx-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.comment-ctx-btn:active {
+  background: var(--bg-tertiary);
+}
+
+.comment-ctx-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 .comment-like-btn {
   flex-shrink: 0;
   display: inline-flex;
@@ -5862,11 +5992,30 @@ body.dm-lock-scroll {
   opacity: 1;
 }
 
+.dm-voice-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .dm-voice-dur {
   font-size: 11px;
   line-height: 1;
   opacity: 0.82;
   font-variant-numeric: tabular-nums;
+}
+
+.dm-voice-unheard-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+[data-theme="light"] .dm-msg-row.theirs .dm-voice-unheard-dot {
+  background: var(--accent-color, #0095f6);
 }
 
 .dm-mention-link {

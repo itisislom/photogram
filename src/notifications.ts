@@ -156,7 +156,18 @@ export async function createNotification(
     ]);
     const unreadCount = Number(cntRow?.cnt || 0);
 
-    if (actor?.username) {
+    const isToggleNotif = opts.type === 'like' || opts.type === 'comment_like' || opts.type === 'follow';
+    const targetScope = opts.commentId || opts.postId || 0;
+    const cooldownSec = isToggleNotif ? 600 : 5;
+    const notifyAllowed = actor?.username
+      ? await acquireCooldownAtomic(
+          env,
+          `push:notif:${opts.userId}:${opts.actorId}:${opts.type}:${targetScope}`,
+          cooldownSec,
+        )
+      : false;
+
+    if (actor?.username && notifyAllowed) {
       await emitUserEvent(env, opts.userId, {
         type: 'notification.new',
         unread_count: unreadCount,
@@ -173,30 +184,22 @@ export async function createNotification(
       notifications: unreadCount,
     });
 
-    if (actor?.username) {
-      const targetScope = opts.commentId || opts.postId || 0;
-      const pushAllowed = await acquireCooldownAtomic(
-        env,
-        `push:notif:${opts.userId}:${opts.actorId}:${opts.type}:${targetScope}`,
-        5,
-      );
-      if (pushAllowed) {
-        let bodyText = '';
-        if (opts.type === 'like') bodyText = `@${actor.username} понравилась ваша публикация`;
-        else if (opts.type === 'comment_like') bodyText = `@${actor.username} понравился ваш комментарий${preview ? `: ${preview}` : ''}`;
-        else if (opts.type === 'comment_reply') bodyText = `@${actor.username} ответил(а): ${preview || 'на ваш комментарий'}`;
-        else if (opts.type === 'follow') bodyText = `@${actor.username} подписался(ась) на вас`;
-        else if (opts.type === 'mention') bodyText = `@${actor.username} упомянул(а) вас${preview ? `: ${preview}` : ''}`;
-        else bodyText = `@${actor.username}: ${preview || 'прокомментировал(а) вашу публикацию'}`;
+    if (actor?.username && notifyAllowed) {
+      let bodyText = '';
+      if (opts.type === 'like') bodyText = `@${actor.username} понравилась ваша публикация`;
+      else if (opts.type === 'comment_like') bodyText = `@${actor.username} понравился ваш комментарий${preview ? `: ${preview}` : ''}`;
+      else if (opts.type === 'comment_reply') bodyText = `@${actor.username} ответил(а): ${preview || 'на ваш комментарий'}`;
+      else if (opts.type === 'follow') bodyText = `@${actor.username} подписался(ась) на вас`;
+      else if (opts.type === 'mention') bodyText = `@${actor.username} упомянул(а) вас${preview ? `: ${preview}` : ''}`;
+      else bodyText = `@${actor.username}: ${preview || 'прокомментировал(а) вашу публикацию'}`;
 
-        await sendPushToUser(env, opts.userId, {
-          kind: opts.type,
-          title: 'Photogram',
-          body: bodyText.slice(0, 140),
-          url: '/notifications',
-          tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
-        });
-      }
+      await sendPushToUser(env, opts.userId, {
+        kind: opts.type,
+        title: 'Photogram',
+        body: bodyText.slice(0, 140),
+        url: '/notifications',
+        tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
+      });
     }
   } catch {}
 }

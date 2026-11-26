@@ -18,6 +18,7 @@ export function publishPostPage(
     publishBtn: t.post.publishBtn,
     publishing: t.post.publishing,
     networkError: t.common.networkError,
+    errInvalidImage: t.messages.errInvalidImage,
     targetProfileUrl: `/u/${encodeURIComponent(currentUser.username)}`,
   });
 
@@ -103,6 +104,7 @@ export function publishPostPage(
   var currentY = 0;
   var viewportSize = 0;
   var isSubmitting = false;
+  var activeObjectUrl = '';
 
   var isDragging = false;
   var dragStartX = 0;
@@ -217,6 +219,10 @@ export function publishPostPage(
     currentX = 0;
     currentY = 0;
     viewportSize = 0;
+    if (activeObjectUrl) {
+      try { URL.revokeObjectURL(activeObjectUrl); } catch (e) {}
+      activeObjectUrl = '';
+    }
     if (fileInput) fileInput.value = '';
     if (cropImg) {
       cropImg.src = '';
@@ -263,52 +269,71 @@ export function publishPostPage(
     if (!file) return;
     hideError();
 
-    var reader = new FileReader();
-    reader.onload = function(evt) {
-      var img = new Image();
-      img.onload = function() {
-        loadedImg = img;
-        if (cropImg) cropImg.src = evt.target.result;
-        if (dropzone) dropzone.style.display = 'none';
-        if (cropWrap) cropWrap.style.display = 'flex';
-        if (submitBtn && !isSubmitting) {
-          submitBtn.disabled = false;
-          submitBtn.classList.remove('sending');
-          submitBtn.setAttribute('aria-label', i18n.publishBtn);
-          submitBtn.title = i18n.publishBtn;
-        }
-
-        viewportSize = cropViewport ? (cropViewport.clientWidth || 340) : 340;
-        var natW = loadedImg.naturalWidth;
-        var natH = loadedImg.naturalHeight;
-
-        baseScale = Math.max(viewportSize / natW, viewportSize / natH);
-        zoom = 1.0;
-        if (zoomSlider) {
-      zoomSlider.value = '1';
-      updateSliderProgress(1);
+    var mime = String(file.type || '').toLowerCase();
+    if (mime && mime.indexOf('image/') !== 0) {
+      clearUploadState();
+      showError(i18n.errInvalidImage);
+      return;
     }
 
-        var dispW = natW * baseScale;
-        var dispH = natH * baseScale;
-        currentX = (viewportSize - dispW) / 2;
-        currentY = (viewportSize - dispH) / 2;
-
-        clampOffsets();
-        applyTransform();
-      };
-      img.onerror = function() {
-        clearUploadState();
-        showError(i18n.networkError);
-      };
-      img.src = evt.target.result;
-    };
-    reader.onerror = function() {
+    var objUrl = '';
+    try {
+      objUrl = URL.createObjectURL(file);
+    } catch (e) {
       clearUploadState();
-      showError(i18n.networkError);
+      showError(i18n.errInvalidImage);
+      return;
+    }
+    if (activeObjectUrl) {
+      try { URL.revokeObjectURL(activeObjectUrl); } catch (re) {}
+    }
+    activeObjectUrl = objUrl;
+
+    var img = new Image();
+    img.onload = function() {
+      loadedImg = img;
+      if (cropImg) cropImg.src = objUrl;
+      if (dropzone) dropzone.style.display = 'none';
+      if (cropWrap) cropWrap.style.display = 'flex';
+      if (submitBtn && !isSubmitting) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('sending');
+        submitBtn.setAttribute('aria-label', i18n.publishBtn);
+        submitBtn.title = i18n.publishBtn;
+      }
+
+      viewportSize = cropViewport ? (cropViewport.clientWidth || 340) : 340;
+      var natW = loadedImg.naturalWidth;
+      var natH = loadedImg.naturalHeight;
+
+      baseScale = Math.max(viewportSize / natW, viewportSize / natH);
+      zoom = 1.0;
+      if (zoomSlider) {
+        zoomSlider.value = '1';
+        updateSliderProgress(1);
+      }
+
+      var dispW = natW * baseScale;
+      var dispH = natH * baseScale;
+      currentX = (viewportSize - dispW) / 2;
+      currentY = (viewportSize - dispH) / 2;
+
+      clampOffsets();
+      applyTransform();
     };
-    reader.readAsDataURL(file);
+    img.onerror = function() {
+      clearUploadState();
+      showError(i18n.errInvalidImage);
+    };
+    img.src = objUrl;
   }
+
+  window.addEventListener('pagehide', function() {
+    if (activeObjectUrl) {
+      try { URL.revokeObjectURL(activeObjectUrl); } catch (e) {}
+      activeObjectUrl = '';
+    }
+  });
 
   if (fileInput) {
     fileInput.addEventListener('change', function(e) {

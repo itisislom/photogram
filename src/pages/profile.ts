@@ -7,7 +7,7 @@ export function formatBioHtml(bio?: string | null): string {
 import { ProfileData } from '../types';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
-import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON } from './commentsModal';
+import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON, PIN_COMMENT_ICON, AUTHOR_HEART_MINI_ICON } from './commentsModal';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
 import { getClientDateFormat, getCompactCountUnits } from '../languages';
@@ -252,6 +252,8 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     dateFmt: getClientDateFormat(t.code),
     heartIcon: COMMENT_HEART_ICON,
     chevronIcon: REPLY_CHEVRON_ICON,
+    pinIcon: PIN_COMMENT_ICON,
+    authorHeartIcon: AUTHOR_HEART_MINI_ICON,
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
     hoursShort: t.common.hoursShort,
@@ -262,6 +264,10 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     replyingTo: t.comments.replyingTo,
     showReplies: t.comments.showReplies,
     hideReplies: t.comments.hideReplies,
+    pinBtn: t.comments.pin,
+    unpinBtn: t.comments.unpin,
+    pinnedLabel: t.comments.pinned,
+    likedByAuthor: t.comments.likedByAuthor,
     loading: t.comments.loading,
     networkError: t.common.networkError,
     sendBtn: t.comments.send,
@@ -322,10 +328,16 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   var openDeleteBtn = document.getElementById('openDeletePostModalBtn');
   var viewPostMoreBtn = document.getElementById('viewPostMoreBtn');
   var activePostId = null;
+  var currentPostAuthor = null;
   var isLiking = false;
   var isSubmittingComment = false;
   var likingCommentIds = {};
+  var pinningCommentIds = {};
   var replyingTo = null;
+  var activeCommentCtx = null;
+  var commentHoldTimer = null;
+  var commentHoldStartX = 0;
+  var commentHoldStartY = 0;
   var likeBurstTimer = null;
 
   function getEventCoords(e, container) {
@@ -442,13 +454,133 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     return fmt(n / 1000, u.k);
   }
 
-  function renderCommentLikeBtn(commentId, isLiked, likesCount) {
+  function renderAuthorLikedBadgeHtml(likedByAuthor) {
+    if (!likedByAuthor || !currentPostAuthor) return '';
+    var init = escapeHtmlClient((currentPostAuthor.display_name || currentPostAuthor.username || '?').charAt(0).toUpperCase());
+    var av = currentPostAuthor.avatar_key
+      ? '<img src="/media/' + encodeURIComponent(currentPostAuthor.avatar_key) + '" alt="' + escapeHtmlClient(currentPostAuthor.username || '') + '">'
+      : '<span>' + init + '</span>';
+    return '<span class="comment-author-liked-badge" title="' + escapeHtmlClient(i18n.likedByAuthor) + '" aria-label="' + escapeHtmlClient(i18n.likedByAuthor) + '">' +
+      '<span class="comment-author-liked-avatar">' + av + '</span>' +
+      '<span class="comment-author-liked-heart">' + i18n.authorHeartIcon + '</span>' +
+    '</span>';
+  }
+
+  function renderCommentLikeBtn(commentId, isLiked, likesCount, likedByAuthor) {
     var cnt = Number(likesCount) || 0;
     var cntTxt = cnt > 0 ? escapeHtmlClient(formatCompactCountClient(cnt)) : '';
-    return '<button type="button" class="comment-like-btn' + (isLiked ? ' liked' : '') + '" data-like-comment-id="' + commentId + '" aria-pressed="' + (isLiked ? 'true' : 'false') + '">' +
-      i18n.heartIcon +
-      '<span class="comment-like-count">' + cntTxt + '</span>' +
-    '</button>';
+    return '<div class="comment-like-cluster">' +
+      renderAuthorLikedBadgeHtml(Boolean(likedByAuthor)) +
+      '<button type="button" class="comment-like-btn' + (isLiked ? ' liked' : '') + '" data-like-comment-id="' + commentId + '" aria-pressed="' + (isLiked ? 'true' : 'false') + '">' +
+        i18n.heartIcon +
+        '<span class="comment-like-count">' + cntTxt + '</span>' +
+      '</button>' +
+    '</div>';
+  }
+
+  function renderPinnedBadgeHtml() {
+    return '<div class="comment-pinned-badge">' + i18n.pinIcon + '<span>' + escapeHtmlClient(i18n.pinnedLabel) + '</span></div>';
+  }
+
+  function closeCommentCtxMenu() {
+    if (activeCommentCtx && activeCommentCtx.backdrop && activeCommentCtx.backdrop.parentNode) {
+      activeCommentCtx.backdrop.parentNode.removeChild(activeCommentCtx.backdrop);
+    }
+    if (activeCommentCtx && activeCommentCtx.menu && activeCommentCtx.menu.parentNode) {
+      activeCommentCtx.menu.parentNode.removeChild(activeCommentCtx.menu);
+    }
+    activeCommentCtx = null;
+  }
+
+  function applyPinnedCommentUI(commentId, isPinned) {
+    if (!viewCommentsList) return;
+    viewCommentsList.querySelectorAll('.comment-item[data-is-pinned="1"]').forEach(function(el) {
+      el.setAttribute('data-is-pinned', '0');
+      var b = el.querySelector('.comment-pinned-badge');
+      if (b) b.remove();
+    });
+    if (!isPinned || !commentId) return;
+    var item = document.getElementById('commentItem_' + commentId);
+    if (!item) return;
+    item.setAttribute('data-is-pinned', '1');
+    var wrap = item.querySelector('.comment-content-wrap');
+    if (wrap && !wrap.querySelector('.comment-pinned-badge')) {
+      var tmp = document.createElement('div');
+      tmp.innerHTML = renderPinnedBadgeHtml();
+      if (tmp.firstChild) wrap.insertBefore(tmp.firstChild, wrap.firstChild);
+    }
+    var thread = item.closest('.comment-thread');
+    if (thread && thread.parentNode === viewCommentsList && viewCommentsList.firstChild !== thread) {
+      viewCommentsList.insertBefore(thread, viewCommentsList.firstChild);
+      viewCommentsList.scrollTop = 0;
+    }
+  }
+
+  async function togglePinComment(commentId) {
+    if (!commentId || pinningCommentIds[commentId]) return;
+    pinningCommentIds[commentId] = true;
+    try {
+      var res = await fetch('/api/posts/comment/pin', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment_id: commentId })
+      });
+      var data = await res.json();
+      if (res.ok && data && data.success) {
+        applyPinnedCommentUI(commentId, Boolean(data.is_pinned));
+      } else if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
+        if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
+      } else if (window.showAppAlert) {
+        window.showAppAlert({ message: (data && data.error) || i18n.networkError });
+      }
+    } catch (e) {
+      if (window.showAppAlert) window.showAppAlert({ message: i18n.networkError });
+    } finally {
+      delete pinningCommentIds[commentId];
+    }
+  }
+
+  function openCommentCtxMenu(itemEl, clientX, clientY) {
+    closeCommentCtxMenu();
+    if (!itemEl || itemEl.getAttribute('data-can-pin') !== '1') return;
+    var cid = parseInt(itemEl.getAttribute('data-comment-id') || '0', 10);
+    if (!cid) return;
+    var isPinned = itemEl.getAttribute('data-is-pinned') === '1';
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'comment-ctx-backdrop';
+    backdrop.addEventListener('click', closeCommentCtxMenu);
+    backdrop.addEventListener('contextmenu', function(ev) {
+      ev.preventDefault();
+      closeCommentCtxMenu();
+    });
+
+    var menu = document.createElement('div');
+    menu.className = 'comment-ctx-menu';
+    menu.setAttribute('role', 'menu');
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'comment-ctx-btn';
+    btn.setAttribute('role', 'menuitem');
+    btn.innerHTML = i18n.pinIcon + '<span>' + escapeHtmlClient(isPinned ? i18n.unpinBtn : i18n.pinBtn) + '</span>';
+    btn.addEventListener('click', function() {
+      closeCommentCtxMenu();
+      togglePinComment(cid);
+    });
+    menu.appendChild(btn);
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(menu);
+
+    var mw = menu.offsetWidth || 180;
+    var mh = menu.offsetHeight || 56;
+    var left = Math.max(12, Math.min(window.innerWidth - mw - 12, (clientX || window.innerWidth / 2) - mw / 2));
+    var top = Math.max(12, Math.min(window.innerHeight - mh - 12, (clientY || window.innerHeight / 2) - mh - 8));
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    activeCommentCtx = { backdrop: backdrop, menu: menu };
   }
 
   function cancelReplyMode() {
@@ -498,9 +630,12 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
 
     var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
     var timeTxt = c._justNow ? escapeHtmlClient(i18n.justNow) : formatCommentTime(c.created_at);
-    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="commentItem_' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '">' +
+    var isPinned = !isReply && Boolean(c.is_pinned);
+    var canPin = !isReply && Boolean(c.can_pin);
+    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="commentItem_' + c.id + '" data-comment-id="' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '" data-can-pin="' + (canPin ? '1' : '0') + '" data-is-pinned="' + (isPinned ? '1' : '0') + '">' +
       '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar' + (isReply ? ' is-reply-avatar' : '') + '">' + avatarHtml + '</a>' +
       '<div class="comment-content-wrap">' +
+        (isPinned ? renderPinnedBadgeHtml() : '') +
         '<div>' +
           '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-author-name">' + escapeHtmlClient(c.username) + badge + '</a>' +
           '<span class="comment-text">' + renderMentions(c.content) + '</span>' +
@@ -511,7 +646,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
           deleteBtn +
         '</div>' +
       '</div>' +
-      renderCommentLikeBtn(c.id, Boolean(c.is_liked), c.likes_count || 0) +
+      renderCommentLikeBtn(c.id, Boolean(c.is_liked), c.likes_count || 0, Boolean(c.liked_by_author)) +
     '</div>';
   }
 
@@ -600,6 +735,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
       var res = await fetch('/api/posts/comments?post_id=' + encodeURIComponent(postId));
       var data = await res.json();
       if (res.ok && data.success) {
+        currentPostAuthor = data.post_author || null;
         renderCommentsList(data.comments || []);
         updateCommentsCountUI(data.comments_count || 0);
       } else {
@@ -1159,6 +1295,16 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
             if (cntSpan) {
               cntSpan.textContent = cntNow > 0 ? formatCompactCountClient(cntNow) : '';
             }
+            var cluster = likeBtn.closest('.comment-like-cluster');
+            if (cluster) {
+              var oldBadge = cluster.querySelector('.comment-author-liked-badge');
+              if (oldBadge) oldBadge.remove();
+              if (lData.liked_by_author && currentPostAuthor) {
+                var tmpB = document.createElement('div');
+                tmpB.innerHTML = renderAuthorLikedBadgeHtml(true);
+                if (tmpB.firstChild) cluster.insertBefore(tmpB.firstChild, likeBtn);
+              }
+            }
           } else if (lRes.status === 401 || (lData && lData.error && lData.error.includes('авториз'))) {
             if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: lData ? lData.error : '' });
           } else if (window.showAppAlert) {
@@ -1260,7 +1406,57 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
         doDeleteComment();
       }
     });
+
+    viewCommentsList.addEventListener('contextmenu', function(e) {
+      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"]') : null;
+      if (!item) return;
+      e.preventDefault();
+      openCommentCtxMenu(item, e.clientX, e.clientY);
+    });
+
+    viewCommentsList.addEventListener('touchstart', function(e) {
+      if (!e.touches || e.touches.length !== 1) return;
+      if (e.target && e.target.closest && e.target.closest('a, button')) return;
+      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"]') : null;
+      if (!item) return;
+      var touch = e.touches[0];
+      commentHoldStartX = touch.clientX;
+      commentHoldStartY = touch.clientY;
+      if (commentHoldTimer) clearTimeout(commentHoldTimer);
+      commentHoldTimer = setTimeout(function() {
+        commentHoldTimer = null;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(15); } catch (ve) {}
+        }
+        openCommentCtxMenu(item, commentHoldStartX, commentHoldStartY);
+      }, 420);
+    }, { passive: true });
+
+    viewCommentsList.addEventListener('touchmove', function(e) {
+      if (!commentHoldTimer || !e.touches || !e.touches[0]) return;
+      var dx = Math.abs(e.touches[0].clientX - commentHoldStartX);
+      var dy = Math.abs(e.touches[0].clientY - commentHoldStartY);
+      if (dx > 10 || dy > 10) {
+        clearTimeout(commentHoldTimer);
+        commentHoldTimer = null;
+      }
+    }, { passive: true });
+
+    var clearProfileHold = function() {
+      if (commentHoldTimer) {
+        clearTimeout(commentHoldTimer);
+        commentHoldTimer = null;
+      }
+    };
+    viewCommentsList.addEventListener('touchend', clearProfileHold, { passive: true });
+    viewCommentsList.addEventListener('touchcancel', clearProfileHold, { passive: true });
   }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && activeCommentCtx) {
+      closeCommentCtxMenu();
+    }
+  });
 
   function hideDeleteModal() {
     if (deleteModal) deleteModal.classList.remove('visible');
