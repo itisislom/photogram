@@ -144,6 +144,8 @@ Photogram/
 ├── package.json
 ├── tsconfig.json
 ├── wrangler.toml.example
+├── LICENSE
+├── THIRD_PARTY_LICENSES.txt
 └── README.md
 ```
 
@@ -187,7 +189,7 @@ npm run deploy:pages
 
 Photogram is **Source-Available (All Rights Reserved)** — the code is publicly visible on GitHub for transparency and independent security inspection, while copying, modifying, redistributing, or hosting clones of the application, backend, UI, or Photogram branding is prohibited without written permission from the author.
 
-The standalone client E2EE module (`src/client/e2ee.ts`), which integrates `@privacyresearch/libsignal-protocol-typescript`, is licensed separately under **GNU GPL v3.0 (`GPL-3.0-only`)** ([`src/client/LICENSE-GPL-3.0.txt`](src/client/LICENSE-GPL-3.0.txt)).
+The standalone client E2EE module (`src/client/e2ee.ts` / `/e2ee.js`), which integrates `@privacyresearch/libsignal-protocol-typescript`, is licensed separately under **GNU GPL v3.0 (`GPL-3.0-only`)** ([`src/client/LICENSE-GPL-3.0.txt`](src/client/LICENSE-GPL-3.0.txt)). Third-party open-source attribution notices are listed in [`THIRD_PARTY_LICENSES.txt`](THIRD_PARTY_LICENSES.txt).
 
 See the [LICENSE](LICENSE) file for complete terms.
 

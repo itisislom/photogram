@@ -30,24 +30,50 @@ itisislom), you may NOT:
 3. CLIENT E2EE MODULE EXCEPTION (GNU GPL v3.0)
 The standalone browser E2EE client module located at `src/client/e2ee.ts`
 (and its compiled client bundle `dist/e2ee.js`) incorporates
-`@privacyresearch/libsignal-protocol-typescript`, which is licensed
-under the GNU General Public License v3.0 (`GPL-3.0-only`).
+`@privacyresearch/libsignal-protocol-typescript` and
+`@privacyresearch/curve25519-typescript`, which are licensed under the
+GNU General Public License v3.0 (`GPL-3.0-only`).
 
-Accordingly, `src/client/e2ee.ts` alone is licensed under the GNU
-General Public License v3.0 (`GPL-3.0-only`). The full text of the GNU
-General Public License v3.0 is included at `src/client/LICENSE-GPL-3.0.txt`.
-This exception applies strictly to `src/client/e2ee.ts` and does NOT
-extend to the rest of the Photogram codebase, server code, UI pages,
-styles, assets, or branding, all of which remain strictly All Rights
-Reserved under Sections 1 and 2 above.
+Accordingly, `src/client/e2ee.ts` and its compiled bundle `dist/e2ee.js`
+are licensed under the GNU General Public License v3.0 (`GPL-3.0-only`).
+The full text of the GNU General Public License v3.0 is included at
+`src/client/LICENSE-GPL-3.0.txt`. This exception applies strictly to the
+client E2EE module and does NOT extend to the Photogram server codebase
+(`src/index.ts`, API handlers, `workers/realtime`), database schemas,
+UI assets, or Photogram branding, which execute independently over
+standard HTTP/WebSocket APIs and remain strictly All Rights Reserved
+under Sections 1 and 2 above.
 
-4. THIRD-PARTY DEPENDENCIES
-Third-party packages declared in `package.json` remain subject to their
-respective licenses (`@neondatabase/serverless`: MIT;
-`qrcode-generator`: MIT; `@privacyresearch/libsignal-protocol-typescript`
-and `@privacyresearch/curve25519-typescript`: GPL-3.0-only).
+4. NO PATENT LICENSE
+Nothing in this License grants any license, right, or immunity under any
+patents, patent applications, trade secrets, or other intellectual
+property rights held by the copyright holder, whether expressly, by
+implication, estoppel, or otherwise.
 
-5. DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY
+5. THIRD-PARTY DEPENDENCIES & ATTRIBUTION
+Third-party open-source packages declared in `package.json` remain
+subject to their respective licenses. Complete third-party copyright and
+license notices are provided in `THIRD_PARTY_LICENSES.txt`.
+
+6. TERMINATION
+Any rights or permissions granted under Section 1 terminate automatically
+and immediately upon any breach of this License. Upon termination, you
+must immediately cease all unauthorized use, hosting, distribution, or
+reproduction of the Software and destroy all unauthorized copies.
+
+7. SEVERABILITY
+If any provision of this License is held to be invalid, illegal, or
+unenforceable by a court of competent jurisdiction, the remaining
+provisions shall remain in full force and effect to the maximum extent
+permitted by law.
+
+8. GOVERNING LAW
+This License is governed by and construed in accordance with the laws of
+the Republic of Uzbekistan and applicable international copyright
+treaties, including the Berne Convention for the Protection of Literary
+and Artistic Works.
+
+9. DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY
 THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.

@@ -292,6 +292,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       if (assetRes && assetRes.ok) {
         const headers = new Headers(assetRes.headers);
         headers.set('Content-Type', 'application/javascript; charset=utf-8');
+        headers.set('X-License', 'GPL-3.0-only; source="https://github.com/itisislom/photogram/blob/main/src/client/e2ee.ts"');
         headers.set('Cache-Control', url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
         return new Response(assetRes.body, { status: assetRes.status, headers });
       }
