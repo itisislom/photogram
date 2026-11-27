@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
-    "@privacyresearch/libsignal-protocol-typescript": "0.0.16"
+    "@privacyresearch/libsignal-protocol-typescript": "0.0.16",
+    "qrcode-generator": "2.0.4"
   }
 }

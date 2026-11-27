@@ -6,8 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
     display_name  TEXT    NOT NULL DEFAULT '',
     bio           TEXT    NOT NULL DEFAULT '',
     avatar_key    TEXT    NOT NULL DEFAULT '',
-    is_verified   INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    is_verified           INTEGER NOT NULL DEFAULT 0,
+    notifications_enabled INTEGER NOT NULL DEFAULT 1,
+    link_previews_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at            TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -263,21 +265,59 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 
 CREATE TABLE IF NOT EXISTS e2ee_devices (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id           INTEGER NOT NULL,
-    device_id         INTEGER NOT NULL,
-    registration_id   INTEGER NOT NULL,
-    identity_key_pub  TEXT    NOT NULL,
-    signed_prekey_id  INTEGER NOT NULL,
-    signed_prekey_pub TEXT    NOT NULL,
-    signed_prekey_sig TEXT    NOT NULL,
-    created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id                 INTEGER NOT NULL,
+    device_id               INTEGER NOT NULL,
+    registration_id         INTEGER NOT NULL,
+    identity_key_pub        TEXT    NOT NULL,
+    signed_prekey_id        INTEGER NOT NULL,
+    signed_prekey_pub       TEXT    NOT NULL,
+    signed_prekey_sig       TEXT    NOT NULL,
+    signing_key_pub         TEXT    NOT NULL DEFAULT '',
+    signing_key_binding_sig TEXT    NOT NULL DEFAULT '',
+    approval_status         TEXT    NOT NULL DEFAULT 'approved',
+    trust_origin            TEXT    NOT NULL DEFAULT 'legacy',
+    is_primary              INTEGER NOT NULL DEFAULT 0,
+    device_label            TEXT    NOT NULL DEFAULT '',
+    approved_by_device_id   INTEGER,
+    approved_at             TEXT,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE (user_id, device_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_e2ee_devices_user ON e2ee_devices(user_id, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_e2ee_devices_one_primary ON e2ee_devices(user_id) WHERE is_primary = 1;
+CREATE INDEX IF NOT EXISTS idx_e2ee_devices_user_status ON e2ee_devices(user_id, approval_status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS e2ee_device_challenges (
+    challenge_id            TEXT    PRIMARY KEY,
+    user_id                 INTEGER NOT NULL,
+    approver_device_id      INTEGER NOT NULL,
+    target_device_id        INTEGER NOT NULL,
+    target_identity_key_pub TEXT    NOT NULL,
+    target_signing_key_pub  TEXT    NOT NULL DEFAULT '',
+    nonce                   TEXT    NOT NULL,
+    expires_at              TEXT    NOT NULL,
+    used_at                 TEXT,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_challenges_user ON e2ee_device_challenges(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS e2ee_device_lists (
+    user_id           INTEGER PRIMARY KEY,
+    list_version      INTEGER NOT NULL DEFAULT 1,
+    signer_device_id  INTEGER NOT NULL,
+    device_list_json  TEXT    NOT NULL,
+    ecdsa_signature   TEXT    NOT NULL DEFAULT '',
+    signal_signature  TEXT    NOT NULL DEFAULT '',
+    is_recovery_reset INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS e2ee_prekeys (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

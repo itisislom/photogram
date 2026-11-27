@@ -1,6 +1,6 @@
 import { Env } from './types';
 import { getUserFromRequest } from './auth';
-import { consumeRateLimitAtomic } from './security';
+import { consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
 export interface LinkPreviewResult {
   url: string;
@@ -484,11 +484,54 @@ async function resolveGenericPreview(targetUrl: URL): Promise<LinkPreviewResult 
   };
 }
 
+export async function handleToggleLinkPreviews(request: Request, env: Env): Promise<Response> {
+  const user = await getUserFromRequest(env, request);
+  if (!user) {
+    return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  }
+
+  const allowed = await consumeRateLimitAtomic(env, `settings:linkprev:u:${user.id}`, 30, 60);
+  if (!allowed) {
+    return new Response(JSON.stringify({ ok: false, error: 'Too many requests' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  }
+
+  const parsed = await readJsonWithLimit<{ enabled?: unknown }>(request, 1024);
+  if (!parsed.ok) {
+    return new Response(JSON.stringify({ ok: false, error: 'Invalid request' }), {
+      status: parsed.status,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  }
+
+  const enabled = parsed.data?.enabled === true || parsed.data?.enabled === 1 || parsed.data?.enabled === '1' ? 1 : 0;
+  await env.DB.prepare('UPDATE users SET link_previews_enabled = ? WHERE id = ?')
+    .bind(enabled, user.id)
+    .run();
+
+  return new Response(JSON.stringify({ ok: true, enabled: enabled === 1 }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+  });
+}
+
 export async function handleLinkPreview(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await getUserFromRequest(env, request);
   if (!user) {
     return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
       status: 401,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    });
+  }
+
+  if (!Number(user.link_previews_enabled)) {
+    return new Response(JSON.stringify({ ok: false, error: 'Link previews disabled' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
     });
   }
@@ -532,6 +575,10 @@ export async function handleLinkPreviewImage(request: Request, env: Env, url: UR
   const user = await getUserFromRequest(env, request);
   if (!user) {
     return new Response('Unauthorized', { status: 401 });
+  }
+
+  if (!Number(user.link_previews_enabled)) {
+    return new Response('Forbidden', { status: 403 });
   }
 
   const allowed = await consumeRateLimitAtomic(env, `linkimg:u:${user.id}`, 90, 60);

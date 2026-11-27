@@ -25,7 +25,7 @@ import {
   handleToggleNotificationsSetting,
 } from './notifications';
 import { handleRealtimeWs } from './realtime';
-import { handleLinkPreview, handleLinkPreviewImage } from './linkPreview';
+import { handleLinkPreview, handleLinkPreviewImage, handleToggleLinkPreviews } from './linkPreview';
 import {
   handleGetVapidKey,
   handlePushSubscribe,
@@ -38,6 +38,12 @@ import {
   handleGetKeyBundle,
   handleGetIdentities,
   handleUnregisterE2eeDevice,
+  handleListE2eeDevices,
+  handleCreateDeviceChallenge,
+  handleApproveE2eeDevice,
+  handleRevokeE2eeDevice,
+  handleSignDeviceList,
+  handleRecoverE2eeDevice,
 } from './e2ee';
 import {
   getChatPageData,
@@ -863,6 +869,10 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return handleToggleNotificationsSetting(request, env);
     }
 
+    if (pathname === '/api/settings/link-previews' && method === 'POST') {
+      return handleToggleLinkPreviews(request, env);
+    }
+
     if (pathname === '/api/activity' && method === 'GET') {
       return handleGetActivity(request, env, url);
     }
@@ -909,6 +919,30 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
 
     if (pathname === '/api/e2ee/keys/unregister' && method === 'POST') {
       return handleUnregisterE2eeDevice(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices' && method === 'GET') {
+      return handleListE2eeDevices(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices/challenge' && method === 'POST') {
+      return handleCreateDeviceChallenge(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices/approve' && method === 'POST') {
+      return handleApproveE2eeDevice(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices/revoke' && method === 'POST') {
+      return handleRevokeE2eeDevice(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices/sign-list' && method === 'POST') {
+      return handleSignDeviceList(request, env);
+    }
+
+    if (pathname === '/api/e2ee/devices/recover' && method === 'POST') {
+      return handleRecoverE2eeDevice(request, env);
     }
 
     if (pathname === '/api/lang' && method === 'POST') {

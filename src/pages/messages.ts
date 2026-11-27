@@ -296,11 +296,14 @@ export function messagesPage(
 
     <div class="dm-e2ee-banner" id="dmE2eeBanner">
       <span id="dmE2eeBannerText"></span>
-      <button type="button" class="dm-e2ee-banner-btn" id="dmE2eeBannerBtn" style="display:none;"></button>
+      <div class="dm-e2ee-banner-actions">
+        <button type="button" class="dm-e2ee-banner-btn dm-e2ee-banner-btn-sec" id="dmE2eeBannerSecondaryBtn" style="display:none;"></button>
+        <button type="button" class="dm-e2ee-banner-btn" id="dmE2eeBannerBtn" style="display:none;"></button>
+      </div>
     </div>
 
     <div class="dm-messages-scroll" id="dmMessagesScroll">
-      <div class="dm-e2ee-pill">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></div>
+      <button type="button" class="dm-e2ee-pill dm-e2ee-pill-btn" id="dmSafetyCheckBtn">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></button>
       <button type="button" class="dm-load-older-btn" id="dmLoadOlderBtn"${hasMore ? '' : ' style="display:none;"'}>${escapeHtml(t.messages.loadOlder)}</button>
       <div class="dm-messages-list" id="dmMessagesList">
         ${msgsHtml}
@@ -370,11 +373,14 @@ export function messagesPage(
 
     <div class="dm-e2ee-banner" id="dmE2eeBanner">
       <span id="dmE2eeBannerText"></span>
-      <button type="button" class="dm-e2ee-banner-btn" id="dmE2eeBannerBtn" style="display:none;"></button>
+      <div class="dm-e2ee-banner-actions">
+        <button type="button" class="dm-e2ee-banner-btn dm-e2ee-banner-btn-sec" id="dmE2eeBannerSecondaryBtn" style="display:none;"></button>
+        <button type="button" class="dm-e2ee-banner-btn" id="dmE2eeBannerBtn" style="display:none;"></button>
+      </div>
     </div>
 
     <div class="dm-messages-scroll" id="dmMessagesScroll">
-      <div class="dm-e2ee-pill">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></div>
+      <button type="button" class="dm-e2ee-pill dm-e2ee-pill-btn" id="dmSafetyCheckBtn">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></button>
       <button type="button" class="dm-load-older-btn" id="dmLoadOlderBtn" style="display:none;">${escapeHtml(t.messages.loadOlder)}</button>
       <div class="dm-messages-list" id="dmMessagesList"></div>
       <div class="dm-seen-indicator" id="dmSeenIndicator">${escapeHtml(t.messages.seen)}</div>
@@ -547,6 +553,50 @@ export function messagesPage(
       </div>
     </div>
   </div>
+
+  <div class="modal-backdrop" id="dmSafetyModal" aria-hidden="true">
+    <div class="modal-content" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.security.safetyTitle)}</h3>
+        <button class="modal-close" id="closeDmSafetyBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div class="dm-safety-body" id="dmSafetyBody">
+        <p class="dm-safety-desc">${escapeHtml(t.security.safetyDesc)}</p>
+        <div class="dm-safety-warn" id="dmSafetyKeyWarn" style="display:none;">${escapeHtml(t.security.safetyKeyChangedWarning)}</div>
+        <div class="dm-safety-badge" id="dmSafetyStatusBadge">${escapeHtml(t.security.safetyUnverifiedBadge)}</div>
+        <div class="dm-safety-qr-wrap" id="dmSafetyQrWrap"></div>
+        <div class="dm-safety-digits" id="dmSafetyDigits"></div>
+        <video class="dm-safety-video" id="dmSafetyScanVideo" playsinline muted style="display:none;"></video>
+        <div class="dm-safety-scan-status" id="dmSafetyScanStatus"></div>
+        <div class="dm-safety-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="dmSafetyScanBtn" style="flex:1;">${escapeHtml(t.security.safetyScanQrBtn)}</button>
+          <button type="button" class="btn btn-primary btn-sm" id="dmSafetyVerifyToggleBtn" style="flex:1;">${escapeHtml(t.security.safetyMarkVerifiedBtn)}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="dmRecoverModal" aria-hidden="true">
+    <div class="modal-content" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.security.deviceRecoverTitle)}</h3>
+        <button class="modal-close" id="closeDmRecoverBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <p class="pg-recover-desc">${escapeHtml(t.security.deviceRecoverDesc)}</p>
+      <div class="pg-recover-warn" style="margin: 8px 0;">${escapeHtml(t.security.deviceRecoverWarning)}</div>
+      <div class="auth-error" id="dmRecoverError"></div>
+      <form id="dmRecoverForm" class="auth-form" autocomplete="off">
+        <div class="input-field">
+          <input type="password" id="dmRecoverPwInput" placeholder=" " required autocomplete="current-password">
+          <label for="dmRecoverPwInput">${escapeHtml(t.security.deviceRecoverPasswordLabel)}</label>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-secondary btn-sm" id="dmRecoverCancelBtn" style="flex:1;">${escapeHtml(t.common.cancel)}</button>
+          <button type="submit" class="btn btn-danger btn-sm" id="dmRecoverSubmitBtn" style="flex:1;">${escapeHtml(t.security.deviceRecoverConfirmBtn)}</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>`;
 
   const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : 0;
@@ -555,6 +605,8 @@ export function messagesPage(
   const clientState = safeJsonForScript({
     currentUserId: currentUser.id,
     currentUsername: currentUser.username,
+    linkPreviewsEnabled: Number(currentUser.link_previews_enabled) === 1,
+    secI18n: t.security,
     replyingToLabel: t.messages.replyingToLabel,
     replyArrowIcon: REPLY_ARROW_ICON,
     activeConversationId: activeConversationId || 0,
@@ -811,6 +863,29 @@ export function messagesPage(
   var e2eeBanner = document.getElementById('dmE2eeBanner');
   var e2eeBannerText = document.getElementById('dmE2eeBannerText');
   var e2eeBannerBtn = document.getElementById('dmE2eeBannerBtn');
+  var e2eeBannerSecondaryBtn = document.getElementById('dmE2eeBannerSecondaryBtn');
+  var safetyCheckBtn = document.getElementById('dmSafetyCheckBtn');
+  var safetyModal = document.getElementById('dmSafetyModal');
+  var closeSafetyBtn = document.getElementById('closeDmSafetyBtn');
+  var safetyKeyWarn = document.getElementById('dmSafetyKeyWarn');
+  var safetyStatusBadge = document.getElementById('dmSafetyStatusBadge');
+  var safetyQrWrap = document.getElementById('dmSafetyQrWrap');
+  var safetyDigits = document.getElementById('dmSafetyDigits');
+  var safetyScanVideo = document.getElementById('dmSafetyScanVideo');
+  var safetyScanStatus = document.getElementById('dmSafetyScanStatus');
+  var safetyScanBtn = document.getElementById('dmSafetyScanBtn');
+  var safetyVerifyToggleBtn = document.getElementById('dmSafetyVerifyToggleBtn');
+  var dmRecoverModal = document.getElementById('dmRecoverModal');
+  var closeDmRecoverBtn = document.getElementById('closeDmRecoverBtn');
+  var dmRecoverCancelBtn = document.getElementById('dmRecoverCancelBtn');
+  var dmRecoverForm = document.getElementById('dmRecoverForm');
+  var dmRecoverPwInput = document.getElementById('dmRecoverPwInput');
+  var dmRecoverError = document.getElementById('dmRecoverError');
+  var dmRecoverSubmitBtn = document.getElementById('dmRecoverSubmitBtn');
+  var activeSafetyInfo = null;
+  var activeScanStream = null;
+  var activeScanRaf = 0;
+  var bannerMode = '';
   var convCtxMenu = document.getElementById('dmConvCtxMenu');
   var ctxDeleteBtn = document.getElementById('dmCtxDeleteBtn');
   var deleteChatModal = document.getElementById('dmDeleteChatModal');
@@ -1162,6 +1237,7 @@ export function messagesPage(
   }
 
   async function fetchLinkPreviewClient(rawUrl) {
+    if (!state.linkPreviewsEnabled) return null;
     var clean = sanitizeClientHttpUrl(rawUrl);
     if (!clean) return null;
     if (Object.prototype.hasOwnProperty.call(linkPreviewCache, clean)) {
@@ -1589,8 +1665,9 @@ export function messagesPage(
     } catch (e2) {}
   }
 
-  function showBanner(msg, isWarn, btnLabel) {
+  function showBanner(msg, isWarn, btnLabel, secBtnLabel, mode) {
     if (!e2eeBanner || !e2eeBannerText) return;
+    bannerMode = mode || '';
     e2eeBannerText.textContent = msg;
     if (isWarn) e2eeBanner.classList.add('is-warn');
     else e2eeBanner.classList.remove('is-warn');
@@ -1602,6 +1679,14 @@ export function messagesPage(
         e2eeBannerBtn.style.display = 'none';
       }
     }
+    if (e2eeBannerSecondaryBtn) {
+      if (secBtnLabel) {
+        e2eeBannerSecondaryBtn.textContent = secBtnLabel;
+        e2eeBannerSecondaryBtn.style.display = 'inline-flex';
+      } else {
+        e2eeBannerSecondaryBtn.style.display = 'none';
+      }
+    }
     e2eeBanner.classList.add('visible');
   }
 
@@ -1609,7 +1694,32 @@ export function messagesPage(
     if (!e2eeBanner) return;
     e2eeBanner.classList.remove('visible');
     if (e2eeBannerBtn) e2eeBannerBtn.style.display = 'none';
+    if (e2eeBannerSecondaryBtn) e2eeBannerSecondaryBtn.style.display = 'none';
     pendingKeyChange = null;
+    bannerMode = '';
+  }
+
+  function showKeyChangedBanner(kc) {
+    pendingKeyChange = kc;
+    var secLabel = (state.secI18n && state.secI18n.safetyVerifyBtn) ? state.secI18n.safetyVerifyBtn : '';
+    showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey, secLabel, 'key_changed');
+  }
+
+  function showPendingDeviceBanner(code) {
+    if (!state.secI18n) return;
+    var msg = state.secI18n.devicePendingBanner + (code ? (' (' + state.secI18n.devicePendingCodePrefix + ': ' + code + ')') : '');
+    showBanner(msg, true, state.secI18n.deviceLostOldBtn, '', 'device_pending');
+  }
+
+  async function syncSafetyPillStatus() {
+    if (!safetyCheckBtn || !state.activePartnerId) return;
+    try {
+      var c = e2eeClient;
+      if (!c || typeof c.getPartnerVerificationStatus !== 'function') return;
+      var verified = await c.getPartnerVerificationStatus(Number(state.activePartnerId));
+      if (verified) safetyCheckBtn.classList.add('is-verified');
+      else safetyCheckBtn.classList.remove('is-verified');
+    } catch (e) {}
   }
 
   function clearPendingFile() {
@@ -1669,6 +1779,15 @@ export function messagesPage(
     var c = mod.getClient(Number(state.currentUserId));
     await c.ensureInitialized();
     e2eeClient = c;
+    try {
+      if (typeof c.getDeviceStatus === 'function') {
+        var st = await c.getDeviceStatus();
+        if (st && st.approvalStatus === 'pending') {
+          showPendingDeviceBanner(st.verificationCode || '');
+        }
+      }
+    } catch (e) {}
+    syncSafetyPillStatus();
     return c;
   }
 
@@ -1962,6 +2081,7 @@ export function messagesPage(
   }
 
   function buildLinkPreviewCardEl(preview) {
+    if (!state.linkPreviewsEnabled) return null;
     if (!preview || typeof preview !== 'object') return null;
     var cleanUrl = sanitizeClientHttpUrl(preview.url);
     if (!cleanUrl) return null;
@@ -2542,21 +2662,277 @@ export function messagesPage(
           }
         } else {
           if (res && res.reason === 'KEY_CHANGED' && res.userId && res.deviceId) {
-            pendingKeyChange = {
+            showKeyChangedBanner({
               userId: res.userId,
               deviceId: res.deviceId,
               identityKey: res.identityKey || '',
               retryAction: 'decrypt'
-            };
-            showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+            });
           }
           var slot = bubble.querySelector('[data-enc-slot="1"]');
-          if (slot) slot.textContent = state.e2eeDecryptFailed;
+          if (slot) {
+            slot.textContent = (res && res.reason === 'SESSION_RECOVERED_PRE_RESET' && state.secI18n)
+              ? state.secI18n.e2eeSessionRecoveredNote
+              : state.e2eeDecryptFailed;
+          }
         }
       }
       await hydrateSidebarEncryptedPreviews();
       if (scrollEl) scrollToBottom();
     } catch (e) {}
+  }
+
+  function stopSafetyQrScanner() {
+    if (activeScanRaf) {
+      try { cancelAnimationFrame(activeScanRaf); } catch (e) {}
+      activeScanRaf = 0;
+    }
+    if (activeScanStream) {
+      try {
+        activeScanStream.getTracks().forEach(function(tr) { tr.stop(); });
+      } catch (e) {}
+      activeScanStream = null;
+    }
+    if (safetyScanVideo) {
+      try { safetyScanVideo.srcObject = null; } catch (e) {}
+      safetyScanVideo.style.display = 'none';
+    }
+  }
+
+  function renderQrSvgModules(container, modules, size) {
+    if (!container) return;
+    while (container.firstChild) container.removeChild(container.firstChild);
+    if (!Array.isArray(modules) || !size) return;
+    var ns = 'http://www.w3.org/2000/svg';
+    var quiet = 2;
+    var total = size + quiet * 2;
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + total + ' ' + total);
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    var bg = document.createElementNS(ns, 'rect');
+    bg.setAttribute('x', '0');
+    bg.setAttribute('y', '0');
+    bg.setAttribute('width', String(total));
+    bg.setAttribute('height', String(total));
+    bg.setAttribute('fill', '#ffffff');
+    svg.appendChild(bg);
+    for (var r = 0; r < size; r++) {
+      var row = modules[r];
+      if (!row) continue;
+      for (var c = 0; c < size; c++) {
+        if (row[c]) {
+          var rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('x', String(c + quiet));
+          rect.setAttribute('y', String(r + quiet));
+          rect.setAttribute('width', '1');
+          rect.setAttribute('height', '1');
+          rect.setAttribute('fill', '#111111');
+          svg.appendChild(rect);
+        }
+      }
+    }
+    container.appendChild(svg);
+  }
+
+  function updateSafetyModalBadges(verified) {
+    if (safetyStatusBadge && state.secI18n) {
+      safetyStatusBadge.textContent = verified ? state.secI18n.safetyVerifiedBadge : state.secI18n.safetyUnverifiedBadge;
+      if (verified) safetyStatusBadge.classList.add('is-verified');
+      else safetyStatusBadge.classList.remove('is-verified');
+    }
+    if (safetyVerifyToggleBtn && state.secI18n) {
+      safetyVerifyToggleBtn.textContent = verified ? state.secI18n.safetyUnmarkVerifiedBtn : state.secI18n.safetyMarkVerifiedBtn;
+    }
+    if (safetyCheckBtn) {
+      if (verified) safetyCheckBtn.classList.add('is-verified');
+      else safetyCheckBtn.classList.remove('is-verified');
+    }
+  }
+
+  function closeSafetyModal() {
+    stopSafetyQrScanner();
+    if (safetyModal) {
+      safetyModal.classList.remove('visible');
+      safetyModal.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  async function openSafetyModal() {
+    if (!safetyModal || !state.activePartnerId) return;
+    stopSafetyQrScanner();
+    if (safetyScanStatus) {
+      safetyScanStatus.textContent = (state.secI18n && state.secI18n.safetyCompareHint) || '';
+      safetyScanStatus.className = 'dm-safety-scan-status';
+    }
+    if (safetyDigits) safetyDigits.textContent = '...';
+    if (safetyQrWrap) while (safetyQrWrap.firstChild) safetyQrWrap.removeChild(safetyQrWrap.firstChild);
+    safetyModal.classList.add('visible');
+    safetyModal.setAttribute('aria-hidden', 'false');
+    try {
+      var c = e2eeClient || await ensureE2eeReady();
+      if (!c || typeof c.getSafetyNumberAndQr !== 'function') return;
+      var info = await c.getSafetyNumberAndQr(Number(state.activePartnerId));
+      activeSafetyInfo = info;
+      if (safetyKeyWarn) {
+        safetyKeyWarn.style.display = info.keyChanged ? 'block' : 'none';
+      }
+      renderQrSvgModules(safetyQrWrap, info.qrModules, info.qrSize);
+      if (safetyDigits) {
+        while (safetyDigits.firstChild) safetyDigits.removeChild(safetyDigits.firstChild);
+        var grps = Array.isArray(info.groups) ? info.groups : [];
+        for (var gi = 0; gi < grps.length; gi++) {
+          var sp = document.createElement('span');
+          sp.textContent = grps[gi];
+          safetyDigits.appendChild(sp);
+        }
+      }
+      updateSafetyModalBadges(Boolean(info.verified));
+    } catch (e) {
+      if (safetyDigits) safetyDigits.textContent = state.e2eePartnerNotReady || state.networkError;
+    }
+  }
+
+  function openDmRecoverModal() {
+    if (!dmRecoverModal) return;
+    if (dmRecoverError) {
+      dmRecoverError.textContent = '';
+      dmRecoverError.classList.remove('visible');
+    }
+    if (dmRecoverForm) dmRecoverForm.reset();
+    dmRecoverModal.classList.add('visible');
+    dmRecoverModal.setAttribute('aria-hidden', 'false');
+    if (dmRecoverPwInput) dmRecoverPwInput.focus();
+  }
+
+  function closeDmRecoverModal() {
+    if (!dmRecoverModal) return;
+    dmRecoverModal.classList.remove('visible');
+    dmRecoverModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (safetyCheckBtn) {
+    safetyCheckBtn.addEventListener('click', function() {
+      openSafetyModal();
+    });
+  }
+  if (closeSafetyBtn) closeSafetyBtn.addEventListener('click', closeSafetyModal);
+  if (safetyModal) {
+    safetyModal.addEventListener('click', function(e) {
+      if (e.target === safetyModal) closeSafetyModal();
+    });
+  }
+  if (safetyVerifyToggleBtn) {
+    safetyVerifyToggleBtn.addEventListener('click', async function() {
+      if (!activeSafetyInfo || !state.activePartnerId) return;
+      try {
+        var c = e2eeClient || await ensureE2eeReady();
+        if (!c || typeof c.markPartnerVerified !== 'function') return;
+        var nextVer = !activeSafetyInfo.verified;
+        await c.markPartnerVerified(Number(state.activePartnerId), activeSafetyInfo.fingerprint60, nextVer);
+        activeSafetyInfo.verified = nextVer;
+        updateSafetyModalBadges(nextVer);
+      } catch (e) {}
+    });
+  }
+  if (safetyScanBtn) {
+    safetyScanBtn.addEventListener('click', async function() {
+      if (!activeSafetyInfo) return;
+      if (activeScanStream) {
+        stopSafetyQrScanner();
+        return;
+      }
+      var hasDetector = typeof window.BarcodeDetector === 'function';
+      var hasMedia = Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function');
+      if (!hasDetector || !hasMedia) {
+        if (safetyScanStatus && state.secI18n) {
+          safetyScanStatus.textContent = state.secI18n.safetyScanUnsupported;
+          safetyScanStatus.className = 'dm-safety-scan-status';
+        }
+        return;
+      }
+      try {
+        var stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        activeScanStream = stream;
+        if (safetyScanVideo) {
+          safetyScanVideo.srcObject = stream;
+          safetyScanVideo.style.display = 'block';
+          await safetyScanVideo.play();
+        }
+        var detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+        var scanLoop = async function() {
+          if (!activeScanStream || !safetyScanVideo) return;
+          try {
+            var codes = await detector.detect(safetyScanVideo);
+            if (codes && codes.length > 0 && codes[0].rawValue) {
+              var scanned = String(codes[0].rawValue).trim();
+              stopSafetyQrScanner();
+              if (scanned === activeSafetyInfo.qrPayload) {
+                var c = e2eeClient || await ensureE2eeReady();
+                if (c && typeof c.markPartnerVerified === 'function') {
+                  await c.markPartnerVerified(Number(state.activePartnerId), activeSafetyInfo.fingerprint60, true);
+                }
+                activeSafetyInfo.verified = true;
+                updateSafetyModalBadges(true);
+                if (safetyScanStatus && state.secI18n) {
+                  safetyScanStatus.textContent = state.secI18n.safetyScanMatch;
+                  safetyScanStatus.className = 'dm-safety-scan-status is-ok';
+                }
+              } else if (safetyScanStatus && state.secI18n) {
+                safetyScanStatus.textContent = state.secI18n.safetyScanMismatch;
+                safetyScanStatus.className = 'dm-safety-scan-status is-err';
+              }
+              return;
+            }
+          } catch (e) {}
+          activeScanRaf = requestAnimationFrame(scanLoop);
+        };
+        activeScanRaf = requestAnimationFrame(scanLoop);
+      } catch (err) {
+        stopSafetyQrScanner();
+        if (safetyScanStatus && state.secI18n) {
+          safetyScanStatus.textContent = state.secI18n.safetyScanUnsupported;
+          safetyScanStatus.className = 'dm-safety-scan-status';
+        }
+      }
+    });
+  }
+
+  if (closeDmRecoverBtn) closeDmRecoverBtn.addEventListener('click', closeDmRecoverModal);
+  if (dmRecoverCancelBtn) dmRecoverCancelBtn.addEventListener('click', closeDmRecoverModal);
+  if (dmRecoverModal) {
+    dmRecoverModal.addEventListener('click', function(e) {
+      if (e.target === dmRecoverModal) closeDmRecoverModal();
+    });
+  }
+  if (dmRecoverForm) {
+    dmRecoverForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      if (!dmRecoverPwInput || !dmRecoverSubmitBtn) return;
+      var pw = dmRecoverPwInput.value || '';
+      if (!pw) return;
+      if (dmRecoverError) {
+        dmRecoverError.textContent = '';
+        dmRecoverError.classList.remove('visible');
+      }
+      dmRecoverSubmitBtn.disabled = true;
+      try {
+        var c = e2eeClient || await ensureE2eeReady();
+        if (!c || typeof c.recoverLostDevice !== 'function') throw new Error(state.networkError);
+        await c.recoverLostDevice(pw);
+        closeDmRecoverModal();
+        hideBanner();
+        if (window.showAppToast && state.secI18n) {
+          window.showAppToast(state.secI18n.deviceRecoverSuccess);
+        }
+      } catch (err) {
+        if (dmRecoverError) {
+          dmRecoverError.textContent = (err && err.message) || state.networkError;
+          dmRecoverError.classList.add('visible');
+        }
+      } finally {
+        dmRecoverSubmitBtn.disabled = false;
+      }
+    });
   }
 
   syncRenderedMsgClocks();
@@ -2567,8 +2943,20 @@ export function messagesPage(
   }
   hydrateInitialMessages();
 
+  if (e2eeBannerSecondaryBtn) {
+    e2eeBannerSecondaryBtn.addEventListener('click', function() {
+      if (bannerMode === 'key_changed') {
+        openSafetyModal();
+      }
+    });
+  }
+
   if (e2eeBannerBtn) {
     e2eeBannerBtn.addEventListener('click', async function() {
+      if (bannerMode === 'device_pending') {
+        openDmRecoverModal();
+        return;
+      }
       if (!pendingKeyChange || e2eeBannerBtn.disabled) return;
       var kc = pendingKeyChange;
       e2eeBannerBtn.disabled = true;
@@ -2582,7 +2970,7 @@ export function messagesPage(
           ? kc.devices
           : [{ userId: kc.userId, deviceId: kc.deviceId, identityKey: kc.identityKey || '' }];
         if (typeof c.acceptKeyChanges === 'function') {
-          await c.acceptKeyChanges(items);
+          await c.acceptKeyChanges(items, kc.userId || state.activePartnerId, kc.nextListVersion || 0);
         } else {
           for (var ki = 0; ki < items.length; ki++) {
             await c.acceptKeyChange(items[ki].userId, items[ki].deviceId, items[ki].identityKey || '');
@@ -2590,6 +2978,7 @@ export function messagesPage(
         }
         var retryAction = kc.retryAction || '';
         hideBanner();
+        syncSafetyPillStatus();
         if (retryAction === 'send' && typeof submitDmMessage === 'function') {
           submitDmMessage();
         } else if (retryAction === 'decrypt') {
@@ -2847,15 +3236,19 @@ export function messagesPage(
               if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
               return;
             }
+            if (encEditErr && encEditErr.code === 'DEVICE_PENDING') {
+              showPendingDeviceBanner(encEditErr.verificationCode || '');
+              return;
+            }
             if (encEditErr && encEditErr.code === 'KEY_CHANGED') {
-              pendingKeyChange = {
+              showKeyChangedBanner({
                 userId: encEditErr.userId,
                 deviceId: encEditErr.deviceId,
                 identityKey: encEditErr.identityKey,
-                devices: encEditErr.devices,
+                devices: encEditErr.changes || encEditErr.devices,
+                nextListVersion: encEditErr.nextListVersion || 0,
                 retryAction: 'send'
-              };
-              showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              });
               return;
             }
             if (encEditErr && encEditErr.code === 'INVALID_IMAGE') {
@@ -2984,15 +3377,19 @@ export function messagesPage(
             if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
             return;
           }
+          if (encErr && encErr.code === 'DEVICE_PENDING') {
+            showPendingDeviceBanner(encErr.verificationCode || '');
+            return;
+          }
           if (encErr && encErr.code === 'KEY_CHANGED') {
-            pendingKeyChange = {
+            showKeyChangedBanner({
               userId: encErr.userId,
               deviceId: encErr.deviceId,
               identityKey: encErr.identityKey,
-              devices: encErr.devices,
+              devices: encErr.changes || encErr.devices,
+              nextListVersion: encErr.nextListVersion || 0,
               retryAction: 'send'
-            };
-            showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+            });
             return;
           }
           if (encErr && encErr.code === 'INVALID_IMAGE') {
@@ -3362,14 +3759,18 @@ export function messagesPage(
           if (window.showAppToast) window.showAppToast(state.e2eePartnerNotReady);
           return;
         }
+        if (encErr && encErr.code === 'DEVICE_PENDING') {
+          showPendingDeviceBanner(encErr.verificationCode || '');
+          return;
+        }
         if (encErr && encErr.code === 'KEY_CHANGED') {
-          pendingKeyChange = {
+          showKeyChangedBanner({
             userId: encErr.userId,
             deviceId: encErr.deviceId,
             identityKey: encErr.identityKey,
-            devices: encErr.devices
-          };
-          showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+            devices: encErr.changes || encErr.devices,
+            nextListVersion: encErr.nextListVersion || 0
+          });
           return;
         }
         if (encErr && encErr.code === 'VOICE_TOO_LARGE') {
@@ -5451,6 +5852,35 @@ export function messagesPage(
       return;
     }
 
+    if (ev.type === 'e2ee.device_approved') {
+      if (e2eeClient && typeof e2eeClient.refreshDeviceStatus === 'function') {
+        try {
+          var stAppr = await e2eeClient.refreshDeviceStatus();
+          if (stAppr && stAppr.approvalStatus === 'approved' && bannerMode === 'device_pending') {
+            hideBanner();
+            if (window.showAppToast && state.secI18n) {
+              window.showAppToast(state.secI18n.deviceApproveSuccess);
+            }
+          }
+        } catch (e) {}
+      }
+      return;
+    }
+
+    if (ev.type === 'e2ee.devices_reset') {
+      if (window.showAppToast && state.secI18n) {
+        window.showAppToast(state.secI18n.deviceResetRemoteNotice);
+      }
+      return;
+    }
+
+    if (ev.type === 'e2ee.device_revoked' || ev.type === 'e2ee.device_pending') {
+      if (e2eeClient && typeof e2eeClient.refreshDeviceStatus === 'function') {
+        try { await e2eeClient.refreshDeviceStatus(); } catch (e) {}
+      }
+      return;
+    }
+
     if (ev.type === 'typing.start') {
       if (Number(ev.conversation_id) === Number(state.activeConversationId) && Number(ev.user_id) !== Number(state.currentUserId)) {
         showPartnerTyping();
@@ -6098,6 +6528,7 @@ export function messagesPage(
   };
 
   extraCleanups.push(function() {
+    stopSafetyQrScanner();
     threadFragCache = {};
     window.__pgHandleDmPopstate = null;
     if (dmSwitchAbort) {

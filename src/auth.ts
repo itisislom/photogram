@@ -111,7 +111,7 @@ async function hashPassword(password: string): Promise<string> {
   return `${PBKDF2_ITERATIONS}:${hex(salt)}:${hex(hash)}`;
 }
 
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split(':');
   const iterations = parseInt(parts[0], 10);
   const salt = unhex(parts[1]);
@@ -310,7 +310,7 @@ export async function getUserFromRequest(env: Env, request: Request): Promise<Us
 
   if (env.DATABASE_URL) {
     const row = await env.DB.prepare(
-      `SELECT s.expires_at, u.id, u.username, u.email, u.display_name, u.bio, u.avatar_key, u.is_verified, u.notifications_enabled, u.created_at
+      `SELECT s.expires_at, u.id, u.username, u.email, u.display_name, u.bio, u.avatar_key, u.is_verified, u.notifications_enabled, u.link_previews_enabled, u.created_at
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ?`,
@@ -342,7 +342,7 @@ export async function getUserFromRequest(env: Env, request: Request): Promise<Us
 
   return (
     (await env.DB.prepare(
-      'SELECT id, username, email, display_name, bio, avatar_key, is_verified, notifications_enabled, created_at FROM users WHERE id = ?',
+      'SELECT id, username, email, display_name, bio, avatar_key, is_verified, notifications_enabled, link_previews_enabled, created_at FROM users WHERE id = ?',
     )
       .bind(session.user_id)
       .first<User>()) ?? null

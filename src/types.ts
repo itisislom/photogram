@@ -21,6 +21,7 @@ export interface User {
   avatar_key: string;
   is_verified?: number | boolean;
   notifications_enabled?: number | boolean;
+  link_previews_enabled?: number | boolean;
   created_at: string;
 }
 

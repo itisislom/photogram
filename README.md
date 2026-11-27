@@ -1,90 +1,90 @@
 # Photogram
 
-> A high-performance, edge-native, zero-framework social network and Progressive Web Application (PWA). Engineered from the ground up with pure TypeScript, Cloudflare Edge primitives, and an Instagram-grade personalized recommendation engine.
+> A high-performance, edge-native, zero-framework social platform, real-time end-to-end encrypted messenger, and Progressive Web Application (PWA). Engineered with pure TypeScript, Cloudflare Pages & Workers, Durable Objects WebSocket Hibernation, Neon PostgreSQL, and Cloudflare R2.
 
 ---
 
 ## Executive Summary
 
-**Photogram** is a full-stack, production-ready social media platform designed for ultra-low latency media sharing, discovery, and engagement. Unlike conventional single-page applications bogged down by massive client-side bundles, Photogram operates on a **zero-heavy-framework** philosophy:
+**Photogram** is a full-stack social network and E2EE messenger built without heavy frontend frameworks:
 
-- **Server-rendered edge HTML** combined with targeted, lightweight client micro-controllers.
-- Sub-millisecond Time to First Byte (TTFB) executed inside Cloudflare V8 isolates.
-- Globally distributed data persistence using **Cloudflare D1** (Serverless SQLite) and **Cloudflare R2** (Zero-egress Object Storage).
-- A bespoke, end-to-end recommendation and telemetry pipeline replicating the exact behavioral mechanics of modern social media giants.
-
----
-
-## Key Highlights & Architecture
-
-### 1. Instagram-Grade Personal Recommendation Engine
-Photogram incorporates an end-to-end personalization pipeline (`src/recommendations.ts`) that runs across Feed, Explore, Post View, and Profile surfaces:
-- **Dual-Factor Affinity Graph**: Tracks two distinct affinity dimensions:
-  - **User-to-Author Affinity (`user_affinity`)**: Measures how closely two users interact (likes, comments, profile visits, follows, dwell time).
-  - **User-to-Tag Affinity (`user_tag_affinity`)**: Tracks topic interests parsed dynamically from post captions.
-- **Multilingual NLP Tokenizer**: Custom regex engine (`/[#]?([a-zа-яё0-9_]{4,30})/gi`) supporting both Latin and Cyrillic character sets, with comprehensive stop-word filtering across Russian and English.
-- **Time-Decay & Freshness Dampening**: Scores content via an exponential decay algorithm:
-  $$\text{Score} = \frac{(\text{Likes} \times 3 + \text{Comments} \times 5) + (\text{AuthorAffinity} \times 2.5) + (\text{TagAffinity} \times 1.8)}{(\text{AgeHours} + 2.0)^2}$$
-- **Real-Time Client-Side Telemetry Engine**:
-  - `IntersectionObserver` observing media elements at a 65% visibility threshold.
-  - Granular dwell tracking: distinct impression triggers at 600ms and deep engagement signals at 2,500ms.
-  - Session deduplication (`seenInSession`) ensuring a single impression record per post per session.
-  - Batching queue dispatched via `navigator.sendBeacon` or `fetch` with `env.DB.batch()` on the edge (limited to 50 events per batch).
-- **Cold-Start & "Always Live Feed" Resilience**:
-  - Unauthenticated fallback to global popularity and chronological freshness.
-  - Seen penalties (0.25 for feed, 0.08 for explore) dampening previously viewed content while guaranteeing an active, non-empty viewport at all times.
-- **Intelligent Feed Segmentation**:
-  - **Followed Posts** ordered by affinity and recency.
-  - **"You're All Caught Up"** completion banner with animated status indicators.
-  - **"Who to Follow"** carousel based on mutual connections and top network creators.
-  - **"Suggested For You"** algorithmic discoveries matching tag affinity.
-- **Discovery & Content Controls**:
-  - Interactive Explore tag pills bar (`For You`, `Popular`, `Recent`, plus dynamic trending hashtags).
-  - Explicit feedback: "Not Interested" (`POST /api/posts/hide`) with immediate negative affinity penalties.
-  - Contextual discovery: "Similar Accounts" carousel and "Related Posts" 2x3 discovery grids.
+- **Server-rendered edge HTML** paired with lightweight DOM micro-controllers and SPA-style in-place navigation.
+- **Global edge execution** on **Cloudflare Pages Functions / Workers** with a dedicated **Cloudflare Durable Objects (`UserHub`)** WebSocket Hibernation realtime worker (`workers/realtime`).
+- **Serverless relational persistence** on **Neon PostgreSQL** (`@neondatabase/serverless`, with local SQLite/D1 schema parity) and zero-egress media storage on **Cloudflare R2**.
+- **Seamless End-to-End Encrypted (E2EE) Messenger** built on the Signal Protocol (`@privacyresearch/libsignal-protocol-typescript`), strict Trust On First Use (TOFU), cryptographic multi-device approval, versioned signed device lists, official 60-digit Safety Numbers with QR verification, and AES-256-GCM encrypted photos and voice messages.
+- **Personalized recommendation & telemetry pipeline** across Feed, Explore, Profile, and Pics Mode.
 
 ---
 
-### 2. Edge-Native Compute & Zero-Framework Velocity
-- **No Heavy Client Runtimes**: Zero React, Vue, or Angular overhead. The entire client payload consists of optimized, native DOM micro-controllers and vanilla CSS tokens.
-- **V8 Isolate Execution**: Dynamic routes are rendered at the nearest Cloudflare edge location across 300+ cities globally.
-- **Distributed SQLite (Cloudflare D1)**: Multi-region read replicas with strict ACID transactions and query-level indexing.
-- **Direct Edge Media Storage (Cloudflare R2)**: Zero-egress-fee storage with streaming byte-range delivery and client-side pre-processing.
+## Architecture Overview
+
+```text
+                       [ Browser / Mobile PWA ]
+                        ├── Pages HTML + SPA nav + Service Worker (public/sw.js)
+                        ├── Signal E2EE Client (dist/e2ee.js)
+                        │     ├── IndexedDB (per-account isolated: pg_signal_e2ee_u_<id>)
+                        │     ├── Web Locks API mutex + BroadcastChannel UI/cache sync
+                        │     └── AES-256-GCM media & voice encryption + Safety Number / QR
+                        │
+        HTTPS / API ────┴────────────────────────────────────── WSS /api/realtime/ws
+             │                                                           │
+             ▼                                                           ▼
+  [ Cloudflare Pages Worker ]  ──── service binding ────▶  [ Realtime Worker (Durable Objects) ]
+   (src/index.ts -> _worker.js)                             (workers/realtime/src/index.ts)
+     ├── Auth (PBKDF2-SHA256, HttpOnly sessions, multi-account)    └── UserHub (WebSocket Hibernation)
+     ├── Posts, Comments (replies/pins/likes), Likes, Follows            ├── Live messages & edits
+     ├── Recommendations & Telemetry batching                            ├── Typing & read receipts
+     ├── E2EE Key Directory, Signed Device Lists & Challenges            ├── Reactions & voice listened
+     ├── Opt-in Link Previews (SSRF-hardened proxy)                      └── Device approval / reset events
+     └── Web Push (VAPID)
+             │                                   │
+             ▼                                   ▼
+   [ Neon PostgreSQL ]                    [ Cloudflare R2 ]
+    (@neondatabase/serverless)             (Posts, Avatars, E2EE Media & Voice)
+```
 
 ---
 
-### 3. Pics Mode (Vertical Immersive Media Viewer)
-- Fullscreen, Reels/TikTok-inspired vertical media viewer with smooth touch and keyboard navigation.
-- Floating bottom meta panel displaying author details, relative time offsets, and exact publication timestamps.
-- Global persistent controls ensuring fixed navigation and instant exit state preservation.
+## Key Features & Subsystems
 
----
+### 1. Seamless End-to-End Encrypted Messenger
+- **Signal Protocol (`src/client/e2ee.ts`, `src/e2ee.ts`)**: X3DH + Double Ratchet encryption for text, photos, voice notes, replies, message edits, and shared posts. Private keys and plaintext never leave the client device.
+- **Strict TOFU & Account Isolation**: `isTrustedIdentity` enforces Trust On First Use without silent key overwrites; per-account IndexedDB databases (`pg_signal_e2ee_u_<userId>`) isolate keys across saved accounts.
+- **Cryptographic Multi-Device Approval & Signed Device Lists**:
+  - Atomic primary first-device registration enforced by partial unique index (`idx_e2ee_devices_one_primary`).
+  - Adding a new device requires proof-of-possession via an ECDSA P-256 signature over a single-use server challenge (`nonce`, 5-minute TTL, atomic `used_at` replay protection) from an already-trusted device.
+  - Monotonically versioned device lists (`e2ee_device_lists`) are dual-signed (ECDSA P-256 verified on the edge worker + Signal Curve25519 XEdDSA verified directly on peer clients against TOFU-pinned keys) to prevent ghost-device injection and version rollback.
+  - Existing legacy devices are preserved as `trust_origin = 'legacy'` without silently wiping keys or falsely marking them code-verified.
+- **Safe Session Recovery & PreKey Auto-Refill**: PreKeys replenish automatically on startup and after `PreKeyWhisperMessage` decryption. A single `Bad MAC` or duplicate delivery never destroys working Double Ratchet keys; X3DH rebuild triggers only after repeated distinct failures from an unchanged trusted identity key.
+- **Lost-Device Recovery**: Requires password re-authentication (`verifyPassword`), revokes all other devices, PreKeys, auth sessions, and WebSocket connections, notifies active sessions, and exposes the key change to contacts (`KEY_CHANGED`).
+- **Optional Safety Number & QR Verification**: Uses `FingerprintGenerator(5200)` for official 60-digit Signal Safety Numbers and `qrcode-generator` for SVG QR rendering (DOM `createElementNS`, no `innerHTML`) with optional `BarcodeDetector` camera scanning.
+- **Cross-Tab Mutual Exclusion**: Uses Web Locks API (`navigator.locks`) with a fallback lease lock for crypto operations; `BroadcastChannel` is used strictly for cross-tab cache and UI synchronization.
+- **Opt-In Link Previews**: Disabled by default for new users (`users.link_previews_enabled = 0`) with explicit Settings disclosure that enabled previews send URLs to the Photogram server. When disabled, neither outgoing URL lookups nor incoming preview image fetches are made (enforced with HTTP `403` on the server).
+- **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); typing indicators; YouTube embed modal with clickable timecodes.
 
-### 4. Progressive Web App (PWA) & Offline Resiliency
-- Web App Manifest v2 compliant (`public/manifest.webmanifest`) with standalone display mode, orientation locking, and brand icons.
-- Service Worker (`public/sw.js`) utilizing a hybrid caching strategy:
-  - **Cache-First** for static assets, brand icons, and CSS tokens.
-  - **Network-First with Graceful Fallback** for authenticated social feeds and profiles.
+### 2. Real-Time Messaging via Durable Objects WebSocket Hibernation
+- Dedicated worker (`workers/realtime`) hosting per-user `UserHub` Durable Objects using the Cloudflare WebSocket Hibernation API.
+- CSWSH protection (`Origin` + `Sec-Fetch-Site`), per-user/per-IP connection rate limits, instant delivery of messages, edits, deletions, reactions, typing, read/listened receipts, and E2EE device events, with automatic fallback polling if WebSockets disconnect.
 
----
+### 3. Personalized Recommendation Engine
+- Dual-factor affinity graph (`user_affinity` + `user_tag_affinity`) with multilingual Latin/Cyrillic tokenization (`src/recommendations.ts`).
+- Time-decay scoring across Feed, Explore, Related Posts, Similar Accounts, and Who to Follow, backed by batched client `IntersectionObserver` telemetry (`POST /api/telemetry`).
 
-### 5. Multi-Language Internationalization (i18n)
-- Native support for 4 localized languages:
-  - Russian (`ru`)
-  - English (`en`)
-  - Uzbek (`uz`)
-  - Kazakh (`kz`)
-- Persistent selection synced across HttpOnly cookies and client storage with instant UI re-rendering.
+### 4. Social Feed, Profiles, Comments & Media
+- Mobile-first Instagram-grade UI in Light and Dark themes.
+- Double-tap heart reaction on posts, mobile two-finger pinch-to-zoom with snap-back animation, and fullscreen vertical Pics Mode.
+- Threaded comments with replies, author likes, pinning, and unified context-menu actions (long-press on mobile / right-click on desktop).
+- Client-side image compression/cropping to WebP with full + thumbnail variants stored in R2.
+- Multi-account switcher (`/accountlist`), Activity center (`/activity`), and Web Push notifications (VAPID, `src/push.ts`).
 
----
+### 5. Progressive Web App (PWA) & 4-Language i18n
+- Installable PWA (`public/manifest.webmanifest`, `public/sw.js`) with offline fallback (`/offline`) and versioned cache invalidation.
+- Full localization across **Russian (`ru`)**, **English (`en`)**, **Uzbek (`uz`)**, and **Kazakh (`kz`)**.
 
-### 6. Security & Edge Isolation Standards
-- **Zero Raw Passwords**: Salted hashing via Web Crypto API (`crypto.subtle.digest('SHA-256')` with unique per-user salts).
-- **Hardened Session Management**: HttpOnly, SameSite=Lax, Secure session cookies with cryptographic entropy.
-- **SQL Injection Immune**: 100% prepared parameterized bindings (`stmt.bind(...)`) across all D1 database operations.
-- **XSS & Output Sanitization**: Strict HTML entity escaping for user captions, comments, and usernames.
-- **IDOR Protection**: Author verification enforced on all mutation and deletion operations.
-- **Secret Isolation**: Zero sensitive tokens, database IDs, or private credentials committed to version control.
+### 6. Security Controls
+- **Passwords & Sessions**: PBKDF2-SHA256 salted password hashes with timing-safe verification; `HttpOnly`, `Secure`, `SameSite=Lax` session cookies; session revocation on password change and lost-device recovery.
+- **Request & Media Hardening**: Atomic rate limiting (`auth_rate_limits`), CSRF checks (`Origin` / `Sec-Fetch-Site`), strict allowlisted R2 `/media/*` access control with DM attachment membership verification, SSRF-hardened Link Preview proxy with raster magic-byte verification, and security headers (`HSTS`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `CSP`).
+- **Known Security Trade-offs**: Active CSP currently retains `script-src 'self' 'unsafe-inline'` for server-rendered page scripts; Key Transparency is not implemented (first-contact verification relies on TOFU + optional Safety Number/QR comparison); encrypted cloud chat backup is not yet implemented.
 
 ---
 
@@ -92,14 +92,13 @@ Photogram incorporates an end-to-end personalization pipeline (`src/recommendati
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| **Edge Runtime** | [Cloudflare Pages](https://pages.cloudflare.com/) / [Workers](https://workers.cloudflare.com/) | Global serverless execution on V8 isolates |
-| **Edge Database** | [Cloudflare D1](https://developers.cloudflare.com/d1/) | Distributed serverless SQLite with relational integrity |
-| **Object Storage** | [Cloudflare R2](https://developers.cloudflare.com/r2/) | S3-compatible media storage with zero egress fees |
-| **Language** | [TypeScript](https://www.typescriptlang.org/) (Strict Mode) | End-to-end type safety and maintainable system contracts |
-| **Bundler** | [esbuild](https://esbuild.github.io/) | Sub-second bundle compilation to ESM `_worker.js` |
-| **Styling** | Vanilla CSS (CSS Variables) | Tailored design system, dark mode, responsive layout |
-| **Client Protocols** | DOM APIs, `IntersectionObserver` | Zero-overhead telemetry and dynamic UI hydration |
-| **Application Layer** | PWA (Service Worker + Manifest) | Native-app feel, home screen installation, offline cache |
+| **Edge Compute** | [Cloudflare Pages](https://pages.cloudflare.com/) & [Workers](https://workers.cloudflare.com/) | SSR HTML, REST APIs, static assets |
+| **Realtime** | [Cloudflare Durable Objects](https://developers.cloudflare.com/durable-objects/) | WebSocket Hibernation (`UserHub`) |
+| **Database** | [Neon PostgreSQL](https://neon.tech/) (`@neondatabase/serverless`) | Primary relational store (with D1/SQLite parity) |
+| **Object Storage** | [Cloudflare R2](https://developers.cloudflare.com/r2/) | Posts, avatars, AES-GCM encrypted DM media & voice |
+| **E2EE & QR** | `@privacyresearch/libsignal-protocol-typescript`, `qrcode-generator` | Signal Protocol X3DH/Ratchet, Safety Numbers, QR |
+| **Language & Build** | TypeScript (strict), [esbuild](https://esbuild.github.io/) | `dist/e2ee.js` (IIFE) + `dist/_worker.js` (ESM) |
+| **Styling & PWA** | Vanilla CSS variables, Service Worker, Web Push (VAPID) | Light/Dark design system, offline support, notifications |
 
 ---
 
@@ -108,152 +107,77 @@ Photogram incorporates an end-to-end personalization pipeline (`src/recommendati
 ```text
 Photogram/
 ├── public/
-│   ├── manifest.webmanifest      # PWA application manifest
-│   └── sw.js                     # Offline cache & Service Worker
+│   ├── _headers                        # Static security & cache headers
+│   ├── manifest.webmanifest            # PWA application manifest
+│   └── sw.js                           # Service Worker & Web Push handler
 ├── src/
+│   ├── client/
+│   │   └── e2ee.ts                     # Browser Signal E2EE engine, TOFU, Web Locks, QR
 │   ├── db/
-│   │   └── schema.sql            # SQLite DDL schema & performance indexes
+│   │   ├── client.ts                   # Neon PostgreSQL adapter (D1-compatible API)
+│   │   ├── schema.postgres.sql         # PostgreSQL base schema
+│   │   ├── schema.sql                  # SQLite/D1 parity schema
+│   │   └── migrations/
+│   │       └── 2026-11-27_seamless_e2ee.sql
 │   ├── languages/
-│   │   ├── types.ts              # Strongly-typed i18n translation keys
-│   │   ├── en.ts                 # English locale dictionary
-│   │   ├── ru.ts                 # Russian locale dictionary
-│   │   ├── uz.ts                 # Uzbek locale dictionary
-│   │   ├── kz.ts                 # Kazakh locale dictionary
-│   │   └── index.ts              # Locale selector and cookie parser
+│   │   ├── types.ts                    # Strongly-typed i18n dictionary contract
+│   │   ├── ru.ts / en.ts / uz.ts / kz.ts
+│   │   └── index.ts                    # Locale detection & date/number formatting
 │   ├── pages/
-│   │   ├── layout.ts             # Master page shell, telemetry observer, head
-│   │   ├── feed.ts               # Feed view (Followed, Caught up, Suggested)
-│   │   ├── explore.ts            # Explore grid, tag pills bar, Pics viewer
-│   │   ├── profile.ts            # Profile view, related posts, post modal
-│   │   ├── login.ts              # Authentication entrypoint
-│   │   ├── register.ts           # User registration flow
-│   │   ├── commentsModal.ts      # Comment dialog component
-│   │   ├── nav.ts                # Responsive navigation bar (top & bottom)
-│   │   ├── useraccept.ts         # User agreement & onboarding
-│   │   └── error.ts              # Error layout handler
-│   ├── assets.ts                 # Vector icons & SVG assets
-│   ├── auth.ts                   # Password hashing, tokens, session cookies
-│   ├── iconJpgBase64.ts          # Inline image fallback assets
-│   ├── index.ts                  # Worker router & edge endpoint dispatcher
-│   ├── posts.ts                  # Post creation, likes, comments, deletions
-│   ├── profile.ts                # Profile queries, follow graphs, avatar uploads
-│   ├── recommendations.ts        # Recommendation engine, tag extraction, telemetry
-│   ├── styles.ts                 # Unified CSS design system & micro-animations
-│   └── types.ts                  # Core TypeScript types & Cloudflare bindings
-├── icon.jpg                      # Application brand icon (JPEG)
-├── icon.svg                      # Scalable application brand icon (SVG)
-├── package.json                  # Scripts & development dependencies
-├── tsconfig.json                 # TypeScript compiler configuration
-├── wrangler.toml.example         # Cloudflare configuration template
-└── README.md                     # Technical architecture documentation
+│   │   ├── layout.ts                   # App shell, SPA router, realtime WS client, telemetry
+│   │   ├── feed.ts / explore.ts / profile.ts
+│   │   ├── messages.ts                 # E2EE messenger UI, voice recorder, Safety Number/QR
+│   │   ├── settings.ts                 # Theme, language, notifications, Link Previews & Devices
+│   │   ├── activity.ts / accountlist.ts / notifications.ts
+│   │   ├── commentsModal.ts / share.ts / publishpost.ts / editprofile.ts
+│   │   ├── sublist.ts / subslist.ts / nav.ts / login.ts / register.ts / useraccept.ts / error.ts
+│   ├── activity.ts / auth.ts / blockedUsernames.ts / e2ee.ts
+│   ├── index.ts                        # Main Cloudflare Pages Worker router
+│   ├── linkPreview.ts                  # Opt-in SSRF-hardened link metadata & image proxy
+│   ├── messages.ts / notifications.ts / posts.ts / profile.ts
+│   ├── push.ts / realtime.ts / recommendations.ts / security.ts
+│   ├── styles.ts / types.ts / assets.ts / iconJpgBase64.ts
+├── workers/
+│   └── realtime/
+│       ├── src/index.ts                # Durable Object UserHub (WebSocket Hibernation)
+│       └── wrangler.toml
+├── package.json
+├── tsconfig.json
+├── wrangler.toml.example
+└── README.md
 ```
-
----
-
-## Recommendation Engine Mechanics
-
-```
-                             [ User Browser Session ]
-                                        │
-                         (Scroll & Interaction Events)
-                                        │
-                         ┌──────────────┴──────────────┐
-                         ▼                             ▼
-                 [ Impression ]                   [ Dwell ]
-                   (600ms / 65%)                (2500ms / 65%)
-                         │                             │
-                         └──────────────┬──────────────┘
-                                        ▼
-                           [ Telemetry Batch Queue ]
-                               (Max 50 / 4s sync)
-                                        │
-                                 POST /api/telemetry
-                                        ▼
-                         [ Cloudflare Edge Worker ]
-                                        │
-                               env.DB.batch(...)
-                                        │
-                 ┌──────────────────────┴──────────────────────┐
-                 ▼                                             ▼
-       [ user_interactions ]                          [ user_affinity ]
-      - Raw event telemetry                         - Aggregated score
-      - Session deduplication                       - Real-time updates
-                                                               │
-                                                               ▼
-                                                  [ Feed & Explore Scoring ]
-                                                  - Author Affinity Weight
-                                                  - Tag Affinity Weight
-                                                  - Time-Decay Curve
-                                                  - Seen Penalty Dampening
-```
-
-### Event Interaction Weights
-| Event Type | Affinity Delta | Description |
-|---|---|---|
-| `like` | `+3.0` | Explicit positive engagement signal |
-| `comment` | `+5.0` | High-intent conversational interaction |
-| `dwell` | `+1.5` | Deep content consumption (viewport stay $\ge 2.5\text{s}$) |
-| `profile_visit` | `+2.0` | Navigation to author's profile page |
-| `follow` | `+10.0` | Graph subscription (highest baseline affinity) |
-| `unlike` | `-3.0` | Retracted engagement (clamped at `0.0`) |
-| `hide` | `-10.0` | Explicit negative signal ("Not Interested") |
 
 ---
 
 ## Quickstart & Development
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18.0.0 or higher)
+- [Node.js](https://nodejs.org/) (v20+ recommended)
 - [npm](https://www.npmjs.com/)
 - [Cloudflare Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
 
-### 1. Clone & Install
+### 1. Install Dependencies
 ```bash
 git clone https://github.com/itisislom/photogram.git
 cd photogram
 npm install
 ```
 
-### 2. Configure Cloudflare Bindings
-Copy the sample configuration file and insert your Cloudflare resource identifiers:
-```bash
-cp wrangler.toml.example wrangler.toml
-```
-Update `wrangler.toml` with your credentials:
-```toml
-name = "photogramapp"
-compatibility_date = "2024-12-30"
-pages_build_output_dir = "dist"
+### 2. Configure Environment & Bindings
+Copy `wrangler.toml.example` to `wrangler.toml` and configure your Cloudflare R2 bucket, service binding to `photogram-realtime`, and secrets (`DATABASE_URL` for Neon PostgreSQL, VAPID keys for Web Push) in `.dev.vars` locally or in Cloudflare Pages project settings.
 
-[[d1_databases]]
-binding = "DB"
-database_name = "photogram-db"
-database_id = "YOUR_D1_DATABASE_ID"
-
-[[r2_buckets]]
-binding = "STORAGE"
-bucket_name = "photogram-media"
-```
-
-### 3. Initialize Database Schema
-Apply the database tables and indexes to your local D1 environment:
+### 3. Build & Run Locally
+Start the realtime Durable Objects worker and the main Pages dev server in separate terminals:
 ```bash
-npm run db:local
-```
-Or provision your remote Cloudflare D1 production database:
-```bash
-npm run db:remote
-```
-
-### 4. Run Development Server
-```bash
+npm run dev:realtime
 npm run dev
 ```
-Open `http://localhost:8787` in your browser.
+Open `http://127.0.0.1:8787` in your browser.
 
-### 5. Production Deployment
-Build the ESM bundle and deploy directly to Cloudflare Pages:
+### 4. Production Deployment
+Apply any pending SQL migrations in `src/db/migrations/` to Neon PostgreSQL, then deploy:
 ```bash
+npm run deploy:realtime
 npm run deploy:pages
 ```
 
@@ -261,7 +185,7 @@ npm run deploy:pages
 
 ## License
 
-This project is licensed under the **MIT License** with an explicit **Trademark & Branding Protection Notice**. See the [LICENSE](file:///d:/Projects/Programing/Apps/Photogram/LICENSE) file for complete details.
+This project is licensed under the **MIT License** with an explicit **Trademark & Branding Protection Notice**. See the [LICENSE](LICENSE) file for complete details.
 
 ---
 

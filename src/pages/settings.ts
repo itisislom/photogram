@@ -15,6 +15,8 @@ const LOGOUT_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none"
 const PALETTE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`;
 const GLOBE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
 const ACTIVITY_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>`;
+const LINK_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+const DEVICES_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="10" rx="2"/><line x1="6" y1="18" x2="12" y2="18"/><line x1="9" y1="14" x2="9" y2="18"/><rect x="15" y="9" width="7" height="12" rx="1.5"/></svg>`;
 
 export function settingsPage(currentUser: User, t: Translations = ru, theme?: string): string {
   const usernameSafe = escapeHtml(currentUser.username);
@@ -128,6 +130,34 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
           <span class="settings-switch-slider"></span>
         </label>
       </div>
+    </section>
+
+    <section class="settings-group">
+      <div class="settings-group-header">${escapeHtml(t.security.sectionTitle)}</div>
+      <div class="settings-row settings-toggle-row">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${LINK_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.security.linkPreviewsTitle)}</span>
+            <span class="settings-row-sub">${escapeHtml(t.security.linkPreviewsDesc)}</span>
+          </div>
+        </div>
+        <label class="settings-switch" for="linkPreviewsToggleInput">
+          <input type="checkbox" id="linkPreviewsToggleInput" ${Number(currentUser.link_previews_enabled) === 1 ? 'checked' : ''}>
+          <span class="settings-switch-slider"></span>
+        </label>
+      </div>
+      <div class="settings-privacy-note">${escapeHtml(t.security.linkPreviewsNotice)}</div>
+      <button type="button" class="settings-row settings-row-interactive" id="settingsDevicesBtn">
+        <div class="settings-row-left">
+          <div class="settings-row-icon">${DEVICES_ICON}</div>
+          <div class="settings-row-text">
+            <span class="settings-row-title">${escapeHtml(t.security.devicesTitle)}</span>
+            <span class="settings-row-sub">${escapeHtml(t.security.devicesDesc)}</span>
+          </div>
+        </div>
+        <div class="settings-account-arrow">${CHEVRON_RIGHT_ICON}</div>
+      </button>
     </section>
 
     <section class="settings-group">
@@ -246,6 +276,32 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
       <p id="notifBlockedSteps" style="font-size: 14px; color: var(--text-primary); white-space: pre-line; line-height: 1.6; margin-top: 8px;"></p>
       <div style="display: flex; gap: 8px; margin-top: 12px;">
         <button type="button" class="btn btn-primary btn-sm" id="okNotifBlockedBtn" style="flex:1;">${escapeHtml(t.common.understood)}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="devicesModal">
+    <div class="modal-content" style="max-width: 520px; max-height: 86dvh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3 class="modal-title">${escapeHtml(t.security.devicesTitle)}</h3>
+        <button class="modal-close" id="closeDevicesModalBtn" type="button" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+      </div>
+      <div id="devicesModalBody" class="pg-devices-modal-body"></div>
+      <div id="devicesRecoverWrap" class="pg-recover-wrap" style="display:none;">
+        <div class="pg-recover-title">${escapeHtml(t.security.deviceRecoverTitle)}</div>
+        <p class="pg-recover-desc">${escapeHtml(t.security.deviceRecoverDesc)}</p>
+        <div class="pg-recover-warn">${escapeHtml(t.security.deviceRecoverWarning)}</div>
+        <div class="auth-error" id="devicesRecoverError"></div>
+        <form id="devicesRecoverForm" class="auth-form" autocomplete="off">
+          <div class="input-field">
+            <input type="password" id="devicesRecoverPwInput" placeholder=" " required autocomplete="current-password">
+            <label for="devicesRecoverPwInput">${escapeHtml(t.security.deviceRecoverPasswordLabel)}</label>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn btn-secondary btn-sm" id="devicesRecoverCancelBtn" style="flex:1;">${escapeHtml(t.common.cancel)}</button>
+            <button type="submit" class="btn btn-danger btn-sm" id="devicesRecoverSubmitBtn" style="flex:1;">${escapeHtml(t.security.deviceRecoverConfirmBtn)}</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
@@ -738,6 +794,287 @@ export function settingsPage(currentUser: User, t: Translations = ru, theme?: st
         }
       } catch(e) {}
       window.location.href = nextUrl;
+    });
+  }
+
+  var linkPrevToggle = document.getElementById('linkPreviewsToggleInput');
+  var secI18n = ${safeJsonForScript({
+    ...t.security,
+    loading: t.common.loading,
+    networkError: t.common.networkError,
+    cancel: t.common.cancel,
+  })};
+  var settingsCurrentUserId = ${Number(currentUser.id)};
+
+  if (linkPrevToggle) {
+    linkPrevToggle.addEventListener('change', async function() {
+      var self = this;
+      var nextVal = Boolean(self.checked);
+      self.disabled = true;
+      try {
+        var r = await fetch('/api/settings/link-previews', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: nextVal })
+        });
+        var d = null;
+        try { d = await r.json(); } catch (e) {}
+        if (r.ok && d && d.ok) {
+          if (window.showAppToast) {
+            window.showAppToast(nextVal ? secI18n.linkPreviewsEnabledToast : secI18n.linkPreviewsDisabledToast);
+          }
+        } else {
+          self.checked = !nextVal;
+          if (window.showAppToast) window.showAppToast((d && d.error) || secI18n.networkError);
+        }
+      } catch (e) {
+        self.checked = !nextVal;
+        if (window.showAppToast) window.showAppToast(secI18n.networkError);
+      } finally {
+        self.disabled = false;
+      }
+    });
+  }
+
+  var devicesModal = document.getElementById('devicesModal');
+  var openDevicesBtn = document.getElementById('settingsDevicesBtn');
+  var closeDevicesBtn = document.getElementById('closeDevicesModalBtn');
+  var devicesModalBody = document.getElementById('devicesModalBody');
+  var devicesRecoverWrap = document.getElementById('devicesRecoverWrap');
+  var devicesRecoverForm = document.getElementById('devicesRecoverForm');
+  var devicesRecoverPwInput = document.getElementById('devicesRecoverPwInput');
+  var devicesRecoverError = document.getElementById('devicesRecoverError');
+  var devicesRecoverCancelBtn = document.getElementById('devicesRecoverCancelBtn');
+  var devicesRecoverSubmitBtn = document.getElementById('devicesRecoverSubmitBtn');
+  var settingsE2eeClient = null;
+
+  async function getSettingsE2eeClient() {
+    if (settingsE2eeClient) return settingsE2eeClient;
+    if (!window.loadPhotogramE2ee) return null;
+    var mod = await window.loadPhotogramE2ee();
+    var c = mod.getClient(settingsCurrentUserId);
+    await c.ensureInitialized();
+    settingsE2eeClient = c;
+    return c;
+  }
+
+  function closeDevicesModal() {
+    if (!devicesModal) return;
+    devicesModal.classList.remove('visible');
+    if (devicesRecoverWrap) devicesRecoverWrap.style.display = 'none';
+    if (devicesRecoverForm) devicesRecoverForm.reset();
+    if (devicesRecoverError) {
+      devicesRecoverError.textContent = '';
+      devicesRecoverError.classList.remove('visible');
+    }
+    syncBodyOverflow();
+  }
+
+  async function renderDevicesList() {
+    if (!devicesModalBody) return;
+    while (devicesModalBody.firstChild) devicesModalBody.removeChild(devicesModalBody.firstChild);
+    var loadingP = document.createElement('div');
+    loadingP.className = 'pg-device-note';
+    loadingP.textContent = secI18n.loading;
+    devicesModalBody.appendChild(loadingP);
+    if (devicesRecoverWrap) devicesRecoverWrap.style.display = 'none';
+
+    try {
+      var c = await getSettingsE2eeClient();
+      if (!c) {
+        loadingP.textContent = secI18n.networkError;
+        return;
+      }
+      var status = await c.refreshDeviceStatus();
+      var res = await c.listOwnDevices();
+      var list = Array.isArray(res.devices) ? res.devices : [];
+      while (devicesModalBody.firstChild) devicesModalBody.removeChild(devicesModalBody.firstChild);
+
+      if (list.length === 0) {
+        var emp = document.createElement('div');
+        emp.className = 'pg-device-note';
+        emp.textContent = secI18n.devicesEmpty;
+        devicesModalBody.appendChild(emp);
+        return;
+      }
+
+      var currentIsApproved = status.approvalStatus === 'approved';
+
+      if (!currentIsApproved) {
+        var warnBox = document.createElement('div');
+        warnBox.className = 'pg-recover-warn';
+        warnBox.textContent = secI18n.devicePendingBanner + ' (' + secI18n.devicePendingCodePrefix + ': ' + status.verificationCode + ')';
+        devicesModalBody.appendChild(warnBox);
+
+        var lostBtn = document.createElement('button');
+        lostBtn.type = 'button';
+        lostBtn.className = 'btn btn-secondary btn-sm';
+        lostBtn.textContent = secI18n.deviceLostOldBtn;
+        lostBtn.addEventListener('click', function() {
+          if (devicesRecoverWrap) devicesRecoverWrap.style.display = 'flex';
+          if (devicesRecoverPwInput) devicesRecoverPwInput.focus();
+        });
+        devicesModalBody.appendChild(lostBtn);
+      }
+
+      var approvedCount = list.filter(function(x) { return x.approval_status === 'approved'; }).length;
+
+      for (var i = 0; i < list.length; i++) {
+        (function(dev) {
+          var card = document.createElement('div');
+          card.className = 'pg-device-card';
+
+          var top = document.createElement('div');
+          top.className = 'pg-device-top';
+          var nameEl = document.createElement('div');
+          nameEl.className = 'pg-device-name';
+          nameEl.textContent = dev.device_label || ('Device #' + dev.device_id);
+          top.appendChild(nameEl);
+
+          var badges = document.createElement('div');
+          badges.className = 'pg-device-badges';
+          if (dev.is_current) {
+            var bCur = document.createElement('span');
+            bCur.className = 'pg-device-badge is-current';
+            bCur.textContent = secI18n.deviceCurrentBadge;
+            badges.appendChild(bCur);
+          }
+          if (dev.is_primary) {
+            var bPri = document.createElement('span');
+            bPri.className = 'pg-device-badge';
+            bPri.textContent = secI18n.devicePrimaryBadge;
+            badges.appendChild(bPri);
+          }
+          var bSt = document.createElement('span');
+          bSt.className = 'pg-device-badge ' + (dev.approval_status === 'approved' ? 'is-approved' : 'is-pending');
+          bSt.textContent = dev.approval_status === 'approved' ? secI18n.deviceApprovedBadge : secI18n.devicePendingBadge;
+          badges.appendChild(bSt);
+          top.appendChild(badges);
+          card.appendChild(top);
+
+          var codeEl = document.createElement('div');
+          codeEl.className = 'pg-device-code';
+          codeEl.textContent = secI18n.deviceCodeLabel + ': ' + dev.verification_code;
+          card.appendChild(codeEl);
+
+          if (dev.trust_origin === 'legacy') {
+            var legEl = document.createElement('div');
+            legEl.className = 'pg-device-note';
+            legEl.textContent = secI18n.deviceLegacyNote;
+            card.appendChild(legEl);
+          }
+
+          var actions = document.createElement('div');
+          actions.className = 'pg-device-actions';
+
+          if (currentIsApproved && dev.approval_status === 'pending') {
+            var apprBtn = document.createElement('button');
+            apprBtn.type = 'button';
+            apprBtn.className = 'btn btn-primary btn-sm';
+            apprBtn.textContent = secI18n.deviceApproveBtn;
+            apprBtn.addEventListener('click', async function() {
+              apprBtn.disabled = true;
+              apprBtn.textContent = secI18n.deviceApprovingBtn;
+              try {
+                await c.approvePendingDevice(dev.device_id);
+                if (window.showAppToast) window.showAppToast(secI18n.deviceApproveSuccess);
+                await renderDevicesList();
+              } catch (err) {
+                if (window.showAppToast) window.showAppToast((err && err.message) || secI18n.networkError);
+                apprBtn.disabled = false;
+                apprBtn.textContent = secI18n.deviceApproveBtn;
+              }
+            });
+            actions.appendChild(apprBtn);
+          }
+
+          var canRevoke =
+            (!dev.is_current && dev.approval_status === 'pending') ||
+            (currentIsApproved && !dev.is_current && dev.approval_status === 'approved' && approvedCount > 1);
+          if (canRevoke) {
+            var revBtn = document.createElement('button');
+            revBtn.type = 'button';
+            revBtn.className = 'btn btn-danger btn-sm';
+            revBtn.textContent = secI18n.deviceRevokeBtn;
+            revBtn.addEventListener('click', async function() {
+              if (!window.confirm(secI18n.deviceRevokeConfirm)) return;
+              revBtn.disabled = true;
+              try {
+                await c.revokeDevice(dev.device_id);
+                if (window.showAppToast) window.showAppToast(secI18n.deviceRevokeSuccess);
+                await renderDevicesList();
+              } catch (err) {
+                if (window.showAppToast) window.showAppToast((err && err.message) || secI18n.networkError);
+                revBtn.disabled = false;
+              }
+            });
+            actions.appendChild(revBtn);
+          }
+
+          if (actions.childNodes.length > 0) {
+            card.appendChild(actions);
+          }
+          devicesModalBody.appendChild(card);
+        })(list[i]);
+      }
+    } catch (e) {
+      while (devicesModalBody.firstChild) devicesModalBody.removeChild(devicesModalBody.firstChild);
+      var errEl = document.createElement('div');
+      errEl.className = 'pg-device-note';
+      errEl.textContent = secI18n.networkError;
+      devicesModalBody.appendChild(errEl);
+    }
+  }
+
+  if (openDevicesBtn && devicesModal) {
+    openDevicesBtn.addEventListener('click', function() {
+      devicesModal.classList.add('visible');
+      syncBodyOverflow();
+      renderDevicesList();
+    });
+  }
+  if (closeDevicesBtn) closeDevicesBtn.addEventListener('click', closeDevicesModal);
+  if (devicesModal) {
+    devicesModal.addEventListener('click', function(e) {
+      if (e.target === devicesModal) closeDevicesModal();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && devicesModal.classList.contains('visible')) closeDevicesModal();
+    });
+  }
+  if (devicesRecoverCancelBtn && devicesRecoverWrap) {
+    devicesRecoverCancelBtn.addEventListener('click', function() {
+      devicesRecoverWrap.style.display = 'none';
+      if (devicesRecoverForm) devicesRecoverForm.reset();
+    });
+  }
+  if (devicesRecoverForm) {
+    devicesRecoverForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      if (!devicesRecoverPwInput || !devicesRecoverSubmitBtn) return;
+      var pw = devicesRecoverPwInput.value || '';
+      if (!pw) return;
+      if (devicesRecoverError) {
+        devicesRecoverError.textContent = '';
+        devicesRecoverError.classList.remove('visible');
+      }
+      devicesRecoverSubmitBtn.disabled = true;
+      try {
+        var c = await getSettingsE2eeClient();
+        if (!c) throw new Error(secI18n.networkError);
+        await c.recoverLostDevice(pw);
+        if (window.showAppToast) window.showAppToast(secI18n.deviceRecoverSuccess);
+        devicesRecoverForm.reset();
+        await renderDevicesList();
+      } catch (err) {
+        if (devicesRecoverError) {
+          devicesRecoverError.textContent = (err && err.message) || secI18n.networkError;
+          devicesRecoverError.classList.add('visible');
+        }
+      } finally {
+        devicesRecoverSubmitBtn.disabled = false;
+      }
     });
   }
 })();
