@@ -1,5 +1,5 @@
 import { Translations, ru, en, uz, kz } from '../languages';
-import { esc, safeJsonForScript } from './layout';
+import { esc, safeJsonForScript, trustedScriptOpen } from './layout';
 
 const OFFLINE_WIFI_ICON = `<svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="#2196F3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <line x1="1" y1="1" x2="23" y2="23"/>
@@ -64,7 +64,7 @@ export function errorPage(t: Translations = ru, theme?: string): string {
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.jpg">
 <link rel="manifest" href="/manifest.webmanifest">
-<script>
+${trustedScriptOpen()}
 (function() {
   function readSavedTheme() {
     var val = null;
@@ -273,7 +273,7 @@ body {
     </div>
   </div>
 
-  <script>
+  ${trustedScriptOpen()}
   (function() {
     var I18N = ${safeJsonForScript(OFFLINE_I18N_MAP)};
 

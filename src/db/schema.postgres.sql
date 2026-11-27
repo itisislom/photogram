@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_key    TEXT    NOT NULL DEFAULT '',
     is_verified   INTEGER NOT NULL DEFAULT 0,
     notifications_enabled INTEGER NOT NULL DEFAULT 1,
+    link_previews_enabled INTEGER NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -197,6 +198,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_device_id    INTEGER NOT NULL DEFAULT 0,
     ciphertext_envelope TEXT    NOT NULL DEFAULT '',
     read_at             TIMESTAMPTZ,
+    listened_at         TIMESTAMPTZ,
     deleted_at          TIMESTAMPTZ,
     deleted_for_user1   INTEGER NOT NULL DEFAULT 0,
     deleted_for_user2   INTEGER NOT NULL DEFAULT 0,
@@ -247,20 +249,56 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 
 CREATE TABLE IF NOT EXISTS e2ee_devices (
-    id                SERIAL PRIMARY KEY,
-    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    device_id         INTEGER NOT NULL,
-    registration_id   INTEGER NOT NULL,
-    identity_key_pub  TEXT    NOT NULL,
-    signed_prekey_id  INTEGER NOT NULL,
-    signed_prekey_pub TEXT    NOT NULL,
-    signed_prekey_sig TEXT    NOT NULL,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id                      SERIAL PRIMARY KEY,
+    user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id               INTEGER NOT NULL,
+    registration_id         INTEGER NOT NULL,
+    identity_key_pub        TEXT    NOT NULL,
+    signed_prekey_id        INTEGER NOT NULL,
+    signed_prekey_pub       TEXT    NOT NULL,
+    signed_prekey_sig       TEXT    NOT NULL,
+    signing_key_pub         TEXT    NOT NULL DEFAULT '',
+    signing_key_binding_sig TEXT    NOT NULL DEFAULT '',
+    approval_status         TEXT    NOT NULL DEFAULT 'approved',
+    trust_origin            TEXT    NOT NULL DEFAULT 'legacy',
+    is_primary              INTEGER NOT NULL DEFAULT 0,
+    device_label            TEXT    NOT NULL DEFAULT '',
+    approved_by_device_id   INTEGER,
+    approved_at             TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (user_id, device_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_e2ee_devices_user ON e2ee_devices(user_id, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_e2ee_devices_one_primary ON e2ee_devices(user_id) WHERE is_primary = 1;
+CREATE INDEX IF NOT EXISTS idx_e2ee_devices_user_status ON e2ee_devices(user_id, approval_status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS e2ee_device_challenges (
+    challenge_id            TEXT    PRIMARY KEY,
+    user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    approver_device_id      INTEGER NOT NULL,
+    target_device_id        INTEGER NOT NULL,
+    target_identity_key_pub TEXT    NOT NULL,
+    target_signing_key_pub  TEXT    NOT NULL DEFAULT '',
+    nonce                   TEXT    NOT NULL,
+    expires_at              TIMESTAMPTZ NOT NULL,
+    used_at                 TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_challenges_user ON e2ee_device_challenges(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS e2ee_device_lists (
+    user_id           INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    list_version      INTEGER NOT NULL DEFAULT 1,
+    signer_device_id  INTEGER NOT NULL,
+    device_list_json  TEXT    NOT NULL,
+    ecdsa_signature   TEXT    NOT NULL DEFAULT '',
+    signal_signature  TEXT    NOT NULL DEFAULT '',
+    is_recovery_reset INTEGER NOT NULL DEFAULT 0,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS e2ee_prekeys (
     id          BIGSERIAL PRIMARY KEY,
@@ -273,6 +311,61 @@ CREATE TABLE IF NOT EXISTS e2ee_prekeys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_e2ee_prekeys_lookup ON e2ee_prekeys(user_id, device_id, id ASC);
+
+CREATE TABLE IF NOT EXISTS e2ee_backups (
+    user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled          INTEGER NOT NULL DEFAULT 0,
+    backup_epoch     INTEGER NOT NULL DEFAULT 1,
+    backup_version   INTEGER NOT NULL DEFAULT 0,
+    kdf_salt         TEXT    NOT NULL DEFAULT '',
+    signer_device_id INTEGER NOT NULL DEFAULT 0,
+    manifest_sig     TEXT    NOT NULL DEFAULT '',
+    chunk_count      INTEGER NOT NULL DEFAULT 0,
+    base_chunk_count INTEGER NOT NULL DEFAULT 0,
+    total_size_bytes BIGINT  NOT NULL DEFAULT 0,
+    message_count    INTEGER NOT NULL DEFAULT 0,
+    last_msg_id      BIGINT  NOT NULL DEFAULT 0,
+    last_backup_at   TIMESTAMPTZ,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS e2ee_backup_chunks (
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    backup_epoch INTEGER NOT NULL,
+    chunk_seq    INTEGER NOT NULL,
+    r2_key       TEXT    NOT NULL,
+    iv_b64       TEXT    NOT NULL,
+    sha256_b64   TEXT    NOT NULL,
+    size_bytes   INTEGER NOT NULL,
+    msg_count    INTEGER NOT NULL DEFAULT 0,
+    max_msg_id   BIGINT  NOT NULL DEFAULT 0,
+    is_staged    INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, backup_epoch, chunk_seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_backup_chunks_user_epoch ON e2ee_backup_chunks(user_id, backup_epoch, chunk_seq ASC);
+
+CREATE TABLE IF NOT EXISTS e2ee_device_transfers (
+    transfer_id         TEXT    PRIMARY KEY,
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester_device_id INTEGER NOT NULL,
+    requester_eph_pub   TEXT    NOT NULL,
+    requester_sig       TEXT    NOT NULL DEFAULT '',
+    sender_device_id    INTEGER,
+    sender_eph_pub      TEXT    NOT NULL DEFAULT '',
+    sender_signature    TEXT    NOT NULL DEFAULT '',
+    r2_key              TEXT    NOT NULL DEFAULT '',
+    iv_b64              TEXT    NOT NULL DEFAULT '',
+    payload_sha256      TEXT    NOT NULL DEFAULT '',
+    size_bytes          INTEGER NOT NULL DEFAULT 0,
+    status              TEXT    NOT NULL DEFAULT 'pending',
+    expires_at          TIMESTAMPTZ NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_e2ee_transfers_user_status ON e2ee_device_transfers(user_id, status, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_e2ee_transfers_expires ON e2ee_device_transfers(expires_at) WHERE status IN ('pending', 'uploaded');
 
 CREATE OR REPLACE FUNCTION datetime(t text) RETURNS timestamptz AS $$
   SELECT CASE WHEN t = 'now' THEN clock_timestamp() ELSE t::timestamptz END

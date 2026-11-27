@@ -771,29 +771,45 @@ await Promise.all(
 );
 assert.strictEqual(maxConcurrentInside, 1);
 
-const prevLocalStorageDesc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 const prevNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-const fakeLsMap = new Map();
-Object.defineProperty(globalThis, 'navigator', {
-  value: {},
-  configurable: true,
-  writable: true,
+const prevWindowDesc = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const prevDocumentDesc = Object.getOwnPropertyDescriptor(globalThis, 'document');
+
+let releaseHeldWebLock = null;
+const heldWebLockReady = new Promise((resolve) => {
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      locks: {
+        request(name, opts, cb) {
+          if (name === 'contended_weblock_mutex') {
+            if (opts && opts.signal) {
+              return new Promise((_, reject) => {
+                if (opts.signal.aborted) {
+                  reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+                  return;
+                }
+                opts.signal.addEventListener('abort', () => {
+                  reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+                }, { once: true });
+              });
+            }
+          }
+          return cb();
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  resolve();
 });
-Object.defineProperty(globalThis, 'localStorage', {
-  value: {
-    getItem(k) { return fakeLsMap.has(k) ? fakeLsMap.get(k) : null; },
-    setItem(k, v) { fakeLsMap.set(k, String(v)); },
-    removeItem(k) { fakeLsMap.delete(k); },
-  },
-  configurable: true,
-  writable: true,
-});
-fakeLsMap.set('pg_e2ee_lock:contended_mutex', JSON.stringify({ owner: 'other_tab_999', exp: Date.now() + 60_000 }));
+await heldWebLockReady;
+
 let ranWithoutLock = false;
 let lockTimedOut = false;
 try {
   await withCryptoLock(
-    'contended_mutex',
+    'contended_weblock_mutex',
     async () => {
       ranWithoutLock = true;
     },
@@ -801,14 +817,30 @@ try {
   );
 } catch (e) {
   lockTimedOut = e && e.code === 'LOCK_TIMEOUT';
+}
+assert.strictEqual(lockTimedOut, true, 'Contended Web Lock MUST fail closed with LOCK_TIMEOUT');
+assert.strictEqual(ranWithoutLock, false, 'Web Lock MUST NEVER execute callback without holding lock');
+
+Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true, writable: true });
+Object.defineProperty(globalThis, 'window', { value: {}, configurable: true, writable: true });
+Object.defineProperty(globalThis, 'document', { value: {}, configurable: true, writable: true });
+let lockUnavailable = false;
+try {
+  await withCryptoLock('no_weblocks_browser', async () => {
+    ranWithoutLock = true;
+  });
+} catch (e) {
+  lockUnavailable = e && e.code === 'LOCK_UNAVAILABLE';
 } finally {
-  if (prevLocalStorageDesc) Object.defineProperty(globalThis, 'localStorage', prevLocalStorageDesc);
-  else delete globalThis.localStorage;
   if (prevNavigatorDesc) Object.defineProperty(globalThis, 'navigator', prevNavigatorDesc);
   else delete globalThis.navigator;
+  if (prevWindowDesc) Object.defineProperty(globalThis, 'window', prevWindowDesc);
+  else delete globalThis.window;
+  if (prevDocumentDesc) Object.defineProperty(globalThis, 'document', prevDocumentDesc);
+  else delete globalThis.document;
 }
-assert.strictEqual(lockTimedOut, true, 'Contended fallback localStorage mutex MUST fail closed with LOCK_TIMEOUT');
-assert.strictEqual(ranWithoutLock, false, 'Fallback mutex MUST NEVER execute callback without holding lease');
+assert.strictEqual(lockUnavailable, true, 'Browser without Web Locks API MUST fail closed with LOCK_UNAVAILABLE');
+assert.strictEqual(ranWithoutLock, false);
 
 const tab1 = new E2eeClient(aliceAcc.userId, aliceBackend, makeWorkerFetch(aliceAcc.token));
 const tab2 = new E2eeClient(aliceAcc.userId, aliceBackend, makeWorkerFetch(aliceAcc.token));

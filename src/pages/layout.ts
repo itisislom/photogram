@@ -33,7 +33,19 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v19';
+export const APP_STYLE_VERSION = '20261127-v20';
+
+let activeCspNonce = '';
+
+export function setActiveCspNonce(nonce: string): void {
+  activeCspNonce = nonce;
+}
+
+export function trustedScriptOpen(extraAttrs: string = ''): string {
+  const n = activeCspNonce ? ` nonce="${activeCspNonce}"` : '';
+  const extra = extraAttrs ? ` ${extraAttrs}` : '';
+  return `<script${n}${extra}>`;
+}
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -71,7 +83,7 @@ export function layout(title: string, body: string, script: string = '', t: Tran
 <link rel="apple-touch-icon" href="/icon.jpg">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>${esc(title)}</title>
-<script>
+${trustedScriptOpen()}
 (function() {
   var t;
   try {
@@ -146,7 +158,7 @@ ${body}
 
 <div class="app-bottom-toast notranslate" id="appBottomToast" role="status" aria-live="polite" translate="no"></div>
 
-<script>
+${trustedScriptOpen()}
 window.renderVerifiedBadge = function(size) {
   var s = size || 13.5;
   return '<svg class="verified-badge" viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>';
@@ -1378,11 +1390,11 @@ window.showAppConfirm = function(opts) {
 })();
 </script>
 
-<script>
+${trustedScriptOpen()}
 ${renderLangScript()}
 </script>
 
-<script>
+${trustedScriptOpen()}
 (function() {
   function applyTheme(t) {
     if (t !== 'dark' && t !== 'light') return;
@@ -1448,7 +1460,7 @@ ${renderLangScript()}
 })();
 </script>
 
-<script>
+${trustedScriptOpen()}
 (function() {
   if (typeof window === 'undefined') return;
 
@@ -1653,7 +1665,7 @@ ${renderLangScript()}
 })();
 </script>
 
-<script>
+${trustedScriptOpen()}
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js').then(function(reg) {
@@ -1663,7 +1675,7 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 
-<script>
+${trustedScriptOpen()}
 (function() {
   var seenInSession = new Set();
   var skippedInSession = new Set();
@@ -1875,10 +1887,10 @@ if ('serviceWorker' in navigator) {
 })();
 </script>
 
-<script type="text/plain" id="appPageScript" data-initial-page-script="true" data-page-script="true">(function(){var s=document.getElementById('appMainStyles');if(!s||s.getAttribute('data-app-v')!=='${APP_STYLE_VERSION}'){var k='pg_css_reload_${APP_STYLE_VERSION}';try{if(sessionStorage.getItem(k)!=='1'){sessionStorage.setItem(k,'1');window.location.reload();return;}}catch(e){window.location.reload();return;}}})();
+${trustedScriptOpen('type="text/plain" id="appPageScript" data-initial-page-script="true" data-page-script="true"')}(function(){var s=document.getElementById('appMainStyles');if(!s||s.getAttribute('data-app-v')!=='${APP_STYLE_VERSION}'){var k='pg_css_reload_${APP_STYLE_VERSION}';try{if(sessionStorage.getItem(k)!=='1'){sessionStorage.setItem(k,'1');window.location.reload();return;}}catch(e){window.location.reload();return;}}})();
 ${script || ''}</script>
 
-<script>
+${trustedScriptOpen()}
 (function() {
   var pgScriptNonce = (document.currentScript && document.currentScript.nonce) ? document.currentScript.nonce : '';
   var origDocAdd = document.addEventListener.bind(document);

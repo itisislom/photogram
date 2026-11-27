@@ -46,6 +46,21 @@ import {
   handleRecoverE2eeDevice,
 } from './e2ee';
 import {
+  handleGetBackupStatus,
+  handleToggleBackup,
+  handleStageBackupChunk,
+  handleCommitBackupEpoch,
+  handleUploadBackupDelta,
+  handleDownloadBackupChunk,
+  handleDeleteBackup,
+  handleTransferInit,
+  handleTransferListPending,
+  handleTransferUpload,
+  handleTransferDownload,
+  handleTransferComplete,
+} from './backup';
+import { setActiveCspNonce } from './pages/layout';
+import {
   getChatPageData,
   canAccessDmMedia,
   handleGetConversations,
@@ -300,7 +315,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     }
 
     if (pathname === '/offline') {
-      return html(errorPage(t, userTheme), setLangCookie, isHttps);
+      return html(() => errorPage(t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/') {
@@ -312,25 +327,25 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       const addMode = url.searchParams.get('add') === '1';
       const user = await getUserFromRequest(env, request);
       if (user && !addMode) return redirect('/feed', request, setLangCookie);
-      return html(loginPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
+      return html(() => loginPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
     }
 
     if (pathname === '/register' && method === 'GET') {
       const addMode = url.searchParams.get('add') === '1';
       const user = await getUserFromRequest(env, request);
       if (user && !addMode) return redirect('/feed', request, setLangCookie);
-      return html(registerPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
+      return html(() => registerPage(t, userTheme, Boolean(user && addMode)), setLangCookie, isHttps);
     }
 
     if ((pathname === '/useraccept' || pathname === '/terms' || pathname === '/useraccept.ts') && method === 'GET') {
-      return html(userAcceptPage(t, userTheme), setLangCookie, isHttps);
+      return html(() => userAcceptPage(t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname === '/feed' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const feedData = await getPersonalizedFeed(env, user.id);
-      return html(feedPage(feedData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
+      return html(() => feedPage(feedData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
     }
 
     if (pathname === '/explore' && method === 'GET') {
@@ -338,7 +353,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       if (!user) return redirect('/login', request, setLangCookie);
       const tagParam = url.searchParams.get('tag') || 'all';
       const exploreData = await getPersonalizedExplore(env, user.id, tagParam);
-      return html(explorePage(exploreData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
+      return html(() => explorePage(exploreData, user, t, userTheme, hasAdminPermission(user, env, 'posts.delete')), setLangCookie, isHttps);
     }
 
     if (pathname === '/profile' && method === 'GET') {
@@ -350,7 +365,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     if (pathname === '/settings' && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
-      return html(settingsPage(user, t, userTheme), setLangCookie, isHttps);
+      return html(() => settingsPage(user, t, userTheme), setLangCookie, isHttps);
     }
 
     if ((pathname === '/activity' || pathname === '/activity.ts') && method === 'GET') {
@@ -367,21 +382,21 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
         rawSec === 'history'
           ? rawSec
           : null;
-      return html(activityPage(user, summary, validSec, t, userTheme), setLangCookie, isHttps);
+      return html(() => activityPage(user, summary, validSec, t, userTheme), setLangCookie, isHttps);
     }
 
     if ((pathname === '/accountlist' || pathname === '/accountlist.ts') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const { accounts, syncCookie } = await getSavedAccountsForPage(env, request, user);
-      return html(accountListPage(accounts, t, userTheme), setLangCookie, isHttps, 200, syncCookie);
+      return html(() => accountListPage(accounts, t, userTheme), setLangCookie, isHttps, 200, syncCookie);
     }
 
     if ((pathname === '/messages' || pathname === '/messages.ts') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
       const chatData = await getChatPageData(env, user, undefined, ctx);
-      return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
+      return html(() => messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
 
     if ((pathname === '/notifications' || pathname === '/notifications.ts') && method === 'GET') {
@@ -389,7 +404,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       if (!user) return redirect('/login', request, setLangCookie);
       const items = await getUserNotifications(env, user.id);
       await markAllNotificationsRead(env, user.id);
-      return html(notificationsPage(items, user, t, userTheme), setLangCookie, isHttps);
+      return html(() => notificationsPage(items, user, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname.startsWith('/messages/') && method === 'GET') {
@@ -401,13 +416,13 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       if (!targetUsername) return redirect('/messages', request, setLangCookie);
       const chatData = await getChatPageData(env, user, targetUsername, ctx);
       if (chatData.notFound) return redirect('/messages', request, setLangCookie);
-      return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
+      return html(() => messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
 
     if ((pathname === '/publishpost' || pathname === '/publishpost.ts') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
-      return html(publishPostPage(user, t, userTheme), setLangCookie, isHttps);
+      return html(() => publishPostPage(user, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname.startsWith('/u/') && method === 'GET') {
@@ -424,13 +439,13 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
           .bind(sublistUsername)
           .first<User>();
         if (!targetUser) {
-          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+          return html(() => userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
         const [followers, followingUsers] = await Promise.all([
           getFollowersList(env, targetUser.id, currentUser?.id),
           getFollowingList(env, targetUser.id, currentUser?.id),
         ]);
-        return html(sublistPage(targetUser, followers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
+        return html(() => sublistPage(targetUser, followers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
       }
       const subslistMatch = /^([^\/]+)\/subslist(?:\.ts)?$/i.exec(rest);
       if (subslistMatch) {
@@ -444,13 +459,13 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
           .bind(subslistUsername)
           .first<User>();
         if (!targetUser) {
-          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+          return html(() => userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
         const [subsFollowers, followingUsers] = await Promise.all([
           getFollowersList(env, targetUser.id, currentUser?.id),
           getFollowingList(env, targetUser.id, currentUser?.id),
         ]);
-        return html(subslistPage(targetUser, subsFollowers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
+        return html(() => subslistPage(targetUser, subsFollowers, followingUsers, currentUser, t, userTheme), setLangCookie, isHttps);
       }
 
       const editprofileMatch = /^([^\/]+)\/editprofile(?:\.ts)?$/i.exec(rest);
@@ -467,9 +482,9 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
         }
         const profile = await getProfileData(env, currentUser.username, currentUser.id, false);
         if (!profile) {
-          return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+          return html(() => userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
         }
-        return html(editProfilePage(profile, t, userTheme), setLangCookie, isHttps);
+        return html(() => editProfilePage(profile, t, userTheme), setLangCookie, isHttps);
       }
 
       const decodedProfile = safeDecode(rest);
@@ -478,10 +493,10 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       const currentUser = await getUserFromRequest(env, request);
       const profile = await getProfileData(env, targetUsername, currentUser?.id);
       if (!profile) {
-        return html(userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
+        return html(() => userNotFoundPage(t, userTheme), setLangCookie, isHttps, 404);
       }
       profile.is_admin = hasAdminPermission(currentUser, env, 'posts.delete');
-      return html(profilePage(profile, t, userTheme), setLangCookie, isHttps);
+      return html(() => profilePage(profile, t, userTheme), setLangCookie, isHttps);
     }
 
     if (pathname.startsWith('/media/') && (method === 'GET' || method === 'HEAD')) {
@@ -947,6 +962,54 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       return handleRecoverE2eeDevice(request, env);
     }
 
+    if (pathname === '/api/e2ee/backup/status' && method === 'GET') {
+      return handleGetBackupStatus(request, env);
+    }
+
+    if (pathname === '/api/e2ee/backup/toggle' && method === 'POST') {
+      return handleToggleBackup(request, env);
+    }
+
+    if (pathname === '/api/e2ee/backup/stage-chunk' && method === 'POST') {
+      return handleStageBackupChunk(request, env);
+    }
+
+    if (pathname === '/api/e2ee/backup/commit' && method === 'POST') {
+      return handleCommitBackupEpoch(request, env);
+    }
+
+    if (pathname === '/api/e2ee/backup/delta' && method === 'POST') {
+      return handleUploadBackupDelta(request, env);
+    }
+
+    if (pathname === '/api/e2ee/backup/chunk' && method === 'GET') {
+      return handleDownloadBackupChunk(request, env, url);
+    }
+
+    if (pathname === '/api/e2ee/backup/delete' && method === 'POST') {
+      return handleDeleteBackup(request, env);
+    }
+
+    if (pathname === '/api/e2ee/transfer/init' && method === 'POST') {
+      return handleTransferInit(request, env);
+    }
+
+    if (pathname === '/api/e2ee/transfer/pending' && method === 'GET') {
+      return handleTransferListPending(request, env);
+    }
+
+    if (pathname === '/api/e2ee/transfer/upload' && method === 'POST') {
+      return handleTransferUpload(request, env);
+    }
+
+    if (pathname === '/api/e2ee/transfer/download' && method === 'GET') {
+      return handleTransferDownload(request, env, url);
+    }
+
+    if (pathname === '/api/e2ee/transfer/complete' && method === 'POST') {
+      return handleTransferComplete(request, env);
+    }
+
     if (pathname === '/api/lang' && method === 'POST') {
       const parsed = await readJsonWithLimit<{ lang?: string }>(request, 1024);
       if (!parsed.ok) {
@@ -1022,9 +1085,19 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
   });
 }
 
-function html(content: string, setLangCookie?: string, isHttps = true, status = 200, extraCookie?: string): Response {
+function html(content: string | (() => string), setLangCookie?: string, isHttps = true, status = 200, extraCookie?: string): Response {
   const nonce = generateCspNonce();
-  const noncedHtml = content.replace(/<script(?=>|\s)/gi, `<script nonce="${nonce}"`);
+  let rendered: string;
+  if (typeof content === 'function') {
+    setActiveCspNonce(nonce);
+    try {
+      rendered = content();
+    } finally {
+      setActiveCspNonce('');
+    }
+  } else {
+    rendered = content;
+  }
   const headers = new Headers({
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -1036,7 +1109,7 @@ function html(content: string, setLangCookie?: string, isHttps = true, status = 
   if (extraCookie) {
     headers.append('Set-Cookie', extraCookie);
   }
-  return new Response(noncedHtml, { status, headers });
+  return new Response(rendered, { status, headers });
 }
 
 function redirect(path: string, request: Request, setLangCookie?: string): Response {

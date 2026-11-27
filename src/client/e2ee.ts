@@ -294,6 +294,7 @@ export interface IncomingEncryptedMessage {
 export interface KeyValueBackend {
   get<T = unknown>(store: string, key: string): Promise<T | undefined>;
   getMany?<T = unknown>(store: string, keys: string[]): Promise<Map<string, T>>;
+  getAllEntries?<T = unknown>(store: string): Promise<Array<[string, T]>>;
   put(store: string, key: string, value: unknown): Promise<void>;
   del(store: string, key: string): Promise<void>;
   close?(): Promise<void>;
@@ -302,7 +303,19 @@ export interface KeyValueBackend {
 export type BrowserFetch = (
   input: string,
   init?: Record<string, unknown>,
-) => Promise<{ ok: boolean; status?: number; json(): Promise<unknown>; arrayBuffer(): Promise<ArrayBuffer> }>;
+) => Promise<{
+  ok: boolean;
+  status?: number;
+  headers?: { get(name: string): string | null };
+  json(): Promise<unknown>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
+interface MiniIdbCursor {
+  key: unknown;
+  value: unknown;
+  continue(): void;
+}
 
 interface MiniIdbRequest<T = unknown> {
   result: T;
@@ -316,6 +329,7 @@ interface MiniIdbStore {
   get(key: string): MiniIdbRequest;
   put(val: unknown, key: string): MiniIdbRequest;
   delete(key: string): MiniIdbRequest;
+  openCursor?(): MiniIdbRequest<MiniIdbCursor | null>;
 }
 
 interface MiniIdbTransaction {
@@ -487,66 +501,260 @@ async function verifySignalEd25519(
   }
 }
 
-const localMutexChains = new Map<string, Promise<unknown>>();
-const tabLockOwner = `tab_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+const BACKUP_B32_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const BACKUP_COMPACT_THRESHOLD = 10;
+const BACKUP_MAX_CHUNKS_PER_EPOCH = 32;
+const DEFAULT_MAX_CHUNK_RAW_BYTES = 1_100_000;
+const AUTO_BACKUP_MIN_INTERVAL_MS = 10 * 60 * 1000;
+const AUTO_BACKUP_MIN_BG_INTERVAL_MS = 3 * 60 * 1000;
+const AUTO_BACKUP_BATCH_THRESHOLD = 25;
 
-async function acquireFallbackLease(
-  lockName: string,
-  fn: () => Promise<unknown>,
-  timeoutMs: number = 12000,
-): Promise<unknown> {
-  const ls = (
-    globalThis as unknown as {
-      localStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
+function encodeBase32NoPad(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += BACKUP_B32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
     }
-  ).localStorage;
-  if (!ls) {
-    return fn();
   }
-  const storageKey = `pg_e2ee_lock:${lockName}`;
-  const leaseMs = 8000;
-  const effectiveTimeout = Math.max(50, Math.floor(Number(timeoutMs) || 12000));
-  const deadline = Date.now() + effectiveTimeout;
-  const token = `${tabLockOwner}:${Math.random().toString(36).slice(2)}`;
-  let acquired = false;
-  while (Date.now() < deadline) {
+  if (bits > 0) {
+    out += BACKUP_B32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return out;
+}
+
+function decodeBase32NoPad(str: string): Uint8Array | null {
+  const clean = str.toUpperCase().replace(/[^A-Z2-9]/g, '');
+  if (!clean) return null;
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (let i = 0; i < clean.length; i++) {
+    const idx = BACKUP_B32_ALPHABET.indexOf(clean[i]);
+    if (idx === -1) return null;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  if (bits > 0 && (value & ((1 << bits) - 1)) !== 0) {
+    return null;
+  }
+  return new Uint8Array(out);
+}
+
+export async function formatRecoveryKeyFromRaw(rawKey: Uint8Array): Promise<string> {
+  const copy = rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer;
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', copy));
+  const combined = new Uint8Array(34);
+  combined.set(rawKey, 0);
+  combined[32] = digest[0];
+  combined[33] = digest[1];
+  const b32 = encodeBase32NoPad(combined);
+  const groups: string[] = [];
+  for (let i = 0; i < b32.length; i += 4) {
+    groups.push(b32.slice(i, i + 4));
+  }
+  return groups.join('-');
+}
+
+export async function generateRecoveryKey(): Promise<{ rawB64: string; formatted: string }> {
+  const raw = new Uint8Array(32);
+  crypto.getRandomValues(raw);
+  const formatted = await formatRecoveryKeyFromRaw(raw);
+  return { rawB64: bytesToBase64(raw), formatted };
+}
+
+export async function parseRecoveryKey(input: string): Promise<Uint8Array> {
+  const decoded = decodeBase32NoPad(String(input || ''));
+  if (!decoded || decoded.length !== 34) {
+    throw Object.assign(new Error('Invalid recovery key'), { code: 'INVALID_RECOVERY_KEY' });
+  }
+  const keyBytes = decoded.slice(0, 32);
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer,
+    ),
+  );
+  if (digest[0] !== decoded[32] || digest[1] !== decoded[33]) {
+    throw Object.assign(new Error('Invalid recovery key checksum'), { code: 'INVALID_RECOVERY_KEY' });
+  }
+  return keyBytes;
+}
+
+async function sha256B64Bytes(bytes: Uint8Array): Promise<string> {
+  const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const digest = await crypto.subtle.digest('SHA-256', copy);
+  return bytesToBase64(digest);
+}
+
+async function compressPayloadBytes(raw: Uint8Array): Promise<Uint8Array> {
+  const CS = (globalThis as unknown as { CompressionStream?: new (fmt: string) => TransformStream<Uint8Array, Uint8Array> }).CompressionStream;
+  if (typeof CS === 'function') {
     try {
-      const raw = ls.getItem(storageKey);
-      let canTake = !raw;
-      if (raw) {
-        const parsed = JSON.parse(raw) as { exp?: number };
-        if (!parsed || !parsed.exp || parsed.exp <= Date.now()) {
-          canTake = true;
+      const cs = new CS('gzip');
+      const writer = cs.writable.getWriter();
+      const writePromise = writer.write(raw).then(() => writer.close());
+      const reader = cs.readable.getReader();
+      const parts: Uint8Array[] = [];
+      let total = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          parts.push(value);
+          total += value.byteLength;
         }
       }
-      if (canTake) {
-        ls.setItem(storageKey, JSON.stringify({ owner: token, exp: Date.now() + leaseMs }));
-        const verify = ls.getItem(storageKey);
-        if (verify && verify.includes(token)) {
-          acquired = true;
-          break;
-        }
+      await writePromise;
+      const out = new Uint8Array(1 + total);
+      out[0] = 0x01;
+      let off = 1;
+      for (const p of parts) {
+        out.set(p, off);
+        off += p.byteLength;
       }
-    } catch {
-      acquired = false;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 15));
-  }
-  if (!acquired) {
-    throw Object.assign(new Error('Failed to acquire crypto mutex'), { code: 'LOCK_TIMEOUT' });
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      const cur = ls.getItem(storageKey);
-      if (cur && cur.includes(token)) {
-        ls.removeItem(storageKey);
-      }
+      return out;
     } catch {}
   }
+  const out = new Uint8Array(1 + raw.byteLength);
+  out[0] = 0x00;
+  out.set(raw, 1);
+  return out;
 }
+
+async function decompressPayloadBytes(framed: Uint8Array): Promise<Uint8Array> {
+  if (!framed || framed.byteLength < 2) {
+    throw Object.assign(new Error('Corrupted backup payload'), { code: 'BACKUP_CORRUPTED' });
+  }
+  const mode = framed[0];
+  const body = framed.subarray(1);
+  if (mode === 0x00) return body;
+  if (mode !== 0x01) {
+    throw Object.assign(new Error('Unknown backup compression mode'), { code: 'BACKUP_CORRUPTED' });
+  }
+  const DS = (globalThis as unknown as { DecompressionStream?: new (fmt: string) => TransformStream<Uint8Array, Uint8Array> }).DecompressionStream;
+  if (typeof DS !== 'function') {
+    throw Object.assign(new Error('DecompressionStream unavailable'), { code: 'BACKUP_CORRUPTED' });
+  }
+  const ds = new DS('gzip');
+  const writer = ds.writable.getWriter();
+  const writePromise = writer.write(body).then(() => writer.close());
+  const reader = ds.readable.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) {
+      parts.push(value);
+      total += value.byteLength;
+    }
+  }
+  await writePromise;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.byteLength;
+  }
+  return out;
+}
+
+async function deriveBackupAesKey(
+  rawKeyBytes: Uint8Array,
+  saltB64: string,
+  userId: number,
+  epoch: number,
+): Promise<CryptoKey> {
+  const ikm = await crypto.subtle.importKey(
+    'raw',
+    rawKeyBytes.buffer.slice(rawKeyBytes.byteOffset, rawKeyBytes.byteOffset + rawKeyBytes.byteLength) as ArrayBuffer,
+    'HKDF',
+    false,
+    ['deriveKey'],
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: base64ToArrayBuffer(saltB64),
+      info: utf8ToArrayBuffer(`pg-backup-v1|enc|${userId}|${epoch}`),
+    },
+    ikm,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+async function verifyEcdsaP256Local(spkiB64: string, message: string, sigB64: string): Promise<boolean> {
+  if (!spkiB64 || !sigB64) return false;
+  try {
+    const spki = base64ToArrayBuffer(spkiB64);
+    const sig = base64ToArrayBuffer(sigB64);
+    if (sig.byteLength !== 64) return false;
+    const key = await crypto.subtle.importKey(
+      'spki',
+      spki,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
+    return await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      sig,
+      utf8ToArrayBuffer(message),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function computeTransferCode6(
+  userId: number,
+  transferId: string,
+  requesterDeviceId: number,
+  requesterEphPub: string,
+): Promise<string> {
+  const input = utf8ToArrayBuffer(`pg-xfer-code-v1|${userId}|${transferId}|${requesterDeviceId}|${requesterEphPub}`);
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+  const num = (((hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3]) >>> 0) % 1_000_000;
+  const s = String(num).padStart(6, '0');
+  return `${s.slice(0, 3)} ${s.slice(3)}`;
+}
+
+function buildQrMatrix(payload: string): { qrModules: boolean[][]; qrSize: number } {
+  const qr = qrcode(0, 'M');
+  qr.addData(payload);
+  qr.make();
+  const qrSize = qr.getModuleCount();
+  const qrModules: boolean[][] = [];
+  for (let r = 0; r < qrSize; r++) {
+    const row: boolean[] = [];
+    for (let c = 0; c < qrSize; c++) {
+      row.push(qr.isDark(r, c));
+    }
+    qrModules.push(row);
+  }
+  return { qrModules, qrSize };
+}
+
+function randomHexLocal(byteLen: number): string {
+  const bytes = new Uint8Array(byteLen);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const localMutexChains = new Map<string, Promise<unknown>>();
 
 export async function withCryptoLock<T>(
   lockName: string,
@@ -557,14 +765,59 @@ export async function withCryptoLock<T>(
     globalThis as unknown as {
       navigator?: {
         locks?: {
-          request<R>(name: string, options: { mode: 'exclusive' }, cb: () => Promise<R>): Promise<R>;
+          request<R>(
+            name: string,
+            options: { mode: 'exclusive'; signal?: AbortSignal },
+            cb: () => Promise<R>,
+          ): Promise<R>;
         };
       };
     }
   ).navigator?.locks;
 
   if (navLocks && typeof navLocks.request === 'function') {
-    return navLocks.request(lockName, { mode: 'exclusive' }, fn);
+    const timeoutMs = Math.max(50, Math.floor(Number(opts?.timeoutMs) || 15000));
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let acquired = false;
+    if (ctrl) {
+      timer = setTimeout(() => {
+        if (!acquired) ctrl.abort();
+      }, timeoutMs);
+    }
+    try {
+      const reqOpts: { mode: 'exclusive'; signal?: AbortSignal } = ctrl
+        ? { mode: 'exclusive', signal: ctrl.signal }
+        : { mode: 'exclusive' };
+      return await navLocks.request(lockName, reqOpts, async () => {
+        acquired = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        return fn();
+      });
+    } catch (err: unknown) {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const name = err instanceof Error ? err.name : '';
+      if (!acquired && (name === 'AbortError' || (ctrl && ctrl.signal.aborted))) {
+        throw Object.assign(new Error('Failed to acquire Web Locks crypto mutex'), { code: 'LOCK_TIMEOUT' });
+      }
+      throw err;
+    }
+  }
+
+  const isBrowserContext =
+    typeof (globalThis as unknown as { window?: unknown }).window !== 'undefined' &&
+    typeof (globalThis as unknown as { document?: unknown }).document !== 'undefined';
+
+  if (isBrowserContext) {
+    throw Object.assign(new Error('Web Locks API unavailable for cross-tab crypto locking'), {
+      code: 'LOCK_UNAVAILABLE',
+    });
   }
 
   const prev = localMutexChains.get(lockName) || Promise.resolve();
@@ -577,7 +830,7 @@ export async function withCryptoLock<T>(
 
   await prev;
   try {
-    return (await acquireFallbackLease(lockName, fn, opts?.timeoutMs)) as T;
+    return await fn();
   } finally {
     release();
     if (localMutexChains.get(lockName) === chained) {
@@ -607,6 +860,9 @@ export function createMemoryBackend(): KeyValueBackend {
         if (m.has(k)) out.set(k, m.get(k) as T);
       }
       return out;
+    },
+    async getAllEntries<T>(store: string): Promise<Array<[string, T]>> {
+      return Array.from(getMap(store).entries()) as Array<[string, T]>;
     },
     async put(store: string, key: string, value: unknown) {
       getMap(store).set(key, value);
@@ -671,6 +927,28 @@ function createIdbBackend(userId: number): KeyValueBackend {
             if (req.result !== undefined) out.set(k, req.result as T);
           };
         }
+        tx.oncomplete = () => resolve(out);
+        tx.onerror = () => reject(tx.error);
+      });
+    },
+    async getAllEntries<T>(store: string): Promise<Array<[string, T]>> {
+      const db = await getDb();
+      return new Promise((resolve, reject) => {
+        const out: Array<[string, T]> = [];
+        const tx = db.transaction(store, 'readonly');
+        const os = tx.objectStore(store);
+        if (typeof os.openCursor !== 'function') {
+          resolve(out);
+          return;
+        }
+        const req = os.openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) {
+            out.push([String(cursor.key), cursor.value as T]);
+            cursor.continue();
+          }
+        };
         tx.oncomplete = () => resolve(out);
         tx.onerror = () => reject(tx.error);
       });
@@ -955,6 +1233,114 @@ class SignalStore implements StorageType {
   async removeCachedMessage(msgId: number): Promise<void> {
     await this.backend.del('msgCache', String(msgId));
   }
+
+  async getAllCachedMessages(): Promise<Array<{ id: number; payload: DecryptedPayload }>> {
+    if (typeof this.backend.getAllEntries !== 'function') return [];
+    const raw = await this.backend.getAllEntries<DecryptedPayload>('msgCache');
+    const out: Array<{ id: number; payload: DecryptedPayload }> = [];
+    for (const [k, v] of raw) {
+      const id = Number(k);
+      if (Number.isInteger(id) && id > 0 && v && typeof v === 'object') {
+        out.push({ id, payload: v });
+      }
+    }
+    out.sort((a, b) => a.id - b.id);
+    return out;
+  }
+
+  async getTombstones(): Promise<number[]> {
+    const raw = await this.backend.get<number[]>('meta', 'deleted_msg_ids');
+    return Array.isArray(raw)
+      ? Array.from(new Set(raw.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0))).sort((a, b) => a - b)
+      : [];
+  }
+
+  async addTombstones(ids: number[]): Promise<number[]> {
+    const existing = await this.getTombstones();
+    const merged = new Set<number>(existing);
+    for (const rawId of ids) {
+      const id = Number(rawId);
+      if (Number.isInteger(id) && id > 0) merged.add(id);
+    }
+    const sorted = Array.from(merged).sort((a, b) => a - b);
+    await this.backend.put('meta', 'deleted_msg_ids', sorted);
+    return sorted;
+  }
+
+  async getBackupRecoveryKeyRaw(): Promise<string | undefined> {
+    return this.backend.get<string>('meta', 'backupRecoveryKey');
+  }
+
+  async setBackupRecoveryKeyRaw(rawB64: string | null): Promise<void> {
+    if (!rawB64) {
+      await this.backend.del('meta', 'backupRecoveryKey');
+      return;
+    }
+    await this.backend.put('meta', 'backupRecoveryKey', rawB64);
+  }
+
+  async getBackupSyncState(): Promise<{
+    epoch: number;
+    version: number;
+    pinnedVersion: number;
+    kdfSalt: string;
+    backedUpMsgVersions: Record<string, number>;
+    backedUpTombstones: number[];
+    lastAutoBackupAt: number;
+  }> {
+    const raw = await this.backend.get<{
+      epoch?: number;
+      version?: number;
+      pinnedVersion?: number;
+      kdfSalt?: string;
+      backedUpMsgVersions?: Record<string, number>;
+      backedUpTombstones?: number[];
+      lastAutoBackupAt?: number;
+    }>('meta', 'backupSyncState');
+    return {
+      epoch: Number(raw?.epoch || 1),
+      version: Number(raw?.version || 0),
+      pinnedVersion: Number(raw?.pinnedVersion || 0),
+      kdfSalt: String(raw?.kdfSalt || ''),
+      backedUpMsgVersions:
+        raw && raw.backedUpMsgVersions && typeof raw.backedUpMsgVersions === 'object'
+          ? { ...raw.backedUpMsgVersions }
+          : {},
+      backedUpTombstones: Array.isArray(raw?.backedUpTombstones)
+        ? raw.backedUpTombstones.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0)
+        : [],
+      lastAutoBackupAt: Number(raw?.lastAutoBackupAt || 0),
+    };
+  }
+
+  async setBackupSyncState(state: {
+    epoch: number;
+    version: number;
+    pinnedVersion: number;
+    kdfSalt: string;
+    backedUpMsgVersions: Record<string, number>;
+    backedUpTombstones: number[];
+    lastAutoBackupAt: number;
+  }): Promise<void> {
+    const cur = await this.getBackupSyncState();
+    await this.backend.put('meta', 'backupSyncState', {
+      ...state,
+      pinnedVersion: Math.max(cur.pinnedVersion, Number(state.pinnedVersion || 0)),
+    });
+  }
+
+  async clearBackupSyncState(): Promise<void> {
+    const cur = await this.getBackupSyncState();
+    await this.backend.put('meta', 'backupSyncState', {
+      epoch: cur.epoch + 1,
+      version: 0,
+      pinnedVersion: cur.pinnedVersion,
+      kdfSalt: '',
+      backedUpMsgVersions: {},
+      backedUpTombstones: [],
+      lastAutoBackupAt: 0,
+    });
+  }
 }
 
 interface MiniBroadcastChannel {
@@ -988,6 +1374,10 @@ export class E2eeClient {
   private deviceStatus: DeviceStatusInfo | null = null;
   private syncChannel: MiniBroadcastChannel | null = null;
   private syncListeners = new Set<(ev: { type: string; [k: string]: unknown }) => void>();
+  private pendingBackupDirty = 0;
+  private autoBackupEnabledCache: boolean | null = null;
+  private autoBackupRunning = false;
+  private activeReceiveTransfers = new Map<string, { ephPriv: CryptoKey; ephPub: string; deviceId: number }>();
 
   constructor(userId: number, backend?: KeyValueBackend, fetchImpl?: BrowserFetch) {
     this.userId = userId;
@@ -2199,6 +2589,7 @@ export class E2eeClient {
       this.memMsgCache.set(msgId, entry);
       await this.store.setCachedMessage(msgId, entry);
       this.postSync({ type: 'msg_cached', msgId, payload: entry });
+      this.noteBackupDirty(1);
     }
   }
 
@@ -2503,6 +2894,7 @@ export class E2eeClient {
         this.memMsgCache.set(msg.id, payload);
         await this.store.setCachedMessage(msg.id, payload);
         this.postSync({ type: 'msg_cached', msgId: msg.id, payload });
+        this.noteBackupDirty(1);
       }
       return { ok: true, payload };
     } catch (err: unknown) {
@@ -2579,7 +2971,12 @@ export class E2eeClient {
     const res = await this.fetchImpl(`/media/${encodeURIComponent(imageKey)}`, {
       credentials: 'same-origin',
     });
-    if (!res.ok) throw new Error('Failed to download encrypted media');
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 403 || res.status === 410) {
+        throw Object.assign(new Error('Encrypted media unavailable'), { code: 'MEDIA_UNAVAILABLE' });
+      }
+      throw Object.assign(new Error('Failed to download encrypted media'), { code: 'NETWORK' });
+    }
     const encBuf = await res.arrayBuffer();
     const plainBuf = await this.decryptMediaBytes(encBuf, mediaMeta);
     const isVoice = mediaMeta.kind === 'voice';
@@ -2909,18 +3306,1182 @@ export class E2eeClient {
 
   async clearCachedMessages(msgIds: number[]): Promise<void> {
     if (!Array.isArray(msgIds) || msgIds.length === 0) return;
+    const validIds: number[] = [];
     for (const rawId of msgIds) {
       const id = Number(rawId);
       if (Number.isInteger(id) && id > 0) {
+        validIds.push(id);
         this.memMsgCache.delete(id);
         try {
           await this.store.removeCachedMessage(id);
         } catch {}
       }
     }
+    if (validIds.length > 0) {
+      try {
+        await this.store.addTombstones(validIds);
+      } catch {}
+      this.noteBackupDirty(validIds.length);
+    }
+  }
+
+  private noteBackupDirty(count: number = 1): void {
+    this.pendingBackupDirty += Math.max(1, count);
+    if (this.pendingBackupDirty >= AUTO_BACKUP_BATCH_THRESHOLD) {
+      void this.flushAutoBackupIfDue(0);
+    } else {
+      void this.flushAutoBackupIfDue(AUTO_BACKUP_MIN_INTERVAL_MS);
+    }
+  }
+
+  async flushAutoBackupIfDue(minIntervalMs: number = AUTO_BACKUP_MIN_BG_INTERVAL_MS): Promise<boolean> {
+    if (this.autoBackupRunning || this.pendingBackupDirty <= 0) return false;
+    try {
+      const rawKey = await this.store.getBackupRecoveryKeyRaw();
+      if (!rawKey) return false;
+      const sync = await this.store.getBackupSyncState();
+      if (minIntervalMs > 0 && Date.now() - sync.lastAutoBackupAt < minIntervalMs) {
+        return false;
+      }
+      if (this.autoBackupEnabledCache === false) return false;
+      this.autoBackupRunning = true;
+      const status = await this.getBackupStatus();
+      this.autoBackupEnabledCache = Boolean(status.enabled);
+      if (!status.enabled) return false;
+      await this.backupNow({ auto: true });
+      this.pendingBackupDirty = 0;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.autoBackupRunning = false;
+    }
+  }
+
+  async getLocalHistoryStats(): Promise<{
+    cachedMessages: number;
+    tombstones: number;
+    hasRecoveryKey: boolean;
+    estimatedBytes: number;
+  }> {
+    await this.ensureInitialized();
+    const [entries, tombstones, rawKey] = await Promise.all([
+      this.store.getAllCachedMessages(),
+      this.store.getTombstones(),
+      this.store.getBackupRecoveryKeyRaw(),
+    ]);
+    const tombSet = new Set(tombstones);
+    const live = entries.filter((e) => !tombSet.has(e.id));
+    let est = 0;
+    for (let i = 0; i < live.length; i++) {
+      est += JSON.stringify(live[i]).length;
+    }
+    return {
+      cachedMessages: live.length,
+      tombstones: tombstones.length,
+      hasRecoveryKey: Boolean(rawKey),
+      estimatedBytes: est,
+    };
+  }
+
+  async getLocalRecoveryKeyFormatted(): Promise<string | null> {
+    await this.ensureInitialized();
+    const rawB64 = await this.store.getBackupRecoveryKeyRaw();
+    if (!rawB64) return null;
+    const raw = new Uint8Array(base64ToArrayBuffer(rawB64));
+    if (raw.byteLength !== 32) return null;
+    return formatRecoveryKeyFromRaw(raw);
+  }
+
+  async generateNewRecoveryKeyDraft(): Promise<{ rawB64: string; formatted: string }> {
+    return generateRecoveryKey();
+  }
+
+  async getBackupStatus(): Promise<{
+    exists: boolean;
+    enabled: boolean;
+    backup_epoch: number;
+    backup_version: number;
+    kdf_salt: string;
+    signer_device_id: number;
+    manifest_sig: string;
+    chunk_count: number;
+    base_chunk_count?: number;
+    total_size_bytes: number;
+    message_count: number;
+    last_msg_id: number;
+    last_backup_at: string | null;
+    chunks: Array<{
+      chunk_seq: number;
+      iv_b64: string;
+      sha256_b64: string;
+      size_bytes: number;
+      msg_count: number;
+      max_msg_id: number;
+    }>;
+    has_local_key: boolean;
+    local_cached_messages: number;
+  }> {
+    await this.ensureInitialized();
+    const [res, rawKey, localEntries, tombstones] = await Promise.all([
+      this.fetchImpl('/api/e2ee/backup/status', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }),
+      this.store.getBackupRecoveryKeyRaw(),
+      this.store.getAllCachedMessages(),
+      this.store.getTombstones(),
+    ]);
+    if (!res.ok) {
+      throw Object.assign(new Error('Failed to load backup status'), { code: 'NETWORK' });
+    }
+    const data = (await res.json()) as {
+      backup: {
+        exists: boolean;
+        enabled: boolean;
+        backup_epoch: number;
+        backup_version: number;
+        kdf_salt: string;
+        signer_device_id: number;
+        manifest_sig: string;
+        chunk_count: number;
+        total_size_bytes: number;
+        message_count: number;
+        last_msg_id: number;
+        last_backup_at: string | null;
+      };
+      chunks: Array<{
+        chunk_seq: number;
+        iv_b64: string;
+        sha256_b64: string;
+        size_bytes: number;
+        msg_count: number;
+        max_msg_id: number;
+      }>;
+    };
+    this.autoBackupEnabledCache = Boolean(data.backup?.enabled);
+    const tombSet = new Set(tombstones);
+    const liveCount = localEntries.filter((e) => !tombSet.has(e.id)).length;
+    return {
+      ...data.backup,
+      chunks: Array.isArray(data.chunks) ? data.chunks : [],
+      has_local_key: Boolean(rawKey),
+      local_cached_messages: liveCount,
+    };
+  }
+
+  async setAutoBackupEnabled(enabled: boolean): Promise<boolean> {
+    await this.ensureInitialized();
+    const res = await this.fetchImpl('/api/e2ee/backup/toggle', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: Boolean(enabled) }),
+    });
+    if (!res.ok) throw Object.assign(new Error('Failed to toggle backup'), { code: 'NETWORK' });
+    this.autoBackupEnabledCache = Boolean(enabled);
+    return Boolean(enabled);
+  }
+
+  async enableBackupWithKey(
+    formattedKey: string,
+    opts?: { maxChunkRawBytes?: number },
+  ): Promise<{
+    backup_epoch: number;
+    backup_version: number;
+    chunk_count: number;
+    total_size_bytes: number;
+    message_count: number;
+  }> {
+    const keyBytes = await parseRecoveryKey(formattedKey);
+    await this.store.setBackupRecoveryKeyRaw(bytesToBase64(keyBytes));
+    await this.setAutoBackupEnabled(true);
+    const res = await this.backupNow({ forceFull: false, maxChunkRawBytes: opts?.maxChunkRawBytes });
+    return {
+      backup_epoch: res.backup_epoch,
+      backup_version: res.backup_version,
+      chunk_count: res.chunk_count,
+      total_size_bytes: res.total_size_bytes,
+      message_count: res.message_count,
+    };
+  }
+
+  private async downloadAndDecryptBackupChunks(
+    rawKeyBytes: Uint8Array,
+    epoch: number,
+    kdfSalt: string,
+    chunks: Array<{ chunk_seq: number; iv_b64: string; sha256_b64: string; size_bytes: number }>,
+  ): Promise<{ messages: Array<{ id: number; payload: DecryptedPayload }>; tombstones: number[] }> {
+    const aesKey = await deriveBackupAesKey(rawKeyBytes, kdfSalt, this.userId, epoch);
+    const mergedMessages = new Map<number, DecryptedPayload>();
+    const mergedTombstones = new Set<number>();
+    let prevSha = 'GENESIS';
+
+    for (let i = 0; i < chunks.length; i++) {
+      const meta = chunks[i];
+      if (Number(meta.chunk_seq) !== i) {
+        throw Object.assign(new Error('Missing backup chunk sequence'), { code: 'BACKUP_CORRUPTED' });
+      }
+      const res = await this.fetchImpl(`/api/e2ee/backup/chunk?epoch=${epoch}&seq=${i}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        throw Object.assign(new Error('Failed to download backup chunk'), { code: 'NETWORK' });
+      }
+      const encBuf = await res.arrayBuffer();
+      const encBytes = new Uint8Array(encBuf);
+      const actualSha = await sha256B64Bytes(encBytes);
+      if (actualSha !== meta.sha256_b64) {
+        throw Object.assign(new Error('Backup chunk checksum mismatch'), { code: 'BACKUP_CORRUPTED' });
+      }
+
+      const aad = utf8ToArrayBuffer(`pg-backup-chunk-v1|${this.userId}|${epoch}|${i}|${prevSha}`);
+      let plainFramed: ArrayBuffer;
+      try {
+        plainFramed = await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv: new Uint8Array(base64ToArrayBuffer(meta.iv_b64)),
+            additionalData: aad,
+          },
+          aesKey,
+          encBytes,
+        );
+      } catch {
+        throw Object.assign(new Error('Backup decryption failed'), {
+          code: i === 0 ? 'WRONG_RECOVERY_KEY' : 'BACKUP_CORRUPTED',
+        });
+      }
+
+      const rawJsonBytes = await decompressPayloadBytes(new Uint8Array(plainFramed));
+      let parsed: {
+        v?: number;
+        messages?: Array<{ id?: unknown; payload?: DecryptedPayload }>;
+        tombstones?: unknown[];
+      };
+      try {
+        parsed = JSON.parse(new TextDecoder().decode(rawJsonBytes));
+      } catch {
+        throw Object.assign(new Error('Invalid backup chunk JSON'), { code: 'BACKUP_CORRUPTED' });
+      }
+
+      if (Array.isArray(parsed.tombstones)) {
+        for (const tid of parsed.tombstones) {
+          const n = Number(tid);
+          if (Number.isInteger(n) && n > 0) {
+            mergedTombstones.add(n);
+            mergedMessages.delete(n);
+          }
+        }
+      }
+      if (Array.isArray(parsed.messages)) {
+        for (const item of parsed.messages) {
+          const id = Number(item?.id || 0);
+          if (!Number.isInteger(id) || id <= 0 || mergedTombstones.has(id)) continue;
+          const p = item.payload;
+          if (!p || typeof p !== 'object') continue;
+          const existing = mergedMessages.get(id);
+          if (!existing || Number(p.editVersion || 0) >= Number(existing.editVersion || 0)) {
+            mergedMessages.set(id, p);
+          }
+        }
+      }
+
+      prevSha = meta.sha256_b64;
+    }
+
+    const outMessages: Array<{ id: number; payload: DecryptedPayload }> = [];
+    mergedMessages.forEach((payload, id) => {
+      if (!mergedTombstones.has(id)) outMessages.push({ id, payload });
+    });
+    outMessages.sort((a, b) => a.id - b.id);
+    return {
+      messages: outMessages,
+      tombstones: Array.from(mergedTombstones).sort((a, b) => a - b),
+    };
+  }
+
+  private async mergeDecryptedHistoryIntoLocal(
+    messages: Array<{ id: number; payload: DecryptedPayload }>,
+    tombstones: number[],
+  ): Promise<{ restoredMessages: number; appliedTombstones: number }> {
+    const allTombs = await this.store.addTombstones(tombstones);
+    const tombSet = new Set(allTombs);
+    let appliedTombstones = 0;
+    for (const tid of tombstones) {
+      this.memMsgCache.delete(tid);
+      try {
+        await this.store.removeCachedMessage(tid);
+        appliedTombstones++;
+      } catch {}
+    }
+
+    const existingEntries = await this.store.getAllCachedMessages();
+    const existingMap = new Map<number, DecryptedPayload>(existingEntries.map((e) => [e.id, e.payload]));
+    let restoredMessages = 0;
+
+    for (const item of messages) {
+      if (tombSet.has(item.id)) continue;
+      const cur = existingMap.get(item.id);
+      const nextVer = Number(item.payload.editVersion || 0);
+      const curVer = cur ? Number(cur.editVersion || 0) : -1;
+      if (!cur || nextVer > curVer) {
+        this.memMsgCache.set(item.id, item.payload);
+        await this.store.setCachedMessage(item.id, item.payload);
+        restoredMessages++;
+      }
+    }
+    return { restoredMessages, appliedTombstones };
+  }
+
+  private splitIntoPlaintextChunks(
+    messages: Array<{ id: number; payload: DecryptedPayload }>,
+    tombstones: number[],
+    maxChunkRawBytes: number,
+  ): Array<{ messages: Array<{ id: number; payload: DecryptedPayload }>; tombstones: number[] }> {
+    const cap = Math.max(4096, Math.floor(maxChunkRawBytes || DEFAULT_MAX_CHUNK_RAW_BYTES));
+    const chunks: Array<{ messages: Array<{ id: number; payload: DecryptedPayload }>; tombstones: number[] }> = [];
+    let curMsgs: Array<{ id: number; payload: DecryptedPayload }> = [];
+    let curSize = 64;
+
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      const mLen = JSON.stringify(m).length + 2;
+      if (curMsgs.length > 0 && curSize + mLen > cap) {
+        chunks.push({ messages: curMsgs, tombstones: chunks.length === 0 ? tombstones : [] });
+        curMsgs = [];
+        curSize = 64;
+      }
+      curMsgs.push(m);
+      curSize += mLen;
+    }
+
+    if (curMsgs.length > 0 || chunks.length === 0) {
+      chunks.push({ messages: curMsgs, tombstones: chunks.length === 0 ? tombstones : [] });
+    }
+    return chunks;
+  }
+
+  async backupNow(opts?: {
+    forceFull?: boolean;
+    maxChunkRawBytes?: number;
+    auto?: boolean;
+  }): Promise<{
+    skipped?: boolean;
+    mode: 'delta' | 'base' | 'skipped';
+    backup_epoch: number;
+    backup_version: number;
+    chunk_count: number;
+    total_size_bytes: number;
+    message_count: number;
+    merged_remote?: boolean;
+  }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      const myDeviceId = await this.ensureInitialized();
+      if (this.deviceStatus && this.deviceStatus.approvalStatus === 'pending') {
+        const refreshed = await this.refreshDeviceStatus();
+        if (refreshed.approvalStatus === 'pending') {
+          throw Object.assign(new Error('Device approval required'), { code: 'DEVICE_PENDING' });
+        }
+      }
+
+      const rawKeyB64 = await this.store.getBackupRecoveryKeyRaw();
+      if (!rawKeyB64) {
+        throw Object.assign(new Error('Recovery key not configured on this device'), { code: 'NO_RECOVERY_KEY' });
+      }
+      const rawKeyBytes = new Uint8Array(base64ToArrayBuffer(rawKeyB64));
+      const maxRaw = opts?.maxChunkRawBytes || DEFAULT_MAX_CHUNK_RAW_BYTES;
+      let mergedRemote = false;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const srv = await this.getBackupStatus();
+        const sync = await this.store.getBackupSyncState();
+
+        if (sync.pinnedVersion > 0 && srv.exists && srv.backup_version < sync.pinnedVersion) {
+          throw Object.assign(new Error('Backup version rollback detected'), { code: 'BACKUP_ROLLBACK_DETECTED' });
+        }
+
+        if (srv.exists && (srv.backup_version > sync.version || srv.backup_epoch !== sync.epoch)) {
+          const remoteHistory = await this.downloadAndDecryptBackupChunks(
+            rawKeyBytes,
+            srv.backup_epoch,
+            srv.kdf_salt,
+            srv.chunks,
+          );
+          await this.mergeDecryptedHistoryIntoLocal(remoteHistory.messages, remoteHistory.tombstones);
+          mergedRemote = true;
+          const nextMap: Record<string, number> = {};
+          for (const rm of remoteHistory.messages) {
+            nextMap[String(rm.id)] = Number(rm.payload.editVersion || 0);
+          }
+          await this.store.setBackupSyncState({
+            epoch: srv.backup_epoch,
+            version: srv.backup_version,
+            pinnedVersion: Math.max(sync.pinnedVersion, srv.backup_version),
+            kdfSalt: srv.kdf_salt,
+            backedUpMsgVersions: nextMap,
+            backedUpTombstones: remoteHistory.tombstones,
+            lastAutoBackupAt: sync.lastAutoBackupAt,
+          });
+        }
+
+        const freshSync = await this.store.getBackupSyncState();
+        const [allLocalEntries, allTombstones] = await Promise.all([
+          this.store.getAllCachedMessages(),
+          this.store.getTombstones(),
+        ]);
+        const tombSet = new Set(allTombstones);
+        const liveEntries = allLocalEntries.filter((e) => !tombSet.has(e.id));
+
+        const prevTombSet = new Set(freshSync.backedUpTombstones);
+        const dirtyMessages = liveEntries.filter(
+          (e) => freshSync.backedUpMsgVersions[String(e.id)] !== Number(e.payload.editVersion || 0),
+        );
+        const dirtyTombstones = allTombstones.filter((tid) => !prevTombSet.has(tid));
+
+        if (srv.exists && !opts?.forceFull && dirtyMessages.length === 0 && dirtyTombstones.length === 0) {
+          await this.store.setBackupSyncState({
+            ...freshSync,
+            lastAutoBackupAt: Date.now(),
+          });
+          this.pendingBackupDirty = 0;
+          return {
+            skipped: true,
+            mode: 'skipped',
+            backup_epoch: srv.backup_epoch,
+            backup_version: srv.backup_version,
+            chunk_count: srv.chunk_count,
+            total_size_bytes: srv.total_size_bytes,
+            message_count: liveEntries.length,
+            merged_remote: mergedRemote,
+          };
+        }
+
+        const deltaRawBytes = JSON.stringify({ v: 1, messages: dirtyMessages, tombstones: dirtyTombstones }).length;
+        const baseChunks = Math.max(1, Math.min(srv.chunk_count, Number(srv.base_chunk_count || srv.chunk_count)));
+        const deltaChunks = srv.chunk_count - baseChunks;
+        const canAppendDelta =
+          srv.exists &&
+          !opts?.forceFull &&
+          srv.chunk_count > 0 &&
+          deltaChunks < BACKUP_COMPACT_THRESHOLD - 1 &&
+          srv.chunk_count < BACKUP_MAX_CHUNKS_PER_EPOCH &&
+          deltaRawBytes <= maxRaw &&
+          Boolean(srv.kdf_salt);
+
+        if (canAppendDelta) {
+          const seq = srv.chunk_count;
+          const prevSha = srv.chunks[seq - 1].sha256_b64;
+          const aesKey = await deriveBackupAesKey(rawKeyBytes, srv.kdf_salt, this.userId, srv.backup_epoch);
+          const plainJson = new TextEncoder().encode(
+            JSON.stringify({ v: 1, messages: dirtyMessages, tombstones: dirtyTombstones }),
+          );
+          const compressed = await compressPayloadBytes(plainJson);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const ivB64 = bytesToBase64(iv);
+          const aad = utf8ToArrayBuffer(`pg-backup-chunk-v1|${this.userId}|${srv.backup_epoch}|${seq}|${prevSha}`);
+          const encBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aesKey, compressed);
+          const encBytes = new Uint8Array(encBuf);
+          const shaB64 = await sha256B64Bytes(encBytes);
+          const nextVer = srv.backup_version + 1;
+          const maxMsgId = dirtyMessages.reduce((mx, m) => (m.id > mx ? m.id : mx), srv.last_msg_id);
+
+          const deltaMsg = `pg-backup-delta-v1|${this.userId}|${myDeviceId}|${srv.backup_epoch}|${srv.backup_version}|${nextVer}|${seq}|${ivB64}|${shaB64}|${encBytes.byteLength}|${srv.kdf_salt}`;
+          const signature = await this.signEcdsaP256(deltaMsg);
+
+          const fd = new FormData();
+          fd.append('device_id', String(myDeviceId));
+          fd.append('epoch', String(srv.backup_epoch));
+          fd.append('expected_version', String(srv.backup_version));
+          fd.append('chunk_seq', String(seq));
+          fd.append('iv_b64', ivB64);
+          fd.append('sha256_b64', shaB64);
+          fd.append('msg_count', String(dirtyMessages.length));
+          fd.append('max_msg_id', String(maxMsgId));
+          fd.append('total_message_count', String(liveEntries.length));
+          fd.append('kdf_salt', srv.kdf_salt);
+          fd.append('signature', signature);
+          fd.append('chunk', new Blob([encBytes], { type: 'application/octet-stream' }), `c_${seq}.bin`);
+
+          const upRes = await this.fetchImpl('/api/e2ee/backup/delta', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: fd,
+          });
+          if (upRes.status === 409 && attempt === 0) {
+            continue;
+          }
+          if (!upRes.ok) {
+            const errData = (await upRes.json().catch(() => ({}))) as { error?: string; code?: string };
+            throw Object.assign(new Error(errData.error || 'Delta backup failed'), {
+              code: errData.code || 'BACKUP_FAILED',
+            });
+          }
+          const upData = (await upRes.json()) as {
+            backup_epoch: number;
+            backup_version: number;
+            chunk_count: number;
+            total_size_bytes: number;
+          };
+
+          const nextVersionsMap: Record<string, number> = {};
+          for (const e of liveEntries) nextVersionsMap[String(e.id)] = Number(e.payload.editVersion || 0);
+          await this.store.setBackupSyncState({
+            epoch: upData.backup_epoch,
+            version: upData.backup_version,
+            pinnedVersion: Math.max(freshSync.pinnedVersion, upData.backup_version),
+            kdfSalt: srv.kdf_salt,
+            backedUpMsgVersions: nextVersionsMap,
+            backedUpTombstones: allTombstones,
+            lastAutoBackupAt: Date.now(),
+          });
+          this.pendingBackupDirty = 0;
+          return {
+            mode: 'delta',
+            backup_epoch: upData.backup_epoch,
+            backup_version: upData.backup_version,
+            chunk_count: upData.chunk_count,
+            total_size_bytes: upData.total_size_bytes,
+            message_count: liveEntries.length,
+            merged_remote: mergedRemote,
+          };
+        }
+
+        const targetEpoch = srv.backup_version > 0 ? srv.backup_epoch + 1 : Math.max(1, srv.backup_epoch);
+        const kdfSalt = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
+        const aesKey = await deriveBackupAesKey(rawKeyBytes, kdfSalt, this.userId, targetEpoch);
+        const plainChunks = this.splitIntoPlaintextChunks(liveEntries, allTombstones, maxRaw);
+
+        const stagedMeta: Array<{ chunk_seq: number; sha256_b64: string; size_bytes: number }> = [];
+        let prevSha = 'GENESIS';
+        let overallMaxId = 0;
+
+        for (let seq = 0; seq < plainChunks.length; seq++) {
+          const pc = plainChunks[seq];
+          const plainJson = new TextEncoder().encode(
+            JSON.stringify({ v: 1, messages: pc.messages, tombstones: pc.tombstones }),
+          );
+          const compressed = await compressPayloadBytes(plainJson);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const ivB64 = bytesToBase64(iv);
+          const aad = utf8ToArrayBuffer(`pg-backup-chunk-v1|${this.userId}|${targetEpoch}|${seq}|${prevSha}`);
+          const encBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aesKey, compressed);
+          const encBytes = new Uint8Array(encBuf);
+          const shaB64 = await sha256B64Bytes(encBytes);
+          const chunkMaxId = pc.messages.reduce((mx, m) => (m.id > mx ? m.id : mx), 0);
+          if (chunkMaxId > overallMaxId) overallMaxId = chunkMaxId;
+
+          const stageMsg = `pg-backup-stage-v1|${this.userId}|${myDeviceId}|${targetEpoch}|${seq}|${ivB64}|${shaB64}|${encBytes.byteLength}`;
+          const stageSig = await this.signEcdsaP256(stageMsg);
+
+          const fd = new FormData();
+          fd.append('device_id', String(myDeviceId));
+          fd.append('target_epoch', String(targetEpoch));
+          fd.append('chunk_seq', String(seq));
+          fd.append('iv_b64', ivB64);
+          fd.append('sha256_b64', shaB64);
+          fd.append('msg_count', String(pc.messages.length));
+          fd.append('max_msg_id', String(chunkMaxId));
+          fd.append('signature', stageSig);
+          fd.append('chunk', new Blob([encBytes], { type: 'application/octet-stream' }), `c_${seq}.bin`);
+
+          const stgRes = await this.fetchImpl('/api/e2ee/backup/stage-chunk', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: fd,
+          });
+          if (stgRes.status === 409 && attempt === 0) {
+            stagedMeta.length = 0;
+            break;
+          }
+          if (!stgRes.ok) {
+            const errData = (await stgRes.json().catch(() => ({}))) as { error?: string; code?: string };
+            throw Object.assign(new Error(errData.error || 'Failed to stage backup chunk'), {
+              code: errData.code || 'BACKUP_FAILED',
+            });
+          }
+          stagedMeta.push({ chunk_seq: seq, sha256_b64: shaB64, size_bytes: encBytes.byteLength });
+          prevSha = shaB64;
+        }
+
+        if (stagedMeta.length === 0 && attempt === 0) {
+          continue;
+        }
+
+        const nextVer = srv.backup_version + 1;
+        const digestsCsv = stagedMeta.map((c) => `${c.chunk_seq}:${c.sha256_b64}:${c.size_bytes}`).join(',');
+        const commitMsg = `pg-backup-commit-v1|${this.userId}|${myDeviceId}|${targetEpoch}|${srv.backup_version}|${nextVer}|${kdfSalt}|${digestsCsv}`;
+        const commitSig = await this.signEcdsaP256(commitMsg);
+
+        const comRes = await this.fetchImpl('/api/e2ee/backup/commit', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id: myDeviceId,
+            target_epoch: targetEpoch,
+            expected_version: srv.backup_version,
+            next_version: nextVer,
+            kdf_salt: kdfSalt,
+            total_message_count: liveEntries.length,
+            last_msg_id: overallMaxId,
+            enabled: srv.enabled || !opts?.auto,
+            chunks: stagedMeta,
+            signature: commitSig,
+          }),
+        });
+        if (comRes.status === 409 && attempt === 0) {
+          continue;
+        }
+        if (!comRes.ok) {
+          const errData = (await comRes.json().catch(() => ({}))) as { error?: string; code?: string };
+          throw Object.assign(new Error(errData.error || 'Backup commit failed'), {
+            code: errData.code || 'BACKUP_FAILED',
+          });
+        }
+        const comData = (await comRes.json()) as {
+          backup_epoch: number;
+          backup_version: number;
+          chunk_count: number;
+          total_size_bytes: number;
+        };
+
+        const nextVersionsMap: Record<string, number> = {};
+        for (const e of liveEntries) nextVersionsMap[String(e.id)] = Number(e.payload.editVersion || 0);
+        await this.store.setBackupSyncState({
+          epoch: comData.backup_epoch,
+          version: comData.backup_version,
+          pinnedVersion: Math.max(freshSync.pinnedVersion, comData.backup_version),
+          kdfSalt,
+          backedUpMsgVersions: nextVersionsMap,
+          backedUpTombstones: allTombstones,
+          lastAutoBackupAt: Date.now(),
+        });
+        this.pendingBackupDirty = 0;
+        return {
+          mode: 'base',
+          backup_epoch: comData.backup_epoch,
+          backup_version: comData.backup_version,
+          chunk_count: comData.chunk_count,
+          total_size_bytes: comData.total_size_bytes,
+          message_count: liveEntries.length,
+          merged_remote: mergedRemote,
+        };
+      }
+
+      throw Object.assign(new Error('Backup version conflict'), { code: 'BACKUP_VERSION_CONFLICT' });
+    });
+  }
+
+  async restoreFromBackup(formattedRecoveryKey: string): Promise<{
+    restoredMessages: number;
+    appliedTombstones: number;
+    backup_epoch: number;
+    backup_version: number;
+  }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      await this.ensureInitialized();
+      const rawKeyBytes = await parseRecoveryKey(formattedRecoveryKey);
+      const srv = await this.getBackupStatus();
+      if (!srv.exists || srv.chunks.length === 0 || !srv.kdf_salt) {
+        throw Object.assign(new Error('No backup found'), { code: 'NO_BACKUP_FOUND' });
+      }
+      const sync = await this.store.getBackupSyncState();
+      if (sync.pinnedVersion > 0 && srv.backup_version < sync.pinnedVersion) {
+        throw Object.assign(new Error('Backup version rollback detected'), { code: 'BACKUP_ROLLBACK_DETECTED' });
+      }
+
+      const decrypted = await this.downloadAndDecryptBackupChunks(
+        rawKeyBytes,
+        srv.backup_epoch,
+        srv.kdf_salt,
+        srv.chunks,
+      );
+
+      const { restoredMessages, appliedTombstones } = await this.mergeDecryptedHistoryIntoLocal(
+        decrypted.messages,
+        decrypted.tombstones,
+      );
+
+      await this.store.setBackupRecoveryKeyRaw(bytesToBase64(rawKeyBytes));
+      const versionsMap: Record<string, number> = {};
+      for (const m of decrypted.messages) versionsMap[String(m.id)] = Number(m.payload.editVersion || 0);
+      await this.store.setBackupSyncState({
+        epoch: srv.backup_epoch,
+        version: srv.backup_version,
+        pinnedVersion: Math.max(sync.pinnedVersion, srv.backup_version),
+        kdfSalt: srv.kdf_salt,
+        backedUpMsgVersions: versionsMap,
+        backedUpTombstones: decrypted.tombstones,
+        lastAutoBackupAt: Date.now(),
+      });
+      this.postSync({ type: 'backup_restored', restoredMessages });
+      return {
+        restoredMessages,
+        appliedTombstones,
+        backup_epoch: srv.backup_epoch,
+        backup_version: srv.backup_version,
+      };
+    });
+  }
+
+  async deleteBackup(password?: string): Promise<{ success: boolean }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      const myDeviceId = await this.ensureInitialized();
+      const srv = await this.getBackupStatus();
+      const ts = Date.now();
+      let body: Record<string, unknown>;
+      if (password) {
+        body = { password };
+      } else {
+        const msg = `pg-backup-delete-v1|${this.userId}|${myDeviceId}|${srv.backup_version}|${ts}`;
+        const signature = await this.signEcdsaP256(msg);
+        body = {
+          device_id: myDeviceId,
+          expected_version: srv.backup_version,
+          timestamp: ts,
+          signature,
+        };
+      }
+      const res = await this.fetchImpl('/api/e2ee/backup/delete', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        throw Object.assign(new Error(errData.error || 'Failed to delete backup'), {
+          code: errData.code || 'DELETE_BACKUP_FAILED',
+        });
+      }
+      await this.store.setBackupRecoveryKeyRaw(null);
+      await this.store.clearBackupSyncState();
+      this.autoBackupEnabledCache = false;
+      this.pendingBackupDirty = 0;
+      return { success: true };
+    });
+  }
+
+  private async verifyOwnApprovedDeviceSigningKey(targetDeviceId: number): Promise<string> {
+    const myDeviceId = await this.ensureInitialized();
+    const { devices, device_list } = await this.listOwnDevices();
+    const target = devices.find((d) => Number(d.device_id) === Number(targetDeviceId));
+    if (!target || target.approval_status !== 'approved' || !target.signing_key_pub) {
+      throw Object.assign(new Error('Target device is not approved'), { code: 'DEVICE_NOT_TRUSTED' });
+    }
+    if (!device_list || !Array.isArray(device_list.devices)) {
+      throw Object.assign(new Error('Missing signed device list'), { code: 'UNVERIFIED_DEVICE_LIST' });
+    }
+    const entries: SignedDeviceListEntry[] = device_list.devices.map((e) => ({
+      device_id: Number(e.device_id),
+      identity_key_pub: String(e.identity_key_pub || ''),
+      signing_key_pub: String(e.signing_key_pub || ''),
+    }));
+    const listedTarget = entries.find((e) => e.device_id === Number(targetDeviceId));
+    const listedMe = entries.find((e) => e.device_id === Number(myDeviceId));
+    const signerEntry = entries.find((e) => e.device_id === Number(device_list.signer_device_id));
+    if (
+      !listedTarget ||
+      listedTarget.signing_key_pub !== target.signing_key_pub ||
+      listedTarget.identity_key_pub !== target.identity_key_pub ||
+      !listedMe ||
+      !signerEntry
+    ) {
+      throw Object.assign(new Error('Device not present in signed device list'), { code: 'UNVERIFIED_DEVICE_LIST' });
+    }
+    const canonical = buildDeviceListCanonicalMsg(
+      this.userId,
+      Number(device_list.list_version),
+      Boolean(device_list.is_recovery_reset),
+      entries,
+    );
+    const sigOk = await verifySignalEd25519(
+      signerEntry.identity_key_pub,
+      canonical,
+      String(device_list.signal_signature || ''),
+    );
+    if (!sigOk) {
+      throw Object.assign(new Error('Invalid signed device list signature'), { code: 'UNVERIFIED_DEVICE_LIST' });
+    }
+    return listedTarget.signing_key_pub;
+  }
+
+  async startDeviceTransferReceive(): Promise<{
+    transferId: string;
+    code6: string;
+    qrPayload: string;
+    qrModules: boolean[][];
+    qrSize: number;
+    expiresAt: string;
+    requesterDeviceId: number;
+    requesterEphPub: string;
+  }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      const myDeviceId = await this.ensureInitialized();
+      if (this.deviceStatus && this.deviceStatus.approvalStatus === 'pending') {
+        const st = await this.refreshDeviceStatus();
+        if (st.approvalStatus === 'pending') {
+          throw Object.assign(new Error('Device approval required'), { code: 'DEVICE_PENDING' });
+        }
+      }
+      const ephKp = (await crypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        ['deriveBits'],
+      )) as CryptoKeyPair;
+      const ephPubSpki = bytesToBase64((await crypto.subtle.exportKey('spki', ephKp.publicKey)) as ArrayBuffer);
+      const transferId = randomHexLocal(16);
+      const initMsg = `pg-transfer-init-v1|${this.userId}|${transferId}|${myDeviceId}|${ephPubSpki}`;
+      const signature = await this.signEcdsaP256(initMsg);
+
+      const res = await this.fetchImpl('/api/e2ee/transfer/init', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: myDeviceId,
+          transfer_id: transferId,
+          requester_eph_pub: ephPubSpki,
+          signature,
+        }),
+      });
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        throw Object.assign(new Error(errData.error || 'Transfer init failed'), {
+          code: errData.code || 'TRANSFER_FAILED',
+        });
+      }
+      const data = (await res.json()) as { expires_at: string };
+      this.activeReceiveTransfers.set(transferId, {
+        ephPriv: ephKp.privateKey,
+        ephPub: ephPubSpki,
+        deviceId: myDeviceId,
+      });
+
+      const code6 = await computeTransferCode6(this.userId, transferId, myDeviceId, ephPubSpki);
+      const qrPayload = `PGX1:${this.userId}:${myDeviceId}:${transferId}:${ephPubSpki}`;
+      const { qrModules, qrSize } = buildQrMatrix(qrPayload);
+      return {
+        transferId,
+        code6,
+        qrPayload,
+        qrModules,
+        qrSize,
+        expiresAt: data.expires_at,
+        requesterDeviceId: myDeviceId,
+        requesterEphPub: ephPubSpki,
+      };
+    });
+  }
+
+  parseTransferQrPayload(raw: string): {
+    userId: number;
+    requesterDeviceId: number;
+    transferId: string;
+    requesterEphPub: string;
+  } | null {
+    const s = String(raw || '').trim();
+    if (!s.startsWith('PGX1:')) return null;
+    const parts = s.split(':');
+    if (parts.length < 5) return null;
+    const userId = Number(parts[1]);
+    const requesterDeviceId = Number(parts[2]);
+    const transferId = parts[3];
+    const requesterEphPub = parts.slice(4).join(':');
+    if (userId !== this.userId || !Number.isInteger(requesterDeviceId) || requesterDeviceId <= 0) return null;
+    if (!/^[a-f0-9]{24,64}$/i.test(transferId) || requesterEphPub.length < 64) return null;
+    return { userId, requesterDeviceId, transferId, requesterEphPub };
+  }
+
+  async listPendingDeviceTransfers(): Promise<
+    Array<{
+      transfer_id: string;
+      requester_device_id: number;
+      requester_eph_pub: string;
+      status: string;
+      expires_at: string;
+      code6: string;
+      is_mine: boolean;
+    }>
+  > {
+    const myDeviceId = await this.ensureInitialized();
+    const res = await this.fetchImpl('/api/e2ee/transfer/pending', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!res.ok) throw Object.assign(new Error('Failed to load transfers'), { code: 'NETWORK' });
+    const data = (await res.json()) as {
+      transfers?: Array<{
+        transfer_id: string;
+        requester_device_id: number;
+        requester_eph_pub: string;
+        status: string;
+        expires_at: string;
+      }>;
+    };
+    return Promise.all(
+      (data.transfers || []).map(async (tr) => ({
+        ...tr,
+        code6: await computeTransferCode6(
+          this.userId,
+          tr.transfer_id,
+          Number(tr.requester_device_id),
+          tr.requester_eph_pub,
+        ),
+        is_mine: Number(tr.requester_device_id) === Number(myDeviceId),
+      })),
+    );
+  }
+
+  async sendHistoryToDevice(req: {
+    transferId: string;
+    requesterDeviceId: number;
+    requesterEphPub: string;
+    expectedCode6?: string;
+    includeRecoveryKey?: boolean;
+  }): Promise<{ success: boolean; messageCount: number; sizeBytes: number }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      const myDeviceId = await this.ensureInitialized();
+      if (Number(req.requesterDeviceId) === Number(myDeviceId)) {
+        throw Object.assign(new Error('Cannot transfer to same device'), { code: 'SAME_DEVICE_TRANSFER' });
+      }
+      await this.verifyOwnApprovedDeviceSigningKey(req.requesterDeviceId);
+
+      if (req.expectedCode6) {
+        const actualCode = await computeTransferCode6(
+          this.userId,
+          req.transferId,
+          req.requesterDeviceId,
+          req.requesterEphPub,
+        );
+        if (actualCode.replace(/\s+/g, '') !== String(req.expectedCode6).replace(/\s+/g, '')) {
+          throw Object.assign(new Error('Transfer verification code mismatch'), { code: 'CODE_MISMATCH' });
+        }
+      }
+
+      const senderEphKp = (await crypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        ['deriveBits'],
+      )) as CryptoKeyPair;
+      const senderEphPubSpki = bytesToBase64((await crypto.subtle.exportKey('spki', senderEphKp.publicKey)) as ArrayBuffer);
+      const remotePubKey = await crypto.subtle.importKey(
+        'spki',
+        base64ToArrayBuffer(req.requesterEphPub),
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        [],
+      );
+      const sharedBits = await crypto.subtle.deriveBits(
+        { name: 'ECDH', public: remotePubKey } as unknown as SubtleCryptoDeriveKeyAlgorithm,
+        senderEphKp.privateKey,
+        256,
+      );
+
+      const bindingInfo = `pg-transfer-v1|${this.userId}|${req.transferId}|${req.requesterDeviceId}|${req.requesterEphPub}|${myDeviceId}|${senderEphPubSpki}`;
+      const ikm = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
+      const xferAesKey = await crypto.subtle.deriveKey(
+        {
+          name: 'HKDF',
+          hash: 'SHA-256',
+          salt: utf8ToArrayBuffer(req.transferId),
+          info: utf8ToArrayBuffer(bindingInfo),
+        },
+        ikm,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt'],
+      );
+
+      const [allEntries, tombstones, rawRecoveryKey] = await Promise.all([
+        this.store.getAllCachedMessages(),
+        this.store.getTombstones(),
+        this.store.getBackupRecoveryKeyRaw(),
+      ]);
+      const tombSet = new Set(tombstones);
+      const liveMessages = allEntries.filter((e) => !tombSet.has(e.id));
+
+      const bundleObj: Record<string, unknown> = {
+        v: 1,
+        messages: liveMessages,
+        tombstones,
+      };
+      if (req.includeRecoveryKey !== false && rawRecoveryKey) {
+        bundleObj.recoveryKeyRawB64 = rawRecoveryKey;
+      }
+
+      const plainBytes = new TextEncoder().encode(JSON.stringify(bundleObj));
+      const compressed = await compressPayloadBytes(plainBytes);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ivB64 = bytesToBase64(iv);
+      const encBuf = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: utf8ToArrayBuffer(bindingInfo) },
+        xferAesKey,
+        compressed,
+      );
+      const encBytes = new Uint8Array(encBuf);
+      const shaB64 = await sha256B64Bytes(encBytes);
+
+      const uploadMsg = `pg-transfer-v1|${this.userId}|${req.transferId}|${req.requesterDeviceId}|${req.requesterEphPub}|${myDeviceId}|${senderEphPubSpki}|${ivB64}|${shaB64}|${encBytes.byteLength}`;
+      const signature = await this.signEcdsaP256(uploadMsg);
+
+      const fd = new FormData();
+      fd.append('transfer_id', req.transferId);
+      fd.append('sender_device_id', String(myDeviceId));
+      fd.append('sender_eph_pub', senderEphPubSpki);
+      fd.append('iv_b64', ivB64);
+      fd.append('payload_sha256', shaB64);
+      fd.append('signature', signature);
+      fd.append('payload', new Blob([encBytes], { type: 'application/octet-stream' }), 'transfer.bin');
+
+      const res = await this.fetchImpl('/api/e2ee/transfer/upload', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        throw Object.assign(new Error(errData.error || 'Transfer upload failed'), {
+          code: errData.code || 'TRANSFER_FAILED',
+        });
+      }
+      return { success: true, messageCount: liveMessages.length, sizeBytes: encBytes.byteLength };
+    });
+  }
+
+  async completeDeviceTransferReceive(transferId: string): Promise<{
+    restoredMessages: number;
+    appliedTombstones: number;
+    importedRecoveryKey: boolean;
+  }> {
+    return withCryptoLock(`pg_e2ee_u_${this.userId}:backup`, async () => {
+      const myDeviceId = await this.ensureInitialized();
+      const session = this.activeReceiveTransfers.get(transferId);
+      if (!session || session.deviceId !== myDeviceId) {
+        throw Object.assign(new Error('Transfer session not found on this device'), { code: 'TRANSFER_SESSION_MISSING' });
+      }
+
+      const res = await this.fetchImpl(
+        `/api/e2ee/transfer/download?transfer_id=${encodeURIComponent(transferId)}&device_id=${myDeviceId}`,
+        { credentials: 'same-origin', cache: 'no-store' },
+      );
+      if (!res.ok) {
+        const errData = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        throw Object.assign(new Error(errData.error || 'Transfer download failed'), {
+          code: errData.code || 'TRANSFER_NOT_READY',
+        });
+      }
+
+      const senderDeviceId = Number(res.headers?.get('X-Transfer-Sender-Device') || 0);
+      const senderEphPub = String(res.headers?.get('X-Transfer-Sender-Eph-Pub') || '').trim();
+      const senderSig = String(res.headers?.get('X-Transfer-Sender-Sig') || '').trim();
+      const ivB64 = String(res.headers?.get('X-Transfer-Iv') || '').trim();
+      const expectedSha = String(res.headers?.get('X-Transfer-Sha256') || '').trim();
+      if (!senderDeviceId || !senderEphPub || !senderSig || !ivB64 || !expectedSha) {
+        throw Object.assign(new Error('Incomplete transfer headers'), { code: 'TRANSFER_CORRUPTED' });
+      }
+
+      const encBuf = await res.arrayBuffer();
+      const encBytes = new Uint8Array(encBuf);
+      const actualSha = await sha256B64Bytes(encBytes);
+      if (actualSha !== expectedSha) {
+        throw Object.assign(new Error('Transfer checksum mismatch'), { code: 'TRANSFER_CORRUPTED' });
+      }
+
+      const trustedSenderSigningPub = await this.verifyOwnApprovedDeviceSigningKey(senderDeviceId);
+      const uploadMsg = `pg-transfer-v1|${this.userId}|${transferId}|${myDeviceId}|${session.ephPub}|${senderDeviceId}|${senderEphPub}|${ivB64}|${expectedSha}|${encBytes.byteLength}`;
+      const sigOk = await verifyEcdsaP256Local(trustedSenderSigningPub, uploadMsg, senderSig);
+      if (!sigOk) {
+        throw Object.assign(new Error('Invalid transfer sender signature'), { code: 'INVALID_TRANSFER_SIG' });
+      }
+
+      const senderEphKey = await crypto.subtle.importKey(
+        'spki',
+        base64ToArrayBuffer(senderEphPub),
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        [],
+      );
+      const sharedBits = await crypto.subtle.deriveBits(
+        { name: 'ECDH', public: senderEphKey } as unknown as SubtleCryptoDeriveKeyAlgorithm,
+        session.ephPriv,
+        256,
+      );
+      const bindingInfo = `pg-transfer-v1|${this.userId}|${transferId}|${myDeviceId}|${session.ephPub}|${senderDeviceId}|${senderEphPub}`;
+      const ikm = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
+      const xferAesKey = await crypto.subtle.deriveKey(
+        {
+          name: 'HKDF',
+          hash: 'SHA-256',
+          salt: utf8ToArrayBuffer(transferId),
+          info: utf8ToArrayBuffer(bindingInfo),
+        },
+        ikm,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt'],
+      );
+
+      let plainFramed: ArrayBuffer;
+      try {
+        plainFramed = await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv: new Uint8Array(base64ToArrayBuffer(ivB64)),
+            additionalData: utf8ToArrayBuffer(bindingInfo),
+          },
+          xferAesKey,
+          encBytes,
+        );
+      } catch {
+        throw Object.assign(new Error('Transfer decryption failed'), { code: 'TRANSFER_CORRUPTED' });
+      }
+
+      const rawJsonBytes = await decompressPayloadBytes(new Uint8Array(plainFramed));
+      const parsed = JSON.parse(new TextDecoder().decode(rawJsonBytes)) as {
+        messages?: Array<{ id: number; payload: DecryptedPayload }>;
+        tombstones?: number[];
+        recoveryKeyRawB64?: string;
+      };
+
+      const { restoredMessages, appliedTombstones } = await this.mergeDecryptedHistoryIntoLocal(
+        Array.isArray(parsed.messages) ? parsed.messages : [],
+        Array.isArray(parsed.tombstones) ? parsed.tombstones : [],
+      );
+
+      let importedRecoveryKey = false;
+      if (parsed.recoveryKeyRawB64 && !(await this.store.getBackupRecoveryKeyRaw())) {
+        const rawRk = new Uint8Array(base64ToArrayBuffer(parsed.recoveryKeyRawB64));
+        if (rawRk.byteLength === 32) {
+          await this.store.setBackupRecoveryKeyRaw(parsed.recoveryKeyRawB64);
+          importedRecoveryKey = true;
+        }
+      }
+
+      this.activeReceiveTransfers.delete(transferId);
+
+      const compRes = await this.fetchImpl('/api/e2ee/transfer/complete', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transfer_id: transferId, device_id: myDeviceId }),
+      });
+      if (!compRes.ok) {
+        const errData = (await compRes.json().catch(() => ({}))) as { error?: string; code?: string };
+        throw Object.assign(new Error(errData.error || 'Transfer completion failed'), {
+          code: errData.code || 'TRANSFER_COMPLETE_FAILED',
+        });
+      }
+
+      this.postSync({ type: 'backup_restored', restoredMessages });
+      return { restoredMessages, appliedTombstones, importedRecoveryKey };
+    });
   }
 
   async close(): Promise<void> {
+    this.activeReceiveTransfers.clear();
     this.revokeAllMediaUrls();
     try {
       this.syncChannel?.close();
@@ -2992,5 +4553,8 @@ if (globalObj) {
     E2eeClient,
     computeDeviceVerificationCode,
     withCryptoLock,
+    generateRecoveryKey,
+    parseRecoveryKey,
+    computeTransferCode6,
   };
 }

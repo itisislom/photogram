@@ -2005,6 +2005,18 @@ export function messagesPage(
         markListenedOnce();
       } catch (err) {
         uiHandle.setPlaying(false);
+        if (err && err.code === 'MEDIA_UNAVAILABLE') {
+          var unavailText = (state.secI18n && state.secI18n.mediaUnavailable) || state.e2eeDecryptFailed;
+          if (wrap && wrap.parentNode) {
+            var errEl = document.createElement('div');
+            errEl.className = 'dm-msg-text dm-msg-decrypt-err';
+            errEl.textContent = unavailText;
+            wrap.parentNode.replaceChild(errEl, wrap);
+          } else if (window.showAppToast) {
+            window.showAppToast(unavailText);
+          }
+          return;
+        }
         if (window.showAppToast) window.showAppToast(state.networkError);
       }
     }
@@ -2305,11 +2317,13 @@ export function messagesPage(
         e2eeClient.decryptMediaToObjectUrl(imageKey, payload.media).then(function(objUrl) {
           img.src = objUrl;
           imgBtn.setAttribute('data-dm-lightbox', objUrl);
-        }).catch(function() {
+        }).catch(function(err) {
           imgBtn.remove();
           var errEl = document.createElement('div');
           errEl.className = 'dm-msg-text dm-msg-decrypt-err';
-          errEl.textContent = state.e2eeDecryptFailed;
+          errEl.textContent = (err && err.code === 'MEDIA_UNAVAILABLE' && state.secI18n && state.secI18n.mediaUnavailable)
+            ? state.secI18n.mediaUnavailable
+            : state.e2eeDecryptFailed;
           bubble.insertBefore(errEl, timeEl);
         });
       }
@@ -6181,6 +6195,12 @@ export function messagesPage(
   }
 
   function onDmVisibilityChange() {
+    if (document.visibilityState === 'hidden') {
+      if (e2eeClient && typeof e2eeClient.flushAutoBackupIfDue === 'function') {
+        e2eeClient.flushAutoBackupIfDue().catch(function() {});
+      }
+      return;
+    }
     if (document.visibilityState === 'visible') {
       if (micBlockedModal && micBlockedModal.classList.contains('visible') && navigator.permissions && typeof navigator.permissions.query === 'function') {
         navigator.permissions.query({ name: 'microphone' }).then(function(st) {

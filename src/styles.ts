@@ -8344,6 +8344,140 @@ body.dm-lock-scroll {
   line-height: 1.45;
 }
 
+.pg-backup-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 6px 0 4px;
+}
+
+.pg-backup-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.pg-backup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+}
+
+.pg-backup-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pg-backup-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pg-backup-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pg-backup-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pg-backup-stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pg-backup-stat-val {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.pg-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pg-backup-actions .btn {
+  flex: 1 1 140px;
+  min-height: 44px;
+}
+
+.pg-backup-key-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: all;
+}
+
+.pg-backup-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.pg-backup-check-row input {
+  margin-top: 2px;
+  min-width: 18px;
+  min-height: 18px;
+}
+
+.pg-transfer-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.pg-transfer-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-primary);
+}
+
+.pg-transfer-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pg-backup-danger-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
 `;
 }
 
