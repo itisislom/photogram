@@ -3231,10 +3231,6 @@ body {
     transform: scale(1) translate3d(0, 0, 0);
     opacity: 1;
   }
-
-  .comments-sheet-grabber {
-    display: none;
-  }
 }
 
 .feed-comment-btn {
