@@ -1132,8 +1132,9 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
 
   try {
     var deepPostId = new URLSearchParams(window.location.search).get('post');
-    if (deepPostId && /^\d+$/.test(deepPostId)) {
-      var targetPostBtn = document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deepPostId + '"]');
+    if (deepPostId && /^[0-9]+$/.test(deepPostId)) {
+      var targetPostBtn = document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deepPostId + '"]')
+        || document.querySelector('.post-item-btn[data-post-id="' + deepPostId + '"]');
       if (targetPostBtn) {
         try { history.replaceState({ spa: true }, '', window.location.pathname); } catch (he) {}
         openPost(targetPostBtn);

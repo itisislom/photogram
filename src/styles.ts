@@ -4779,7 +4779,7 @@ img, a {
 }
 
 .post-menu-backdrop {
-  z-index: 21000;
+  z-index: 22000;
 }
 
 .post-menu-content {
@@ -5632,6 +5632,43 @@ body.dm-lock-scroll {
   flex-shrink: 0;
 }
 
+.dm-edit-replace-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: default;
+}
+
+.dm-edit-replace-btn:not(:disabled) {
+  cursor: pointer;
+  background: rgba(33, 150, 243, 0.14);
+}
+
+.dm-edit-replace-btn:not(:disabled):active {
+  opacity: 0.75;
+}
+
+.dm-edit-bar-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dm-edit-bar-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+}
+
 .dm-edit-bar-meta {
   flex: 1;
   min-width: 0;
@@ -6245,6 +6282,12 @@ body.dm-lock-scroll {
 
 .dm-lightbox-backdrop {
   z-index: 21500;
+}
+
+#dmLightboxImg {
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .dm-lightbox-inner {

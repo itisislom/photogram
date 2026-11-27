@@ -1787,15 +1787,51 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
   const allowed = await consumeRateLimitAtomic(env, `dm:edit:user:${user.id}`, EDIT_LIMIT_PER_MIN, 60);
   if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
-  const parsed = await readJsonWithLimit<{
-    message_id?: unknown;
-    body?: unknown;
-    sender_device_id?: unknown;
-    envelopes?: unknown;
-  }>(request, 524288);
-  if (!parsed.ok) return jsonError(t.common.networkError, parsed.status);
+  const contentType = (request.headers.get('Content-Type') || '').toLowerCase();
+  let msgId: number | null = null;
+  let plainBodyInput: unknown = undefined;
+  let senderDeviceIdInput: unknown = undefined;
+  let rawEnvelopes: unknown = undefined;
+  let encMediaFile: File | null = null;
 
-  const msgId = parsePositiveId(parsed.data?.message_id);
+  if (contentType.includes('multipart/form-data')) {
+    if (!checkContentLength(request, MAX_DM_ENC_MEDIA_SIZE + 524288)) {
+      return jsonError(t.messages.errImageTooLarge, 413);
+    }
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return jsonError(t.common.networkError, 400);
+    }
+    msgId = parsePositiveId(form.get('message_id'));
+    senderDeviceIdInput = form.get('sender_device_id');
+    const envStr = form.get('envelopes');
+    if (typeof envStr === 'string' && envStr.length <= 524288) {
+      try {
+        rawEnvelopes = JSON.parse(envStr);
+      } catch {
+        rawEnvelopes = null;
+      }
+    }
+    const maybeFile = form.get('encrypted_media');
+    if (maybeFile && typeof maybeFile === 'object' && typeof (maybeFile as File).arrayBuffer === 'function') {
+      encMediaFile = maybeFile as File;
+    }
+  } else {
+    const parsed = await readJsonWithLimit<{
+      message_id?: unknown;
+      body?: unknown;
+      sender_device_id?: unknown;
+      envelopes?: unknown;
+    }>(request, 524288);
+    if (!parsed.ok) return jsonError(t.common.networkError, parsed.status);
+    msgId = parsePositiveId(parsed.data?.message_id);
+    plainBodyInput = parsed.data?.body;
+    senderDeviceIdInput = parsed.data?.sender_device_id;
+    rawEnvelopes = parsed.data?.envelopes;
+  }
+
   if (!msgId) {
     return jsonError(t.common.networkError, 400);
   }
@@ -1831,8 +1867,8 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
   const isLegacyPlaintext = !Boolean(msg.is_encrypted);
   const nextVersion = Number(msg.edit_version || 0) + 1;
 
-  if (isLegacyPlaintext && parsed.data?.envelopes === undefined) {
-    const cleanBody = typeof parsed.data?.body === 'string' ? parsed.data.body.trim() : '';
+  if (isLegacyPlaintext && rawEnvelopes === undefined && !encMediaFile) {
+    const cleanBody = typeof plainBodyInput === 'string' ? plainBodyInput.trim() : '';
     if (!cleanBody && !msg.image_key) {
       return jsonError(t.messages.errEmptyMessage, 400);
     }
@@ -1904,7 +1940,7 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
     );
   }
 
-  const senderDeviceId = parsePositiveId(parsed.data?.sender_device_id);
+  const senderDeviceId = parsePositiveId(senderDeviceIdInput);
   if (!senderDeviceId) {
     return jsonError(t.messages.e2eeRequired, 400);
   }
@@ -1920,7 +1956,7 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
 
   const recipientUserId = Number(msg.user1_id) === Number(user.id) ? Number(msg.user2_id) : Number(msg.user1_id);
   const allowedRecipients = new Set<number>([recipientUserId, Number(user.id)]);
-  const envelopes = validateEnvelopes(parsed.data?.envelopes, allowedRecipients);
+  const envelopes = validateEnvelopes(rawEnvelopes, allowedRecipients);
   if (!envelopes || !envelopes.some((e) => e.u === recipientUserId)) {
     return jsonError(t.messages.e2eeRequired, 400);
   }
@@ -1945,23 +1981,59 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
     return jsonError(t.messages.e2eeRequired, 400);
   }
 
+  const oldImageKey = msg.image_key || '';
+  let nextImageKey = oldImageKey;
+  let uploadedNewKey = '';
+  if (encMediaFile) {
+    if (!oldImageKey) {
+      return jsonError(t.common.networkError, 400);
+    }
+    if (encMediaFile.size < 20 || encMediaFile.size > MAX_DM_ENC_MEDIA_SIZE) {
+      return jsonError(t.messages.errImageTooLarge, 400);
+    }
+    const buf = await encMediaFile.arrayBuffer();
+    if (buf.byteLength < 20 || buf.byteLength > MAX_DM_ENC_MEDIA_SIZE) {
+      return jsonError(t.messages.errImageTooLarge, 400);
+    }
+    const rand = crypto.randomUUID().replace(/-/g, '');
+    uploadedNewKey = `dm/${Number(msg.conversation_id)}/${Date.now()}_${rand}.enc`;
+    await env.STORAGE.put(uploadedNewKey, buf, {
+      httpMetadata: { contentType: 'application/octet-stream' },
+    });
+    nextImageKey = uploadedNewKey;
+  }
+
   const serializedEnvelope = JSON.stringify(verifiedEnvelopes);
 
-  const updated = await env.DB.prepare(
-    `UPDATE messages
-     SET body = '',
-         is_encrypted = 1,
-         sender_device_id = ?,
-         ciphertext_envelope = ?,
-         edited_at = datetime('now'),
-         edit_version = edit_version + 1
-     WHERE id = ? AND sender_id = ? AND deleted_at IS NULL
-     RETURNING edited_at, edit_version`,
-  )
-    .bind(senderDeviceId, serializedEnvelope, msgId, user.id)
-    .first<{ edited_at: string | null; edit_version: number }>();
+  let updated: { edited_at: string | null; edit_version: number } | null = null;
+  try {
+    updated = await env.DB.prepare(
+      `UPDATE messages
+       SET body = '',
+           image_key = ?,
+           is_encrypted = 1,
+           sender_device_id = ?,
+           ciphertext_envelope = ?,
+           edited_at = datetime('now'),
+           edit_version = edit_version + 1
+       WHERE id = ? AND sender_id = ? AND deleted_at IS NULL
+       RETURNING edited_at, edit_version`,
+    )
+      .bind(nextImageKey, senderDeviceId, serializedEnvelope, msgId, user.id)
+      .first<{ edited_at: string | null; edit_version: number }>();
+  } catch {
+    if (uploadedNewKey) {
+      try { await env.STORAGE.delete(uploadedNewKey); } catch {}
+    }
+    return jsonError(t.common.networkError, 500);
+  }
 
-  if (!updated) return jsonError(t.common.networkError, 404);
+  if (!updated) {
+    if (uploadedNewKey) {
+      try { await env.STORAGE.delete(uploadedNewKey); } catch {}
+    }
+    return jsonError(t.common.networkError, 404);
+  }
 
   const editedAt = updated.edited_at || new Date().toISOString();
   const editVer = Number(updated.edit_version || nextVersion);
@@ -1972,7 +2044,7 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
     conversation_id: Number(msg.conversation_id),
     sender_id: user.id,
     body: '',
-    image_key: msg.image_key || '',
+    image_key: nextImageKey,
     is_encrypted: 1,
     sender_device_id: senderDeviceId,
     edited_at: editedAt,
@@ -1980,6 +2052,9 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
   };
   await runBackground(ctx, () =>
     Promise.all([
+      uploadedNewKey && oldImageKey && oldImageKey !== uploadedNewKey
+        ? env.STORAGE.delete(oldImageKey).catch(() => {})
+        : Promise.resolve(),
       emitUserEvent(env, recipientUserId, {
         type: 'message.edited',
         conversation_id: Number(msg.conversation_id),
@@ -2009,6 +2084,7 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
       success: true,
       message_id: msgId,
       conversation_id: Number(msg.conversation_id),
+      image_key: nextImageKey,
       is_encrypted: 1,
       edited_at: editedAt,
       edit_version: editVer,

@@ -318,10 +318,13 @@ export function messagesPage(
     </div>
 
     <div class="dm-edit-bar" id="dmEditBar" style="display:none;">
-      <div class="dm-edit-bar-icon">${EDIT_SM_ICON}</div>
+      <button type="button" class="dm-edit-bar-icon dm-edit-replace-btn" id="dmEditReplaceBtn" disabled aria-label="${escapeHtml(t.messages.photoLabel)}">${EDIT_SM_ICON}</button>
       <div class="dm-edit-bar-meta">
         <div class="dm-edit-bar-title">${escapeHtml(t.messages.editingMessage)}</div>
-        <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+        <div class="dm-edit-bar-preview-row">
+          <img id="dmEditBarThumb" class="dm-edit-bar-thumb" src="" alt="" style="display:none;">
+          <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+        </div>
       </div>
       <button type="button" class="dm-edit-bar-close" id="dmEditCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
@@ -386,10 +389,13 @@ export function messagesPage(
     </div>
 
     <div class="dm-edit-bar" id="dmEditBar" style="display:none;">
-      <div class="dm-edit-bar-icon">${EDIT_SM_ICON}</div>
+      <button type="button" class="dm-edit-bar-icon dm-edit-replace-btn" id="dmEditReplaceBtn" disabled aria-label="${escapeHtml(t.messages.photoLabel)}">${EDIT_SM_ICON}</button>
       <div class="dm-edit-bar-meta">
         <div class="dm-edit-bar-title">${escapeHtml(t.messages.editingMessage)}</div>
-        <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+        <div class="dm-edit-bar-preview-row">
+          <img id="dmEditBarThumb" class="dm-edit-bar-thumb" src="" alt="" style="display:none;">
+          <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+        </div>
       </div>
       <button type="button" class="dm-edit-bar-close" id="dmEditCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
     </div>
@@ -506,6 +512,10 @@ export function messagesPage(
       <button type="button" class="dm-msg-action-btn" id="dmMsgCopyBtn" role="menuitem" style="display:none;">
         ${COPY_SM_ICON}
         <span>${escapeHtml(t.messages.copyMessage)}</span>
+      </button>
+      <button type="button" class="dm-msg-action-btn" id="dmMsgDownloadBtn" role="menuitem" style="display:none;">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>${escapeHtml(t.post.downloadPhoto)}</span>
       </button>
       <button type="button" class="dm-msg-action-btn" id="dmMsgEditBtn" role="menuitem" style="display:none;">
         ${EDIT_SM_ICON}
@@ -808,6 +818,7 @@ export function messagesPage(
   var msgActionList = document.getElementById('dmMsgActionList');
   var msgReplyBtn = document.getElementById('dmMsgReplyBtn');
   var msgCopyBtn = document.getElementById('dmMsgCopyBtn');
+  var msgDownloadBtn = document.getElementById('dmMsgDownloadBtn');
   var msgEditBtn = document.getElementById('dmMsgEditBtn');
   var msgDeleteBtn = document.getElementById('dmMsgDeleteBtn');
   var replyBar = document.getElementById('dmReplyBar');
@@ -815,6 +826,8 @@ export function messagesPage(
   var replyBarPreview = document.getElementById('dmReplyBarPreview');
   var replyCancelBtn = document.getElementById('dmReplyCancelBtn');
   var editBar = document.getElementById('dmEditBar');
+  var editReplaceBtn = document.getElementById('dmEditReplaceBtn');
+  var editBarThumb = document.getElementById('dmEditBarThumb');
   var editBarPreview = document.getElementById('dmEditBarPreview');
   var editCancelBtn = document.getElementById('dmEditCancelBtn');
 
@@ -1049,7 +1062,7 @@ export function messagesPage(
     var hasText = Boolean(inputEl && inputEl.value.trim().length > 0);
     var showSendMode = Boolean(hasText || pendingFile || editingMsg);
     var canSubmit = editingMsg
-      ? Boolean((hasText || editingMsg.existingMedia || editingMsg.imageKey) && !isSending)
+      ? Boolean((hasText || editingMsg.existingMedia || editingMsg.imageKey || editingMsg.replacementFile) && !isSending)
       : Boolean((hasText || pendingFile) && !isSending);
     if (sendBtn) {
       sendBtn.style.display = showSendMode ? 'inline-flex' : 'none';
@@ -1488,10 +1501,19 @@ export function messagesPage(
     return btn;
   }
 
-  function cancelEditMode() {
+  function cancelEditMode(keepReplacementUrl) {
+    if (editingMsg && editingMsg.replacementPreviewUrl && !keepReplacementUrl) {
+      try { URL.revokeObjectURL(editingMsg.replacementPreviewUrl); } catch (e) {}
+    }
     editingMsg = null;
     if (editBar) editBar.style.display = 'none';
     if (editBarPreview) editBarPreview.textContent = '';
+    if (editBarThumb) {
+      editBarThumb.style.display = 'none';
+      editBarThumb.src = '';
+    }
+    if (editReplaceBtn) editReplaceBtn.disabled = true;
+    if (fileInput) fileInput.value = '';
     if (attachBtn) attachBtn.style.display = '';
     if (inputEl) inputEl.value = '';
     syncSendState();
@@ -1522,6 +1544,10 @@ export function messagesPage(
       var txtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
       if (txtEl) currentText = txtEl.textContent || '';
     }
+    var rowImgBtn = row.querySelector('.dm-msg-img-btn');
+    var rowImgEl = row.querySelector('.dm-msg-img');
+    var thumbUrl = (rowImgBtn && rowImgBtn.getAttribute('data-dm-lightbox')) || (rowImgEl && rowImgEl.getAttribute('src')) || '';
+    var hasPhoto = Boolean(imageKey || existingMedia || rowImgBtn);
     clearPendingFile();
     editingMsg = {
       id: msgId,
@@ -1529,9 +1555,22 @@ export function messagesPage(
       imageKey: imageKey,
       existingMedia: existingMedia,
       existingReply: existingReply,
-      originalText: currentText
+      originalText: currentText,
+      hasPhoto: hasPhoto,
+      replacementFile: null,
+      replacementPreviewUrl: ''
     };
     if (attachBtn) attachBtn.style.display = 'none';
+    if (editReplaceBtn) editReplaceBtn.disabled = !hasPhoto;
+    if (editBarThumb) {
+      if (hasPhoto && thumbUrl) {
+        editBarThumb.src = thumbUrl;
+        editBarThumb.style.display = 'block';
+      } else {
+        editBarThumb.src = '';
+        editBarThumb.style.display = 'none';
+      }
+    }
     if (editBarPreview) editBarPreview.textContent = currentText || state.photoLabel;
     if (editBar) editBar.style.display = 'flex';
     inputEl.value = currentText;
@@ -2645,6 +2684,19 @@ export function messagesPage(
     });
   }
 
+  if (editReplaceBtn && fileInput) {
+    editReplaceBtn.addEventListener('click', function() {
+      if (!editingMsg || !editingMsg.hasPhoto) return;
+      fileInput.click();
+    });
+  }
+  if (editBarThumb && fileInput) {
+    editBarThumb.addEventListener('click', function() {
+      if (!editingMsg || !editingMsg.hasPhoto) return;
+      fileInput.click();
+    });
+  }
+
   if (attachBtn && fileInput) {
     attachBtn.addEventListener('click', function() {
       fileInput.click();
@@ -2663,6 +2715,21 @@ export function messagesPage(
         this.value = '';
         return;
       }
+      if (editingMsg && editingMsg.hasPhoto) {
+        if (editingMsg.replacementPreviewUrl) {
+          try { URL.revokeObjectURL(editingMsg.replacementPreviewUrl); } catch (re) {}
+        }
+        editingMsg.replacementFile = f;
+        editingMsg.replacementPreviewUrl = (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function')
+          ? URL.createObjectURL(f)
+          : '';
+        if (editBarThumb && editingMsg.replacementPreviewUrl) {
+          editBarThumb.src = editingMsg.replacementPreviewUrl;
+          editBarThumb.style.display = 'block';
+        }
+        syncSendState();
+        return;
+      }
       clearPendingFile();
       pendingFile = f;
       if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
@@ -2679,7 +2746,9 @@ export function messagesPage(
   }
 
   if (editCancelBtn) {
-    editCancelBtn.addEventListener('click', cancelEditMode);
+    editCancelBtn.addEventListener('click', function() {
+      cancelEditMode(false);
+    });
   }
 
   if (replyCancelBtn) {
@@ -2692,12 +2761,12 @@ export function messagesPage(
       var text = inputEl ? inputEl.value.trim() : '';
 
       if (editingMsg) {
-        if (!text && !editingMsg.existingMedia && !editingMsg.imageKey) return;
+        if (!text && !editingMsg.existingMedia && !editingMsg.imageKey && !editingMsg.replacementFile) return;
         var editTarget = editingMsg;
         isSending = true;
         syncSendState();
         try {
-          if (!editTarget.isEncrypted) {
+          if (!editTarget.isEncrypted && !editTarget.replacementFile) {
             var plainRes = await fetch('/api/messages/edit', {
               method: 'POST',
               credentials: 'same-origin',
@@ -2725,7 +2794,7 @@ export function messagesPage(
               if (Number(editTarget.id) === Number(state.lastMsgId)) {
                 updateSidebarPreview(state.activeConversationId, state.currentUserId, text, Boolean(editTarget.imageKey));
               }
-              cancelEditMode();
+              cancelEditMode(false);
             } else if (window.showAppToast) {
               window.showAppToast((plainData && plainData.error) || state.networkError);
             }
@@ -2737,12 +2806,21 @@ export function messagesPage(
             if (window.showAppToast) window.showAppToast(state.networkError);
             return;
           }
+          var repFileBytes = null;
+          var repFileMime = '';
+          if (editTarget.replacementFile) {
+            repFileBytes = await editTarget.replacementFile.arrayBuffer();
+            repFileMime = editTarget.replacementFile.type || 'image/jpeg';
+          }
           var encEdit;
           try {
             encEdit = await ec.encryptMessage({
               partnerUserId: state.activePartnerId,
               text: text,
-              existingMedia: editTarget.existingMedia,
+              fileBytes: repFileBytes,
+              fileMime: repFileMime,
+              mediaKind: repFileBytes ? 'image' : undefined,
+              existingMedia: repFileBytes ? null : editTarget.existingMedia,
               reply: editTarget.existingReply || null,
               editOf: editTarget.id
             });
@@ -2762,40 +2840,66 @@ export function messagesPage(
               showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
               return;
             }
+            if (encEditErr && encEditErr.code === 'INVALID_IMAGE') {
+              if (window.showAppToast) window.showAppToast(state.errInvalidImage);
+              return;
+            }
+            if (encEditErr && encEditErr.code === 'IMAGE_TOO_LARGE') {
+              if (window.showAppToast) window.showAppToast(state.errImageTooLarge);
+              return;
+            }
             if (window.showAppToast) window.showAppToast(state.networkError);
             return;
           }
-          var editRes = await fetch('/api/messages/edit', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message_id: editTarget.id,
-              sender_device_id: encEdit.senderDeviceId,
-              envelopes: encEdit.envelopes
-            })
-          });
+          var editRes;
+          if (encEdit.encryptedBlob) {
+            var efd = new FormData();
+            efd.append('message_id', String(editTarget.id));
+            efd.append('sender_device_id', String(encEdit.senderDeviceId));
+            efd.append('envelopes', JSON.stringify(encEdit.envelopes));
+            efd.append('encrypted_media', encEdit.encryptedBlob, 'media.enc');
+            editRes = await fetch('/api/messages/edit', {
+              method: 'POST',
+              credentials: 'same-origin',
+              body: efd
+            });
+          } else {
+            editRes = await fetch('/api/messages/edit', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message_id: editTarget.id,
+                sender_device_id: encEdit.senderDeviceId,
+                envelopes: encEdit.envelopes
+              })
+            });
+          }
           var editData = await editRes.json();
           if (editRes.ok && editData && editData.success) {
             hideBanner();
             var nextVer = Number(editData.edit_version || 1);
+            var nextImgKey = typeof editData.image_key === 'string' ? editData.image_key : (editTarget.imageKey || '');
+            var repPreviewUrl = editTarget.replacementPreviewUrl || '';
             await ec.cacheSentMessage(editTarget.id, encEdit.payload, nextVer);
             if (listEl) {
               var editedRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + editTarget.id + '"]');
               if (editedRow) {
                 editedRow.setAttribute('data-edit-version', String(nextVer));
+                editedRow.setAttribute('data-image-key', nextImgKey);
+                editedRow.setAttribute('data-encrypted', '1');
                 var eBubble = editedRow.querySelector('.dm-msg-bubble');
                 var eTime = editedRow.querySelector('.dm-msg-time');
                 if (eBubble && eTime) {
                   renderMsgTimeEl(eTime, eTime.getAttribute('data-ts') || '', true);
-                  hydrateBubbleContent(eBubble, eTime, encEdit.payload, editTarget.imageKey || '', '');
+                  hydrateBubbleContent(eBubble, eTime, encEdit.payload, nextImgKey, repPreviewUrl);
                 }
               }
             }
             if (Number(editTarget.id) === Number(state.lastMsgId)) {
               updateSidebarPreview(state.activeConversationId, state.currentUserId, encEdit.payload.text, Boolean(encEdit.payload.media));
             }
-            cancelEditMode();
+            cancelEditMode(Boolean(repPreviewUrl));
           } else if (window.showAppToast) {
             window.showAppToast((editData && editData.error) || state.networkError);
           }
@@ -3513,6 +3617,11 @@ export function messagesPage(
       var canCopyMsg = Boolean(copyTxtEl && copyTxtEl.textContent && copyTxtEl.textContent.trim());
       msgCopyBtn.style.display = canCopyMsg ? 'flex' : 'none';
     }
+    if (msgDownloadBtn) {
+      var dlImgBtn = row.querySelector('.dm-msg-img-btn[data-dm-lightbox]');
+      var canDlImg = Boolean(dlImgBtn && dlImgBtn.getAttribute('data-dm-lightbox'));
+      msgDownloadBtn.style.display = canDlImg ? 'flex' : 'none';
+    }
     if (msgEditBtn) {
       var rowKindCtx = row.getAttribute('data-msg-kind') || '';
       var canEditMsg = row.classList.contains('mine') && rowKindCtx !== 'voice' && rowKindCtx !== 'post' && !row.querySelector('.dm-msg-decrypt-err');
@@ -3629,6 +3738,22 @@ export function messagesPage(
       var copied = await copyTextToClipboard(txt);
       if (copied && window.showAppToast) {
         window.showAppToast(state.copiedToast);
+      }
+    });
+  }
+
+  if (msgDownloadBtn) {
+    msgDownloadBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var targetId = reactTargetMsgId;
+      var targetRow = reactActiveRow;
+      closeReactionPicker();
+      if (!targetRow) return;
+      var dlBtn = targetRow.querySelector('.dm-msg-img-btn[data-dm-lightbox]');
+      var imgUrl = dlBtn ? (dlBtn.getAttribute('data-dm-lightbox') || '') : '';
+      if (imgUrl && typeof window.downloadPostPhoto === 'function') {
+        window.downloadPostPhoto(imgUrl, targetId ? String(targetId) : '', state.activePartnerUsername || 'dm');
       }
     });
   }
@@ -3923,6 +4048,8 @@ export function messagesPage(
       }
       var imgBtn = e.target && e.target.closest ? e.target.closest('[data-dm-lightbox]') : null;
       if (imgBtn && lightbox && lightboxImg) {
+        var imgRow = imgBtn.closest ? imgBtn.closest('.dm-msg-row[data-msg-id]') : null;
+        activeLightboxMsgId = imgRow ? (imgRow.getAttribute('data-msg-id') || '') : '';
         lightboxImg.src = imgBtn.getAttribute('data-dm-lightbox') || '';
         lightbox.classList.add('visible');
         if (window.__pgPushOverlay) {
@@ -3934,6 +4061,12 @@ export function messagesPage(
       }
     });
   }
+
+  var activeLightboxMsgId = '';
+  var dmLightboxHoldTimer = null;
+  var dmLightboxHoldStartX = 0;
+  var dmLightboxHoldStartY = 0;
+  var suppressLightboxClickUntil = 0;
 
   var videoModal = document.getElementById('dmVideoPlayerModal');
   var videoIframe = document.getElementById('dmVideoIframe');
@@ -4007,7 +4140,26 @@ export function messagesPage(
     });
   }
 
+  function clearDmLightboxHold() {
+    if (dmLightboxHoldTimer) {
+      clearTimeout(dmLightboxHoldTimer);
+      dmLightboxHoldTimer = null;
+    }
+  }
+
+  function openDmLightboxDownloadMenu() {
+    if (!lightbox || !lightbox.classList.contains('visible') || !lightboxImg) return;
+    var curSrc = lightboxImg.getAttribute('src') || lightboxImg.src || '';
+    if (!curSrc || typeof window.openPostOptionsMenu !== 'function') return;
+    window.openPostOptionsMenu({
+      img: curSrc,
+      postId: activeLightboxMsgId || '',
+      username: state.activePartnerUsername || 'dm'
+    });
+  }
+
   function closeDmLightbox(fromPop) {
+    clearDmLightboxHold();
     if (!lightbox) return;
     if (fromPop) {
       lightbox.classList.add('pg-no-transition');
@@ -4026,16 +4178,67 @@ export function messagesPage(
         closeDmLightbox(false);
       });
     }
+    if (lightboxImg) {
+      lightbox.addEventListener('contextmenu', function(e) {
+        if (e.target && e.target.closest && e.target.closest('.dm-lightbox-close')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openDmLightboxDownloadMenu();
+      });
+      lightboxImg.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return;
+        clearDmLightboxHold();
+        dmLightboxHoldStartX = e.clientX;
+        dmLightboxHoldStartY = e.clientY;
+        dmLightboxHoldTimer = setTimeout(function() {
+          dmLightboxHoldTimer = null;
+          suppressLightboxClickUntil = Date.now() + 450;
+          openDmLightboxDownloadMenu();
+        }, 450);
+      });
+      lightboxImg.addEventListener('mousemove', function(e) {
+        if (!dmLightboxHoldTimer) return;
+        if (Math.abs(e.clientX - dmLightboxHoldStartX) > 10 || Math.abs(e.clientY - dmLightboxHoldStartY) > 10) {
+          clearDmLightboxHold();
+        }
+      });
+      lightboxImg.addEventListener('mouseup', clearDmLightboxHold);
+      lightboxImg.addEventListener('mouseleave', clearDmLightboxHold);
+      lightboxImg.addEventListener('touchstart', function(e) {
+        if (!e.touches || e.touches.length !== 1) return;
+        clearDmLightboxHold();
+        dmLightboxHoldStartX = e.touches[0].clientX;
+        dmLightboxHoldStartY = e.touches[0].clientY;
+        dmLightboxHoldTimer = setTimeout(function() {
+          dmLightboxHoldTimer = null;
+          suppressLightboxClickUntil = Date.now() + 450;
+          try { if (navigator.vibrate) navigator.vibrate(15); } catch (ve) {}
+          openDmLightboxDownloadMenu();
+        }, 400);
+      }, { passive: true });
+      lightboxImg.addEventListener('touchmove', function(e) {
+        if (!dmLightboxHoldTimer || !e.touches || e.touches.length !== 1) return;
+        var dx = Math.abs(e.touches[0].clientX - dmLightboxHoldStartX);
+        var dy = Math.abs(e.touches[0].clientY - dmLightboxHoldStartY);
+        if (dx > 12 || dy > 12) clearDmLightboxHold();
+      }, { passive: true });
+      lightboxImg.addEventListener('touchend', clearDmLightboxHold, { passive: true });
+      lightboxImg.addEventListener('touchcancel', clearDmLightboxHold, { passive: true });
+    }
     lightbox.addEventListener('click', function(e) {
+      if (Date.now() < suppressLightboxClickUntil) return;
       if (e.target === lightbox) closeDmLightbox(false);
     });
     function onLightboxKeydown(e) {
       if (e.key === 'Escape' && lightbox.classList.contains('visible')) {
+        var postMenu = document.getElementById('appPostMenuModal');
+        if (postMenu && postMenu.classList.contains('visible')) return;
         closeDmLightbox(false);
       }
     }
     document.addEventListener('keydown', onLightboxKeydown);
     extraCleanups.push(function() {
+      clearDmLightboxHold();
       document.removeEventListener('keydown', onLightboxKeydown);
     });
   }
@@ -4585,6 +4788,8 @@ export function messagesPage(
               }
             }
             eRow.setAttribute('data-edit-version', String(srvVer));
+            eRow.setAttribute('data-image-key', em.image_key || '');
+            eRow.setAttribute('data-encrypted', em.is_encrypted ? '1' : '0');
             var eb = eRow.querySelector('.dm-msg-bubble');
             var et = eRow.querySelector('.dm-msg-time');
             if (eb && et) {
@@ -5072,6 +5277,8 @@ export function messagesPage(
           var curVer = parseInt(eRow.getAttribute('data-edit-version') || '0', 10);
           if (srvVer > curVer) {
             eRow.setAttribute('data-edit-version', String(srvVer));
+            eRow.setAttribute('data-image-key', em.image_key || '');
+            eRow.setAttribute('data-encrypted', em.is_encrypted ? '1' : '0');
             var eb = eRow.querySelector('.dm-msg-bubble');
             var et = eRow.querySelector('.dm-msg-time');
             if (eb && et) {

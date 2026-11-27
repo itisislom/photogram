@@ -33,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v10';
+export const APP_STYLE_VERSION = '20261127-v12';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -934,12 +934,31 @@ window.showAppConfirm = function(opts) {
   window.downloadPostPhoto = async function(imgUrl, postId, username) {
     if (!imgUrl || isDownloadingPostPhoto) return;
     var cleanUrl = String(imgUrl).trim();
-    if (cleanUrl.indexOf('/media/posts/') !== 0 && cleanUrl.indexOf('/media/posts%2F') !== 0) {
+    var ownBlobPrefix = 'blob:' + window.location.origin + '/';
+    var isAllowedPost = cleanUrl.indexOf('/media/posts/') === 0 || cleanUrl.indexOf('/media/posts%2F') === 0;
+    var isAllowedDm = cleanUrl.indexOf('/media/dm/') === 0 || cleanUrl.indexOf('/media/dm%2F') === 0;
+    var isOwnBlob = cleanUrl.indexOf(ownBlobPrefix) === 0;
+    if (!isAllowedPost && !isAllowedDm && !isOwnBlob) {
       window.showAppToast(${safeJsonForScript(t.post.downloadError)});
       return;
     }
     isDownloadingPostPhoto = true;
     try {
+      var safeUser = String(username || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 24);
+      var safeId = String(postId || '').replace(/[^0-9]/g, '').slice(0, 16);
+      if (isOwnBlob) {
+        var directFilename = 'photogram-' + (safeUser || 'photo') + (safeId ? '-' + safeId : '') + '.jpg';
+        var da = document.createElement('a');
+        da.href = cleanUrl;
+        da.download = directFilename;
+        da.rel = 'noopener';
+        da.style.display = 'none';
+        document.body.appendChild(da);
+        da.click();
+        da.remove();
+        window.showAppToast(${safeJsonForScript(t.post.downloadSuccess)});
+        return;
+      }
       var res = await fetch(cleanUrl, { credentials: 'same-origin' });
       if (!res.ok) {
         window.showAppToast(${safeJsonForScript(t.post.downloadError)});
@@ -948,8 +967,6 @@ window.showAppConfirm = function(opts) {
       var blob = await res.blob();
       var mime = (blob.type || '').toLowerCase();
       var ext = mime.indexOf('png') !== -1 ? 'png' : mime.indexOf('webp') !== -1 ? 'webp' : mime.indexOf('gif') !== -1 ? 'gif' : 'jpg';
-      var safeUser = String(username || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 24);
-      var safeId = String(postId || '').replace(/[^0-9]/g, '').slice(0, 16);
       var filename = 'photogram-' + (safeUser || 'photo') + (safeId ? '-' + safeId : '') + '.' + ext;
 
       if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
