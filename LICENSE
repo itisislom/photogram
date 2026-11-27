@@ -1,32 +1,59 @@
-The MIT License (MIT)
+Photogram Source-Available License (All Rights Reserved)
 
-Copyright (c) 2026 itisislom
+Copyright (c) 2026 Islom Sadriddinov (itisislom). All Rights Reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. SOURCE-AVAILABLE ACCESS (VIEW AND AUDIT ONLY)
+The source code in this repository is made publicly visible solely for
+educational reading, transparency, and independent security auditing
+(including verification of client-side end-to-end encryption).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Subject to GitHub's Terms of Service (which allow GitHub to display and
+fork repositories on the platform), no license or right is granted to
+use this Software beyond viewing and inspecting the source code.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. RESTRICTIONS
+Except as expressly stated in Section 3 (Client E2EE Module) or with
+prior written permission from the copyright holder (Islom Sadriddinov /
+itisislom), you may NOT:
+  (a) Copy, modify, adapt, translate, merge, or create derivative works
+      from this repository, in whole or in part.
+  (b) Deploy, host, operate, or provide access to this Software (or any
+      part of its backend, frontend, pages, styles, assets, or realtime
+      workers) as a public or private website, service, or application.
+  (c) Distribute, publish, sublicense, sell, rent, or transfer copies of
+      this Software or any derivative work.
+  (d) Use the name "Photogram", its logos, icons, UI design system,
+      visual branding, or the identity/handles of the copyright holder
+      (itisislom / Islom Sadriddinov) in any product, promotion, or
+      derivative work.
 
--------------------------------------------------------------------
-TRADEMARK & BRANDING PROTECTION NOTICE
+3. CLIENT E2EE MODULE EXCEPTION (GNU GPL v3.0)
+The standalone browser E2EE client module located at `src/client/e2ee.ts`
+(and its compiled client bundle `dist/e2ee.js`) incorporates
+`@privacyresearch/libsignal-protocol-typescript`, which is licensed
+under the GNU General Public License v3.0 (`GPL-3.0-only`).
 
-The MIT License granted above applies strictly to the source code of this software. 
-It does NOT grant any rights, permission, or license to use:
-1. The project name "photogram" or any confusingly similar variations.
-2. The official logos, icons, UI designs, or visual branding elements of this repository.
-3. The names, handles, or identity of the copyright holder (itisislom).
+Accordingly, `src/client/e2ee.ts` alone is licensed under the GNU
+General Public License v3.0 (`GPL-3.0-only`). The full text of the GNU
+General Public License v3.0 is included at `src/client/LICENSE-GPL-3.0.txt`.
+This exception applies strictly to `src/client/e2ee.ts` and does NOT
+extend to the rest of the Photogram codebase, server code, UI pages,
+styles, assets, or branding, all of which remain strictly All Rights
+Reserved under Sections 1 and 2 above.
 
-Any compilation, modification, redistribution, or public hosting of this source code (including forks deployed as public websites) MUST entirely remove all original branding, logos, and references to "photogram". You may not market, advertise, or promote your derivative work using the original brand identity without explicit written permission from the copyright holder.
+4. THIRD-PARTY DEPENDENCIES
+Third-party packages declared in `package.json` remain subject to their
+respective licenses (`@neondatabase/serverless`: MIT;
+`qrcode-generator`: MIT; `@privacyresearch/libsignal-protocol-typescript`
+and `@privacyresearch/curve25519-typescript`: GPL-3.0-only).
+
+5. DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES,
+OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR ITS INSPECTION.
+
+For licensing inquiries or written permission, contact:
+Islom Sadriddinov (GitHub: @itisislom)
