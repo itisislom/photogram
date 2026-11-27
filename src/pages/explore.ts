@@ -2,9 +2,10 @@ import { ExploreData, User } from '../types';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { COMMENT_ICON, MINI_COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
+import { SHARE_ICON, renderShareSheetHtml, renderShareSheetScript } from './share';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { formatLocalizedFullDate, formatLocalizedTime, getClientDateFormat } from '../languages';
+import { formatLocalizedFullDate, formatLocalizedTime, getClientDateFormat, formatCompactCount } from '../languages';
 
 const SEARCH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -118,7 +119,7 @@ export function explorePage(
       : `<span>${escapeHtml(authorInit)}</span>`;
 
     return `
-    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-post-img="${postMediaUrl(p.image_key, 'full')}" data-post-username="${escapeHtml(p.username)}" data-index="${idx}">
+    <div class="pics-slide" data-post-id="${p.id}" data-author-id="${p.user_id}" data-post-img="${postMediaUrl(p.image_key, 'full')}" data-post-username="${escapeHtml(p.username)}" data-author-avatar="${escapeHtml(p.author_avatar_key || '')}" data-author-verified="${p.is_verified ? '1' : '0'}" data-image-key="${escapeHtml(p.image_key)}" data-caption="${escapeHtml((p.caption || '').slice(0, 200))}" data-index="${idx}">
       <div class="pics-image-wrap">
         <img class="pics-image" src="${postMediaUrl(p.image_key, 'full')}" alt="${escapeHtml(t.nav.explore)}" loading="${idx < 3 ? 'eager' : 'lazy'}">
         <div class="post-like-burst">
@@ -142,6 +143,10 @@ export function explorePage(
         <button class="pics-action-btn pics-comment-btn" type="button" data-post-id="${p.id}" data-comments-count="${p.comments_count ?? 0}" aria-label="${escapeHtml(t.comments.title)}">
           ${COMMENT_ICON}
           <span class="pics-action-count pics-comment-count">${p.comments_count ?? 0}</span>
+        </button>
+        <button class="pics-action-btn pics-share-btn" type="button" aria-label="${escapeHtml(t.share.ariaShare)}" title="${escapeHtml(t.share.title)}">
+          ${SHARE_ICON}
+          <span class="pics-action-count pics-share-count" data-post-id="${p.id}">${escapeHtml(formatCompactCount(p.shares_count ?? 0, t.code))}</span>
         </button>
       </div>
     </div>`;
@@ -167,6 +172,7 @@ export function explorePage(
 
   ${renderBottomNav('explore', t)}
   ${renderCommentsSheetHtml(t)}
+  ${renderShareSheetHtml(t)}
 
   <div class="pics-modal" id="picsModal">
     <div class="pics-top-bar">
@@ -203,6 +209,7 @@ export function explorePage(
 
   const script = `
 ${renderCommentsSheetScript(t)}
+${renderShareSheetScript(currentUser.id, t)}
 
 (function() {
   var i18n = ${clientI18n};
@@ -811,6 +818,23 @@ ${renderCommentsSheetScript(t)}
         };
       }
 
+      var shareBtn = slide.querySelector('.pics-share-btn');
+      if (shareBtn) {
+        shareBtn.onclick = function(e) {
+          e.stopPropagation();
+          if (window.openShareSheet) {
+            window.openShareSheet({
+              postId: parseInt(slide.dataset.postId || '0', 10),
+              authorUsername: slide.dataset.postUsername || '',
+              authorAvatar: slide.dataset.authorAvatar || '',
+              authorVerified: slide.dataset.authorVerified === '1',
+              imageKey: slide.dataset.imageKey || '',
+              caption: slide.dataset.caption || ''
+            });
+          }
+        };
+      }
+
       var touchMoved = false;
       var lastTap = 0;
       slide.ontouchstart = function(e) {
@@ -931,7 +955,7 @@ ${renderCommentsSheetScript(t)}
         '</div>' +
       '</button>';
 
-      slidesHtml += '<div class="pics-slide" data-post-id="' + Number(p.id) + '" data-author-id="' + Number(p.user_id) + '" data-post-img="' + fullUrl + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-index="' + idx + '">' +
+      slidesHtml += '<div class="pics-slide" data-post-id="' + Number(p.id) + '" data-author-id="' + Number(p.user_id) + '" data-post-img="' + fullUrl + '" data-post-username="' + escapeHtmlClient(p.username) + '" data-author-avatar="' + escapeHtmlClient(avKey) + '" data-author-verified="' + (Number(p.is_verified) === 1 ? '1' : '0') + '" data-image-key="' + escapeHtmlClient(p.image_key || '') + '" data-caption="' + escapeHtmlClient((p.caption || '').slice(0, 200)) + '" data-index="' + idx + '">' +
         '<div class="pics-image-wrap">' +
           '<img class="pics-image" src="' + fullUrl + '" alt="Explore" loading="' + (idx < 3 ? 'eager' : 'lazy') + '">' +
           '<div class="post-like-burst">' + ${safeJsonForScript(HEART_BURST_ICON)} + '</div>' +
@@ -953,6 +977,10 @@ ${renderCommentsSheetScript(t)}
           '<button class="pics-action-btn pics-comment-btn" type="button" data-post-id="' + Number(p.id) + '" data-comments-count="' + comments + '">' +
             ${safeJsonForScript(COMMENT_ICON)} +
             '<span class="pics-action-count pics-comment-count">' + comments + '</span>' +
+          '</button>' +
+          '<button class="pics-action-btn pics-share-btn" type="button" aria-label="' + escapeHtmlClient(${safeJsonForScript(t.share.ariaShare)}) + '" title="' + escapeHtmlClient(${safeJsonForScript(t.share.title)}) + '">' +
+            ${safeJsonForScript(SHARE_ICON)} +
+            '<span class="pics-action-count pics-share-count" data-post-id="' + Number(p.id) + '">' + escapeHtmlClient(window.formatPhotogramCompactCount ? window.formatPhotogramCompactCount(Number(p.shares_count) || 0) : String(Number(p.shares_count) || 0)) + '</span>' +
           '</button>' +
         '</div>' +
       '</div>';

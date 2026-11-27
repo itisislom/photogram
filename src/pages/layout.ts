@@ -1,4 +1,3 @@
-import { getStyles } from '../styles';
 import { Translations, ru, renderLangScript } from '../languages';
 
 export function esc(str: any): string {
@@ -34,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const APP_STYLE_VERSION = '20261126-v49';
+export const APP_STYLE_VERSION = '20261127-v9';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -111,7 +110,7 @@ export function layout(title: string, body: string, script: string = '', t: Tran
   }
 })();
 </script>
-<style id="appMainStyles" data-app-v="${APP_STYLE_VERSION}">${getStyles()}</style>
+<link id="appMainStyles" rel="stylesheet" href="/app.css?v=${APP_STYLE_VERSION}" data-app-v="${APP_STYLE_VERSION}">
 </head>
 <body>
 <div id="appPageRoot">
@@ -1579,38 +1578,6 @@ ${script || ''}</script>
   var prefetchCooldown = new Map();
   var MAX_CACHE_ENTRIES = 12;
   var CACHE_TTL_MS = 25000;
-  var progressTimer = null;
-  var progressEl = null;
-
-  function ensureProgressEl() {
-    if (progressEl && document.body.contains(progressEl)) return progressEl;
-    progressEl = document.getElementById('pgNavProgress');
-    if (!progressEl) {
-      progressEl = document.createElement('div');
-      progressEl.id = 'pgNavProgress';
-      progressEl.className = 'pg-nav-progress';
-      document.body.appendChild(progressEl);
-    }
-    return progressEl;
-  }
-
-  function startProgressBar() {
-    if (progressTimer) clearTimeout(progressTimer);
-    progressTimer = setTimeout(function() {
-      var el = ensureProgressEl();
-      el.classList.add('is-active');
-    }, 120);
-  }
-
-  function stopProgressBar() {
-    if (progressTimer) {
-      clearTimeout(progressTimer);
-      progressTimer = null;
-    }
-    if (progressEl) {
-      progressEl.classList.remove('is-active');
-    }
-  }
 
   window.__pgClearSpaCache = function() {
     spaCache.clear();
@@ -1690,7 +1657,9 @@ ${script || ''}</script>
       'viewPostModal',
       'picsModal',
       'appCommentsSheet',
+      'appShareSheet',
       'dmPhotoLightbox',
+      'dmVideoPlayerModal',
       'appPostMenuModal',
       'menuModal',
       'activityConfirmModal',
@@ -1704,6 +1673,10 @@ ${script || ''}</script>
       el.classList.remove('visible');
       if (ids[i] === 'appCommentsSheet') {
         el.style.display = 'none';
+      }
+      if (ids[i] === 'dmVideoPlayerModal') {
+        var vIframe = document.getElementById('dmVideoIframe');
+        if (vIframe) vIframe.setAttribute('src', 'about:blank');
       }
       void el.offsetWidth;
       el.classList.remove('pg-no-transition');
@@ -1978,14 +1951,11 @@ ${script || ''}</script>
     if (!forceFresh && isCacheableUrl(targetUrl)) {
       var cached = getFreshCacheEntry(reqKey);
       if (cached) {
-        stopProgressBar();
         if (mySeq !== navSeq) return;
         commitParsedPage(cached, pushHistory, hadOverlay);
         return;
       }
     }
-
-    startProgressBar();
 
     try {
       var result = null;
@@ -1998,7 +1968,6 @@ ${script || ''}</script>
         result = await fetchParsedPage(targetUrl, navAbort ? navAbort.signal : undefined);
       }
       if (mySeq !== navSeq) return;
-      stopProgressBar();
       if (!result || result.redirect) {
         window.location.href = (result && result.redirect) || targetUrl.href;
         return;
@@ -2008,7 +1977,6 @@ ${script || ''}</script>
       }
     } catch (err) {
       if (mySeq !== navSeq) return;
-      stopProgressBar();
       if (err && err.name === 'AbortError') return;
       window.location.href = targetUrl.href;
     }
@@ -2179,6 +2147,10 @@ ${script || ''}</script>
       return;
     }
     if (window.location.pathname === '/activity' && lastSpaPath === '/activity') {
+      return;
+    }
+    if (typeof window.__pgHandleDmPopstate === 'function' && window.__pgHandleDmPopstate()) {
+      lastSpaPath = window.location.pathname;
       return;
     }
     closeAllOverlaysImmediate();

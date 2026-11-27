@@ -286,6 +286,8 @@ export interface Translations {
     e2eeDecryptFailed: string;
     e2eeInitializing: string;
     typing: string;
+    playVideo: string;
+    openOnYoutube: string;
   };
 
   notifications: {
@@ -365,5 +367,23 @@ export interface Translations {
     loadMore: string;
     unlikedToast: string;
     deletedCommentsToast: string;
+  };
+
+  share: {
+    title: string;
+    ariaShare: string;
+    searchPlaceholder: string;
+    notePlaceholder: string;
+    send: string;
+    sending: string;
+    sent: string;
+    sentToast: string;
+    emptyTitle: string;
+    emptyDesc: string;
+    noResults: string;
+    goToMessages: string;
+    sharedPostPreview: string;
+    sharedPostLabel: string;
+    partnerNotReady: string;
   };
 }

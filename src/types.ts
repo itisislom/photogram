@@ -35,6 +35,7 @@ export interface Post {
   created_at: string;
   likes_count?: number;
   comments_count?: number;
+  shares_count?: number;
   is_liked?: boolean;
   username?: string;
   display_name?: string;

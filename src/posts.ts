@@ -355,6 +355,7 @@ export async function getFeedPosts(env: Env, viewerId: number): Promise<FeedPost
   try {
     const rows = await env.DB.prepare(
       `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
+              COALESCE(p.shares_count, 0) AS shares_count,
               u.username, u.display_name, u.avatar_key, u.is_verified,
               (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
               (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
@@ -372,13 +373,14 @@ export async function getFeedPosts(env: Env, viewerId: number): Promise<FeedPost
        LIMIT 40`
     )
       .bind(viewerId)
-      .all<FeedPost & { likes_count: number; comments_count: number; is_liked: number | boolean; is_followed_author: number | boolean }>();
+      .all<FeedPost & { likes_count: number; comments_count: number; shares_count: number; is_liked: number | boolean; is_followed_author: number | boolean }>();
 
     if (rows.results) {
       return rows.results.map(p => ({
         ...p,
         likes_count: Number(p.likes_count) || 0,
         comments_count: Number(p.comments_count) || 0,
+        shares_count: Number(p.shares_count) || 0,
         is_liked: Boolean(p.is_liked),
         is_followed_author: Boolean(p.is_followed_author)
       }));

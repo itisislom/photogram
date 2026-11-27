@@ -61,7 +61,108 @@ export interface DecryptedReplyMeta {
   senderId: number;
   senderName: string;
   preview: string;
-  kind?: 'text' | 'image' | 'voice';
+  kind?: 'text' | 'image' | 'voice' | 'post';
+  videoId?: string;
+}
+
+export interface DecryptedSharedPostMeta {
+  postId: number;
+  authorUsername: string;
+  authorAvatar?: string;
+  authorVerified?: boolean;
+  imageKey: string;
+  caption?: string;
+}
+
+export interface DecryptedLinkPreviewMeta {
+  url: string;
+  siteName: string;
+  title: string;
+  description?: string;
+  image?: string;
+  videoId?: string;
+  startSec?: number;
+}
+
+const SHARED_USERNAME_RE = /^[a-zA-Z0-9._]{1,40}$/;
+const YT_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+function isSafeHttpUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  const s = raw.trim();
+  if (!s || s.length > 2048 || /[\x00-\x1f\x7f\s]/.test(s)) return false;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    if (u.username || u.password) return false;
+    if (!u.hostname || !u.hostname.includes('.')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizeLinkPreviewMeta(raw: unknown): DecryptedLinkPreviewMeta | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  if (!isSafeHttpUrl(r.url)) return undefined;
+  const title = typeof r.title === 'string' ? r.title.replace(/\s+/g, ' ').trim().slice(0, 180) : '';
+  const siteName = typeof r.siteName === 'string' ? r.siteName.replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+  const description =
+    typeof r.description === 'string' ? r.description.replace(/\s+/g, ' ').trim().slice(0, 260) : '';
+  if (!title && !description) return undefined;
+  const out: DecryptedLinkPreviewMeta = {
+    url: r.url.trim(),
+    siteName: siteName || new URL(r.url.trim()).hostname.replace(/^www\./i, '').slice(0, 60),
+    title: title || siteName,
+  };
+  if (description) out.description = description;
+  if (isSafeHttpUrl(r.image)) out.image = r.image.trim();
+  if (typeof r.videoId === 'string' && YT_VIDEO_ID_RE.test(r.videoId.trim())) {
+    out.videoId = r.videoId.trim();
+  }
+  const startSec = Math.floor(Number(r.startSec || 0));
+  if (Number.isFinite(startSec) && startSec > 0 && startSec <= 86400) {
+    out.startSec = startSec;
+  }
+  return out;
+}
+
+function isSafeSharedMediaKey(raw: unknown, prefix: string): raw is string {
+  if (typeof raw !== 'string') return false;
+  const s = raw.trim();
+  if (!s || s.length > 200) return false;
+  if (!s.startsWith(prefix)) return false;
+  if (s.includes('..') || s.includes('\\') || s.includes('?') || s.includes('#')) return false;
+  if (/[\x00-\x20\x7f"'<>]/.test(s)) return false;
+  return true;
+}
+
+export function sanitizeSharedPostMeta(raw: unknown): DecryptedSharedPostMeta | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const postId = Math.floor(Number(r.postId || 0));
+  if (!Number.isFinite(postId) || postId <= 0 || postId > 2147483647) return undefined;
+  const authorUsername = typeof r.authorUsername === 'string' ? r.authorUsername.trim() : '';
+  if (!SHARED_USERNAME_RE.test(authorUsername)) return undefined;
+  if (!isSafeSharedMediaKey(r.imageKey, 'posts/')) return undefined;
+  const imageKey = r.imageKey.trim();
+  const out: DecryptedSharedPostMeta = {
+    postId,
+    authorUsername,
+    imageKey,
+  };
+  if (isSafeSharedMediaKey(r.authorAvatar, 'avatars/')) {
+    out.authorAvatar = r.authorAvatar.trim();
+  }
+  if (r.authorVerified === true || Number(r.authorVerified) === 1) {
+    out.authorVerified = true;
+  }
+  if (typeof r.caption === 'string') {
+    const cleanCap = r.caption.replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (cleanCap) out.caption = cleanCap;
+  }
+  return out;
 }
 
 function sanitizeReplyMeta(raw: unknown): DecryptedReplyMeta | undefined {
@@ -72,15 +173,19 @@ function sanitizeReplyMeta(raw: unknown): DecryptedReplyMeta | undefined {
   const senderId = Math.max(0, Math.floor(Number(r.senderId || 0)));
   const senderName = typeof r.senderName === 'string' ? r.senderName.trim().slice(0, MAX_REPLY_NAME_LEN) : '';
   const preview = typeof r.preview === 'string' ? r.preview.replace(/\s+/g, ' ').trim().slice(0, MAX_REPLY_PREVIEW_LEN) : '';
-  const rawKind = r.kind === 'image' || r.kind === 'voice' ? r.kind : 'text';
+  const rawKind = r.kind === 'image' || r.kind === 'voice' || r.kind === 'post' ? r.kind : 'text';
   if (!senderName && !preview) return undefined;
-  return {
+  const out: DecryptedReplyMeta = {
     id,
     senderId,
     senderName,
     preview,
     kind: rawKind,
   };
+  if (typeof r.videoId === 'string' && YT_VIDEO_ID_RE.test(r.videoId.trim())) {
+    out.videoId = r.videoId.trim();
+  }
+  return out;
 }
 
 export interface DecryptedPayload {
@@ -88,6 +193,8 @@ export interface DecryptedPayload {
   text: string;
   media?: DecryptedMediaMeta | null;
   reply?: DecryptedReplyMeta | null;
+  sharedPost?: DecryptedSharedPostMeta | null;
+  linkPreview?: DecryptedLinkPreviewMeta | null;
   editOf?: number;
   editVersion?: number;
 }
@@ -112,6 +219,7 @@ export interface IncomingEncryptedMessage {
 
 export interface KeyValueBackend {
   get<T = unknown>(store: string, key: string): Promise<T | undefined>;
+  getMany?<T = unknown>(store: string, keys: string[]): Promise<Map<string, T>>;
   put(store: string, key: string, value: unknown): Promise<void>;
   del(store: string, key: string): Promise<void>;
   close?(): Promise<void>;
@@ -210,6 +318,14 @@ export function createMemoryBackend(): KeyValueBackend {
     async get<T>(store: string, key: string) {
       return getMap(store).get(key) as T | undefined;
     },
+    async getMany<T>(store: string, keys: string[]): Promise<Map<string, T>> {
+      const m = getMap(store);
+      const out = new Map<string, T>();
+      for (const k of keys) {
+        if (m.has(k)) out.set(k, m.get(k) as T);
+      }
+      return out;
+    },
     async put(store: string, key: string, value: unknown) {
       getMap(store).set(key, value);
     },
@@ -255,6 +371,24 @@ function createIdbBackend(userId: number): KeyValueBackend {
         const req = tx.objectStore(store).get(key);
         req.onsuccess = () => resolve(req.result as T | undefined);
         req.onerror = () => reject(req.error);
+      });
+    },
+    async getMany<T>(store: string, keys: string[]): Promise<Map<string, T>> {
+      const out = new Map<string, T>();
+      if (!keys.length) return out;
+      const db = await getDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(store, 'readonly');
+        const os = tx.objectStore(store);
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const req = os.get(k);
+          req.onsuccess = () => {
+            if (req.result !== undefined) out.set(k, req.result as T);
+          };
+        }
+        tx.oncomplete = () => resolve(out);
+        tx.onerror = () => reject(tx.error);
       });
     },
     async put(store: string, key: string, value: unknown): Promise<void> {
@@ -450,6 +584,25 @@ class SignalStore implements StorageType {
     return this.backend.get<DecryptedPayload>('msgCache', String(msgId));
   }
 
+  async getCachedMessagesBatch(msgIds: number[]): Promise<Map<number, DecryptedPayload>> {
+    const out = new Map<number, DecryptedPayload>();
+    const unique = Array.from(new Set(msgIds.filter((n) => Number.isFinite(n) && n > 0)));
+    if (!unique.length) return out;
+    if (typeof this.backend.getMany === 'function') {
+      const raw = await this.backend.getMany<DecryptedPayload>('msgCache', unique.map(String));
+      for (const id of unique) {
+        const val = raw.get(String(id));
+        if (val) out.set(id, val);
+      }
+      return out;
+    }
+    const vals = await Promise.all(unique.map((id) => this.backend.get<DecryptedPayload>('msgCache', String(id))));
+    for (let i = 0; i < unique.length; i++) {
+      if (vals[i]) out.set(unique[i], vals[i] as DecryptedPayload);
+    }
+    return out;
+  }
+
   async setCachedMessage(msgId: number, payload: DecryptedPayload): Promise<void> {
     await this.backend.put('msgCache', String(msgId), payload);
   }
@@ -465,6 +618,7 @@ export class E2eeClient {
   private fetchImpl: BrowserFetch;
   private initPromise: Promise<number> | null = null;
   private mediaUrlCache = new Map<string, string>();
+  private memMsgCache = new Map<number, DecryptedPayload>();
   private decryptLocks = new Map<
     string,
     Promise<{ ok: boolean; payload?: DecryptedPayload; reason?: string; userId?: number; deviceId?: number; identityKey?: string }>
@@ -669,6 +823,8 @@ export class E2eeClient {
     voiceWaveform?: number[];
     existingMedia?: DecryptedMediaMeta | null;
     reply?: DecryptedReplyMeta | null;
+    sharedPost?: DecryptedSharedPostMeta | null;
+    linkPreview?: DecryptedLinkPreviewMeta | null;
     editOf?: number;
   }): Promise<{
     senderDeviceId: number;
@@ -679,7 +835,9 @@ export class E2eeClient {
   }> {
     const myDeviceId = await this.ensureInitialized();
     const cleanText = (opts.text || '').trim();
-    if (!cleanText && !opts.fileBytes && !opts.existingMedia) {
+    const cleanSharedPost = sanitizeSharedPostMeta(opts.sharedPost);
+    const cleanLinkPreview = sanitizeLinkPreviewMeta(opts.linkPreview);
+    if (!cleanText && !opts.fileBytes && !opts.existingMedia && !cleanSharedPost) {
       throw Object.assign(new Error('Empty message'), { code: 'EMPTY' });
     }
     if (cleanText.length > MAX_PLAIN_TEXT_LEN) {
@@ -712,6 +870,12 @@ export class E2eeClient {
     const cleanReply = sanitizeReplyMeta(opts.reply);
     if (cleanReply) {
       payload.reply = cleanReply;
+    }
+    if (cleanSharedPost) {
+      payload.sharedPost = cleanSharedPost;
+    }
+    if (cleanLinkPreview) {
+      payload.linkPreview = cleanLinkPreview;
     }
     if (opts.editOf && Number(opts.editOf) > 0) {
       payload.editOf = Number(opts.editOf);
@@ -772,21 +936,23 @@ export class E2eeClient {
     ];
 
     const needSessionKeys = new Set<string>();
-    for (const target of targets) {
-      const addr = makeDeviceAddress(target.userId, target.deviceId);
-      const trustedB64 = await this.store.getTrustedIdentityB64(addr.getName());
-      if (trustedB64 && trustedB64 !== target.identityKeyPub) {
-        await this.store.forceSaveIdentity(addr.getName(), base64ToArrayBuffer(target.identityKeyPub));
-        await this.store.removeSession(addr.toString());
-        needSessionKeys.add(`${target.userId}:${target.deviceId}`);
-        continue;
-      }
-      const cipher = new SessionCipher(this.store, addr);
-      const hasSession = await cipher.hasOpenSession();
-      if (!hasSession) {
-        needSessionKeys.add(`${target.userId}:${target.deviceId}`);
-      }
-    }
+    await Promise.all(
+      targets.map(async (target) => {
+        const addr = makeDeviceAddress(target.userId, target.deviceId);
+        const trustedB64 = await this.store.getTrustedIdentityB64(addr.getName());
+        if (trustedB64 && trustedB64 !== target.identityKeyPub) {
+          await this.store.forceSaveIdentity(addr.getName(), base64ToArrayBuffer(target.identityKeyPub));
+          await this.store.removeSession(addr.toString());
+          needSessionKeys.add(`${target.userId}:${target.deviceId}`);
+          return;
+        }
+        const cipher = new SessionCipher(this.store, addr);
+        const hasSession = await cipher.hasOpenSession();
+        if (!hasSession) {
+          needSessionKeys.add(`${target.userId}:${target.deviceId}`);
+        }
+      }),
+    );
 
     if (needSessionKeys.size > 0) {
       const bRes = await this.fetchImpl('/api/e2ee/keys/bundle', {
@@ -823,49 +989,57 @@ export class E2eeClient {
       };
 
       const allBundles = [...(bData.devices || []), ...(bData.self_devices || [])];
-      for (const b of allBundles) {
-        const key = `${b.user_id}:${b.device_id}`;
-        if (!needSessionKeys.has(key)) continue;
-        const addr = makeDeviceAddress(Number(b.user_id), Number(b.device_id));
-        const builder = new SessionBuilder(this.store, addr);
-        const deviceBundle: DeviceType = {
-          registrationId: Number(b.registration_id),
-          identityKey: base64ToArrayBuffer(b.identity_key_pub),
-          signedPreKey: {
-            keyId: Number(b.signed_prekey.key_id),
-            publicKey: base64ToArrayBuffer(b.signed_prekey.public_key),
-            signature: base64ToArrayBuffer(b.signed_prekey.signature),
-          },
-          preKey: b.prekey
-            ? {
-                keyId: Number(b.prekey.key_id),
-                publicKey: base64ToArrayBuffer(b.prekey.public_key),
-              }
-            : undefined,
-        };
-        try {
-          await builder.processPreKey(deviceBundle);
-        } catch {}
-      }
+      await Promise.all(
+        allBundles.map(async (b) => {
+          const key = `${b.user_id}:${b.device_id}`;
+          if (!needSessionKeys.has(key)) return;
+          const addr = makeDeviceAddress(Number(b.user_id), Number(b.device_id));
+          const builder = new SessionBuilder(this.store, addr);
+          const deviceBundle: DeviceType = {
+            registrationId: Number(b.registration_id),
+            identityKey: base64ToArrayBuffer(b.identity_key_pub),
+            signedPreKey: {
+              keyId: Number(b.signed_prekey.key_id),
+              publicKey: base64ToArrayBuffer(b.signed_prekey.public_key),
+              signature: base64ToArrayBuffer(b.signed_prekey.signature),
+            },
+            preKey: b.prekey
+              ? {
+                  keyId: Number(b.prekey.key_id),
+                  publicKey: base64ToArrayBuffer(b.prekey.public_key),
+                }
+              : undefined,
+          };
+          try {
+            await builder.processPreKey(deviceBundle);
+          } catch {}
+        }),
+      );
     }
 
-    const envelopes: CipherEnvelopeItem[] = [];
-    for (const target of targets) {
-      const addr = makeDeviceAddress(target.userId, target.deviceId);
-      const cipher = new SessionCipher(this.store, addr);
-      try {
-        const hasSession = await cipher.hasOpenSession();
-        if (!hasSession) continue;
-        const encResult = await cipher.encrypt(plaintextBuf);
-        if (!encResult || !encResult.body) continue;
-        envelopes.push({
-          u: target.userId,
-          d: target.deviceId,
-          t: Number(encResult.type),
-          b: binaryStringToBase64(encResult.body),
-        });
-      } catch {}
-    }
+    const encryptedItems = await Promise.all(
+      targets.map(async (target): Promise<CipherEnvelopeItem | null> => {
+        const addr = makeDeviceAddress(target.userId, target.deviceId);
+        const cipher = new SessionCipher(this.store, addr);
+        try {
+          const hasSession = await cipher.hasOpenSession();
+          if (!hasSession) return null;
+          const encResult = await cipher.encrypt(plaintextBuf);
+          if (!encResult || !encResult.body) return null;
+          return {
+            u: target.userId,
+            d: target.deviceId,
+            t: Number(encResult.type),
+            b: binaryStringToBase64(encResult.body),
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const envelopes: CipherEnvelopeItem[] = encryptedItems.filter(
+      (item): item is CipherEnvelopeItem => item !== null,
+    );
 
     if (!envelopes.some((e) => e.u === opts.partnerUserId)) {
       throw Object.assign(new Error('Encryption produced no recipient envelopes'), { code: 'ENCRYPT_FAILED' });
@@ -882,16 +1056,42 @@ export class E2eeClient {
 
   async cacheSentMessage(msgId: number, payload: DecryptedPayload, editVersion: number = 0): Promise<void> {
     if (msgId > 0) {
-      await this.store.setCachedMessage(msgId, {
+      const entry: DecryptedPayload = {
         ...payload,
         editVersion: Math.max(0, Number(editVersion || 0)),
-      });
+      };
+      this.memMsgCache.set(msgId, entry);
+      await this.store.setCachedMessage(msgId, entry);
     }
   }
 
   async getCachedMessage(msgId: number): Promise<DecryptedPayload | undefined> {
     if (!msgId || msgId <= 0) return undefined;
-    return this.store.getCachedMessage(msgId);
+    const mem = this.memMsgCache.get(msgId);
+    if (mem) return mem;
+    const stored = await this.store.getCachedMessage(msgId);
+    if (stored) this.memMsgCache.set(msgId, stored);
+    return stored;
+  }
+
+  async getCachedMessagesBatch(msgIds: number[]): Promise<Map<number, DecryptedPayload>> {
+    const out = new Map<number, DecryptedPayload>();
+    const missing: number[] = [];
+    for (let i = 0; i < msgIds.length; i++) {
+      const id = Number(msgIds[i]);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const mem = this.memMsgCache.get(id);
+      if (mem) out.set(id, mem);
+      else missing.push(id);
+    }
+    if (missing.length > 0) {
+      const fromDb = await this.store.getCachedMessagesBatch(missing);
+      fromDb.forEach((val, id) => {
+        this.memMsgCache.set(id, val);
+        out.set(id, val);
+      });
+    }
+    return out;
   }
 
   async decryptMessage(
@@ -912,8 +1112,13 @@ export class E2eeClient {
 
     const lockKey = `${msgId}:${expectedVersion}`;
     if (msgId > 0) {
+      const mem = this.memMsgCache.get(msgId);
+      if (mem && Number(mem.editVersion || 0) >= expectedVersion) {
+        return { ok: true, payload: mem };
+      }
       const cached = await this.store.getCachedMessage(msgId);
       if (cached && Number(cached.editVersion || 0) >= expectedVersion) {
+        this.memMsgCache.set(msgId, cached);
         return { ok: true, payload: cached };
       }
       const inFlight = this.decryptLocks.get(lockKey);
@@ -1007,11 +1212,15 @@ export class E2eeClient {
         }
       }
       const safeReply = sanitizeReplyMeta(parsed?.reply) || null;
+      const safeSharedPost = sanitizeSharedPostMeta(parsed?.sharedPost) || null;
+      const safeLinkPreview = sanitizeLinkPreviewMeta(parsed?.linkPreview) || null;
       const payload: DecryptedPayload = {
         v: Number(parsed?.v || 1),
         text: typeof parsed?.text === 'string' ? parsed.text.slice(0, MAX_PLAIN_TEXT_LEN) : '',
         media: safeMedia,
         reply: safeReply,
+        sharedPost: safeSharedPost,
+        linkPreview: safeLinkPreview,
         editVersion: expectedVersion,
       };
 
@@ -1023,6 +1232,7 @@ export class E2eeClient {
       }
 
       if (msg.id > 0) {
+        this.memMsgCache.set(msg.id, payload);
         await this.store.setCachedMessage(msg.id, payload);
       }
       return { ok: true, payload };
@@ -1153,6 +1363,7 @@ export class E2eeClient {
     for (const rawId of msgIds) {
       const id = Number(rawId);
       if (Number.isInteger(id) && id > 0) {
+        this.memMsgCache.delete(id);
         try {
           await this.store.removeCachedMessage(id);
         } catch {}

@@ -2,9 +2,10 @@ import { FeedPost, User } from '../types';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, TRASH_POST_ICON, postMediaUrl } from './layout';
 import { renderBottomNav } from './nav';
 import { COMMENT_ICON, renderCommentsSheetHtml, renderCommentsSheetScript } from './commentsModal';
+import { SHARE_ICON, renderShareSheetHtml, renderShareSheetScript } from './share';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { formatLocalizedFullDate, formatLocalizedShortDate, getClientDateFormat } from '../languages';
+import { formatLocalizedFullDate, formatLocalizedShortDate, getClientDateFormat, formatCompactCount } from '../languages';
 import { PersonalizedFeedResult } from '../recommendations';
 
 const HEART_ICON = `<svg class="heart-icon-svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
@@ -93,6 +94,10 @@ function renderFeedPostCard(p: FeedPost, t: Translations, isSuggested: boolean =
       </button>
       <button type="button" class="feed-comment-btn" data-post-id="${p.id}" data-comments-count="${p.comments_count ?? 0}" aria-label="${escapeHtml(t.feed.addComment)}">
         ${COMMENT_ICON}
+      </button>
+      <button type="button" class="feed-share-btn" data-post-id="${p.id}" data-author-username="${escapeHtml(p.username)}" data-author-avatar="${escapeHtml(p.avatar_key || '')}" data-author-verified="${p.is_verified ? '1' : '0'}" data-image-key="${escapeHtml(p.image_key)}" data-caption="${escapeHtml((p.caption || '').slice(0, 200))}" aria-label="${escapeHtml(t.share.ariaShare)}" title="${escapeHtml(t.share.title)}">
+        ${SHARE_ICON}
+        <span class="feed-share-count" data-post-id="${p.id}">${(p.shares_count ?? 0) > 0 ? escapeHtml(formatCompactCount(p.shares_count ?? 0, t.code)) : ''}</span>
       </button>
     </div>
 
@@ -211,11 +216,14 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
 
   ${renderBottomNav('feed', t)}
   ${renderCommentsSheetHtml(t)}
+  ${renderShareSheetHtml(t)}
 </div>`;
 
   const clientI18n = safeJsonForScript({
     lang: t.code,
     addComment: t.feed.addComment,
+    shareAria: t.share.ariaShare,
+    shareTitle: t.share.title,
     networkError: t.common.networkError,
     follow: t.recommendations.follow,
     following: t.recommendations.following,
@@ -243,12 +251,14 @@ export function feedPage(feedInput: PersonalizedFeedResult | FeedPost[], current
 
   const script = `
 ${renderCommentsSheetScript(t)}
+${renderShareSheetScript(currentUser.id, t)}
 
 (function() {
   var i18n = ${clientI18n};
   var HEART_ICON_HTML = ${safeJsonForScript(HEART_ICON)};
   var HEART_BURST_HTML = ${safeJsonForScript(HEART_BURST_ICON)};
   var COMMENT_ICON_HTML = ${safeJsonForScript(COMMENT_ICON)};
+  var SHARE_ICON_HTML = ${safeJsonForScript(SHARE_ICON)};
   var MORE_DOTS_HTML = ${safeJsonForScript(MORE_DOTS_ICON)};
   ${isAdmin ? `var TRASH_POST_HTML = ${safeJsonForScript(TRASH_POST_ICON)};` : ''}
 
@@ -351,6 +361,8 @@ ${renderCommentsSheetScript(t)}
     var isSuggested = !p.is_followed_author && Number(p.user_id) !== i18n.currentUserId;
     var likesCount = Number(p.likes_count) || 0;
     var commentsCount = Number(p.comments_count) || 0;
+    var sharesCount = Number(p.shares_count) || 0;
+    var sharesLabel = sharesCount > 0 ? (window.formatPhotogramCompactCount ? window.formatPhotogramCompactCount(sharesCount) : String(sharesCount)) : '';
 
     return '<article class="feed-card" data-post-id="' + Number(p.id) + '" data-author-id="' + Number(p.user_id) + '">' +
       '<header class="feed-card-header">' +
@@ -375,6 +387,7 @@ ${renderCommentsSheetScript(t)}
       '<div class="feed-card-actions">' +
         '<button type="button" class="feed-like-btn ' + (p.is_liked ? 'liked' : '') + '" data-post-id="' + Number(p.id) + '" aria-label="' + escapeHtmlClient(i18n.likeAria) + '">' + HEART_ICON_HTML + '</button>' +
         '<button type="button" class="feed-comment-btn" data-post-id="' + Number(p.id) + '" data-comments-count="' + commentsCount + '" aria-label="' + escapeHtmlClient(i18n.addComment) + '">' + COMMENT_ICON_HTML + '</button>' +
+        '<button type="button" class="feed-share-btn" data-post-id="' + Number(p.id) + '" data-author-username="' + escapeHtmlClient(username) + '" data-author-avatar="' + escapeHtmlClient(avatarKey) + '" data-author-verified="' + (Number(p.is_verified) === 1 ? '1' : '0') + '" data-image-key="' + escapeHtmlClient(p.image_key || '') + '" data-caption="' + escapeHtmlClient((p.caption || '').slice(0, 200)) + '" aria-label="' + escapeHtmlClient(i18n.shareAria) + '" title="' + escapeHtmlClient(i18n.shareTitle) + '">' + SHARE_ICON_HTML + '<span class="feed-share-count" data-post-id="' + Number(p.id) + '">' + escapeHtmlClient(sharesLabel) + '</span></button>' +
       '</div>' +
       '<div class="feed-card-likes-count" data-post-id="' + Number(p.id) + '">' + escapeHtmlClient(formatLikes(likesCount)) + '</div>' +
       (p.caption ? '<div class="feed-card-caption"><a href="/u/' + encodeURIComponent(username) + '" class="feed-caption-user">' + escapeHtmlClient(username) + verified12 + '</a> ' + formatCaptionClient(p.caption) + '</div>' : '') +
@@ -511,6 +524,24 @@ ${renderCommentsSheetScript(t)}
         e.stopPropagation();
         var pid = this.dataset.postId;
         toggleLike(pid, false);
+      });
+    });
+
+    scope.querySelectorAll('.feed-share-btn').forEach(function(btn) {
+      if (btn.dataset.feedBound) return;
+      btn.dataset.feedBound = '1';
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (window.openShareSheet) {
+          window.openShareSheet({
+            postId: parseInt(this.dataset.postId || '0', 10),
+            authorUsername: this.dataset.authorUsername || '',
+            authorAvatar: this.dataset.authorAvatar || '',
+            authorVerified: this.dataset.authorVerified === '1',
+            imageKey: this.dataset.imageKey || '',
+            caption: this.dataset.caption || ''
+          });
+        }
       });
     });
 

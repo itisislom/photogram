@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS posts (
     skin_score    REAL    NOT NULL DEFAULT 0,
     is_sensitive  INTEGER NOT NULL DEFAULT 0,
     reports_count INTEGER NOT NULL DEFAULT 0,
+    shares_count  INTEGER NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -39,6 +40,16 @@ CREATE INDEX IF NOT EXISTS idx_posts_user_id       ON posts(user_id);
 CREATE INDEX IF NOT EXISTS idx_posts_user_created  ON posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_created_desc  ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_sensitive     ON posts(is_sensitive, reports_count, skin_score);
+
+CREATE TABLE IF NOT EXISTS post_shares (
+    post_id      INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (post_id, user_id, recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_post ON post_shares(post_id);
 
 CREATE TABLE IF NOT EXISTS follows (
     follower_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

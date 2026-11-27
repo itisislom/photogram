@@ -521,6 +521,7 @@ export async function getChatPageData(
   env: Env,
   currentUser: User,
   targetUsername?: string,
+  ctx?: ExecutionContext,
 ): Promise<{
   conversations: ConversationItem[];
   activeConversationId: number | null;
@@ -536,6 +537,8 @@ export async function getChatPageData(
   let hasMore = false;
   let lastReadOwnId = 0;
 
+  const convsPromise = getUserConversations(env, currentUser.id);
+
   if (targetUsername) {
     const cleanTarget = targetUsername.toLowerCase().trim();
     const partner = await env.DB.prepare(
@@ -545,7 +548,7 @@ export async function getChatPageData(
       .first<{ id: number; username: string; display_name: string; avatar_key: string; is_verified?: number | boolean }>();
 
     if (!partner || Number(partner.id) === Number(currentUser.id)) {
-      const conversations = await getUserConversations(env, currentUser.id);
+      const conversations = await convsPromise;
       return {
         conversations,
         activeConversationId: null,
@@ -585,43 +588,55 @@ export async function getChatPageData(
         viewerSlot === 1
           ? Number(existingConv.user1_cleared_before_id || 0)
           : Number(existingConv.user2_cleared_before_id || 0);
-      const markedCount = await markConversationRead(env, activeConversationId, currentUser.id, clearedBeforeId, viewerSlot);
-      const loaded = await getConversationMessages(env, activeConversationId, currentUser.id, undefined, PAGE_SIZE, clearedBeforeId, viewerSlot);
+      const [loaded, lastReadId, markedCount] = await Promise.all([
+        getConversationMessages(env, activeConversationId, currentUser.id, undefined, PAGE_SIZE, clearedBeforeId, viewerSlot),
+        getLastReadOwnMessageId(env, activeConversationId, currentUser.id, clearedBeforeId, viewerSlot),
+        markConversationRead(env, activeConversationId, currentUser.id, clearedBeforeId, viewerSlot),
+      ]);
       messages = loaded.messages;
       hasMore = loaded.hasMore;
-      lastReadOwnId = await getLastReadOwnMessageId(env, activeConversationId, currentUser.id, clearedBeforeId, viewerSlot);
+      lastReadOwnId = lastReadId;
       if (markedCount > 0) {
+        const partnerIdForBg = activePartner.id;
+        const convIdForBg = activeConversationId;
         const partnerSlot: 1 | 2 = viewerSlot === 1 ? 2 : 1;
         const partnerCleared =
           partnerSlot === 1
             ? Number(existingConv.user1_cleared_before_id || 0)
             : Number(existingConv.user2_cleared_before_id || 0);
-        const [partnerLastRead, unreadTotal] = await Promise.all([
-          getLastReadOwnMessageId(env, activeConversationId, activePartner.id, partnerCleared, partnerSlot),
-          getTotalUnreadCount(env, currentUser.id),
-        ]);
-        await Promise.all([
-          emitUserEvent(env, activePartner.id, {
-            type: 'message.read',
-            conversation_id: activeConversationId,
-            reader_id: currentUser.id,
-            last_read_id: partnerLastRead,
-          }),
-          emitUserEvent(env, currentUser.id, {
-            type: 'unread.updated',
-            messages: unreadTotal,
-          }),
-        ]);
+        await runBackground(ctx, async () => {
+          const [partnerLastRead, unreadTotal] = await Promise.all([
+            getLastReadOwnMessageId(env, convIdForBg, partnerIdForBg, partnerCleared, partnerSlot),
+            getTotalUnreadCount(env, currentUser.id),
+          ]);
+          await Promise.all([
+            emitUserEvent(env, partnerIdForBg, {
+              type: 'message.read',
+              conversation_id: convIdForBg,
+              reader_id: currentUser.id,
+              last_read_id: partnerLastRead,
+            }),
+            emitUserEvent(env, currentUser.id, {
+              type: 'unread.updated',
+              messages: unreadTotal,
+            }),
+          ]);
+        });
       }
     }
   }
 
-  const conversations = await getUserConversations(env, currentUser.id);
+  const conversations = await convsPromise;
+  if (activeConversationId) {
+    for (const c of conversations) {
+      if (c.id === activeConversationId) c.unread_count = 0;
+    }
+  }
   const authItems = conversations.map((c) => ({ conv_id: c.id, partner_user_id: c.other_user_id }));
   if (activeConversationId && activePartner && !authItems.some((a) => a.conv_id === activeConversationId)) {
     authItems.push({ conv_id: activeConversationId, partner_user_id: activePartner.id });
   }
-  await authorizeRealtimeConversations(env, currentUser.id, authItems);
+  await runBackground(ctx, () => authorizeRealtimeConversations(env, currentUser.id, authItems));
   return {
     conversations,
     activeConversationId,
@@ -632,7 +647,7 @@ export async function getChatPageData(
   };
 }
 
-export async function handleGetConversations(request: Request, env: Env): Promise<Response> {
+export async function handleGetConversations(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
@@ -642,10 +657,12 @@ export async function handleGetConversations(request: Request, env: Env): Promis
 
   const conversations = await getUserConversations(env, user.id);
   const unreadTotal = conversations.reduce((sum, c) => sum + c.unread_count, 0);
-  await authorizeRealtimeConversations(
-    env,
-    user.id,
-    conversations.map((c) => ({ conv_id: c.id, partner_user_id: c.other_user_id })),
+  await runBackground(ctx, () =>
+    authorizeRealtimeConversations(
+      env,
+      user.id,
+      conversations.map((c) => ({ conv_id: c.id, partner_user_id: c.other_user_id })),
+    ),
   );
   return jsonResponse({ success: true, conversations, unread_total: unreadTotal }, 200);
 }
@@ -688,13 +705,19 @@ export async function handleStartConversation(request: Request, env: Env): Promi
   return jsonResponse({ success: true, conversation_id: conv.id, username: partner.username }, 200);
 }
 
-export async function handleGetMessages(request: Request, env: Env, url: URL): Promise<Response> {
+export async function handleGetMessages(
+  request: Request,
+  env: Env,
+  url: URL,
+  ctx?: ExecutionContext,
+): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
   if (!user) return jsonError(t.common.authRequired, 401);
 
   const convId = parseInt(url.searchParams.get('conversation_id') || '0', 10);
   const beforeId = parseInt(url.searchParams.get('before_id') || '0', 10);
+  const wantMarkRead = url.searchParams.get('mark_read') === '1';
   if (!Number.isInteger(convId) || convId <= 0) {
     return jsonError(t.common.networkError, 400);
   }
@@ -703,16 +726,61 @@ export async function handleGetMessages(request: Request, env: Env, url: URL): P
   if (!conv) return jsonError(t.common.authRequired, 403);
 
   const viewerSlot: 1 | 2 = conv.user1_id === Number(user.id) ? 1 : 2;
-  const { messages, hasMore } = await getConversationMessages(
-    env,
-    convId,
-    user.id,
-    beforeId > 0 ? beforeId : undefined,
-    PAGE_SIZE,
-    conv.cleared_before_id,
-    viewerSlot,
+  if (beforeId > 0) {
+    const { messages, hasMore } = await getConversationMessages(
+      env,
+      convId,
+      user.id,
+      beforeId,
+      PAGE_SIZE,
+      conv.cleared_before_id,
+      viewerSlot,
+    );
+    return jsonResponse({ success: true, messages, has_more: hasMore }, 200);
+  }
+
+  const [loaded, lastReadOwnId] = await Promise.all([
+    getConversationMessages(env, convId, user.id, undefined, PAGE_SIZE, conv.cleared_before_id, viewerSlot),
+    getLastReadOwnMessageId(env, convId, user.id, conv.cleared_before_id, viewerSlot),
+  ]);
+
+  if (wantMarkRead) {
+    const partnerId = conv.user1_id === Number(user.id) ? conv.user2_id : conv.user1_id;
+    const partnerSlot: 1 | 2 = viewerSlot === 1 ? 2 : 1;
+    const partnerCleared =
+      partnerSlot === 1 ? conv.user1_cleared_before_id : conv.user2_cleared_before_id;
+    await runBackground(ctx, async () => {
+      const markedCount = await markConversationRead(env, convId, user.id, conv.cleared_before_id, viewerSlot);
+      if (markedCount > 0) {
+        const [partnerLastRead, unreadTotal] = await Promise.all([
+          getLastReadOwnMessageId(env, convId, partnerId, partnerCleared, partnerSlot),
+          getTotalUnreadCount(env, user.id),
+        ]);
+        await Promise.all([
+          emitUserEvent(env, partnerId, {
+            type: 'message.read',
+            conversation_id: convId,
+            reader_id: user.id,
+            last_read_id: partnerLastRead,
+          }),
+          emitUserEvent(env, user.id, {
+            type: 'unread.updated',
+            messages: unreadTotal,
+          }),
+        ]);
+      }
+    });
+  }
+
+  return jsonResponse(
+    {
+      success: true,
+      messages: loaded.messages,
+      has_more: loaded.hasMore,
+      last_read_own_id: lastReadOwnId,
+    },
+    200,
   );
-  return jsonResponse({ success: true, messages, has_more: hasMore }, 200);
 }
 
 async function getEditedMessagesInWindow(
@@ -788,6 +856,34 @@ async function getDeletedMessageIdsInWindow(
   return (res.results || []).map((r) => Number(r.id)).filter((id) => id > 0);
 }
 
+async function getListenedMessageIdsInWindow(
+  env: Env,
+  conversationId: number,
+  clearedBeforeId: number,
+  minVisibleMsgId: number = 0,
+  viewerSlot: 1 | 2 | 0 = 0,
+): Promise<number[]> {
+  const floorId = Math.max(
+    0,
+    Number(clearedBeforeId || 0),
+    minVisibleMsgId > 0 ? Number(minVisibleMsgId) - 1 : 0,
+  );
+  const delCond = viewerDelCond(viewerSlot);
+  const res = await env.DB.prepare(
+    `SELECT id
+     FROM messages
+     WHERE conversation_id = ?
+       AND deleted_at IS NULL${delCond}
+       AND listened_at IS NOT NULL
+       AND id > ?
+     ORDER BY id DESC
+     LIMIT 200`,
+  )
+    .bind(conversationId, floorId)
+    .all<{ id: number }>();
+  return (res.results || []).map((r) => Number(r.id)).filter((id) => id > 0);
+}
+
 export async function handlePollMessages(request: Request, env: Env, url: URL): Promise<Response> {
   const t = getTranslations(detectLanguage(request));
   const user = await getUserFromRequest(env, request);
@@ -851,12 +947,13 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
     }
   }
 
-  const [lastReadOwnId, unreadTotal, reactionsMap, editedMessages, deletedMessageIds] = await Promise.all([
+  const [lastReadOwnId, unreadTotal, reactionsMap, editedMessages, deletedMessageIds, listenedMessageIds] = await Promise.all([
     getLastReadOwnMessageId(env, convId, user.id, conv.cleared_before_id, viewerSlot),
     getTotalUnreadCount(env, user.id),
     getConversationReactionsMap(env, convId, user.id, conv.cleared_before_id, minMsgId, viewerSlot),
     getEditedMessagesInWindow(env, convId, user.id, conv.cleared_before_id, minMsgId, viewerSlot),
     getDeletedMessageIdsInWindow(env, convId, viewerSlot, conv.cleared_before_id, minMsgId),
+    getListenedMessageIdsInWindow(env, convId, conv.cleared_before_id, minMsgId, viewerSlot),
   ]);
   const messagesWithReactions = newMessages.map((m) => ({
     ...m,
@@ -869,6 +966,7 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
       messages: messagesWithReactions,
       edited_messages: editedMessages,
       deleted_message_ids: deletedMessageIds,
+      listened_message_ids: listenedMessageIds,
       reactions_map: reactionsMap,
       last_read_own_id: lastReadOwnId,
       unread_total: unreadTotal,
@@ -886,6 +984,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
   let convId = 0;
   let targetUserId = 0;
   let senderDeviceId = 0;
+  let sharedPostId = 0;
   let rawEnvelopes: unknown = null;
   let encMediaFile: File | null = null;
 
@@ -921,6 +1020,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
       target_user_id?: unknown;
       sender_device_id?: unknown;
       envelopes?: unknown;
+      shared_post_id?: unknown;
     }>(request, 524288);
     if (!parsed.ok) {
       return jsonError(t.common.networkError, parsed.status);
@@ -929,6 +1029,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
     convId = parsePositiveId(body?.conversation_id) || 0;
     targetUserId = parsePositiveId(body?.target_user_id) || 0;
     senderDeviceId = parsePositiveId(body?.sender_device_id) || 0;
+    sharedPostId = parsePositiveId(body?.shared_post_id) || 0;
     rawEnvelopes = body?.envelopes;
   }
 
@@ -1046,6 +1147,31 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
       .run();
   }
 
+  let updatedSharesCount: number | undefined;
+  if (sharedPostId > 0 && recipientUserId > 0) {
+    try {
+      const postExists = await env.DB.prepare('SELECT id FROM posts WHERE id = ?')
+        .bind(sharedPostId)
+        .first<{ id: number }>();
+      if (postExists) {
+        await env.DB.prepare(
+          'INSERT OR IGNORE INTO post_shares (post_id, user_id, recipient_id) VALUES (?, ?, ?)',
+        )
+          .bind(sharedPostId, user.id, recipientUserId)
+          .run();
+        const cntRow = await env.DB.prepare(
+          'SELECT COUNT(*) AS cnt FROM post_shares WHERE post_id = ?',
+        )
+          .bind(sharedPostId)
+          .first<{ cnt: number | string }>();
+        updatedSharesCount = Number(cntRow?.cnt || 0);
+        await env.DB.prepare('UPDATE posts SET shares_count = ? WHERE id = ?')
+          .bind(updatedSharesCount, sharedPostId)
+          .run();
+      }
+    } catch {}
+  }
+
   const createdAt = new Date().toISOString();
   const baseMsg = {
     id: msgId,
@@ -1129,6 +1255,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
       success: true,
       conversation_id: resolvedConvId,
       message: senderMsgPayload,
+      ...(updatedSharesCount !== undefined ? { shares_count: updatedSharesCount } : {}),
     },
     201,
   );

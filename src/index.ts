@@ -1,4 +1,5 @@
 import { Env, User } from './types';
+import { getStyles } from './styles';
 import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
 import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleResolveMentions, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
 import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike, handleToggleCommentPin } from './posts';
@@ -24,6 +25,7 @@ import {
   handleToggleNotificationsSetting,
 } from './notifications';
 import { handleRealtimeWs } from './realtime';
+import { handleLinkPreview, handleLinkPreviewImage } from './linkPreview';
 import {
   handleGetVapidKey,
   handlePushSubscribe,
@@ -89,6 +91,44 @@ function safeDecode(raw: string): string | null {
   }
 }
 
+let cachedAppCss: string | null = null;
+
+function getAppCssCached(): string {
+  if (cachedAppCss === null) {
+    cachedAppCss = getStyles();
+  }
+  return cachedAppCss;
+}
+
+function extractSpaFragmentHtml(fullHtml: string): string | null {
+  const titleStart = fullHtml.indexOf('<title>');
+  const titleEnd = titleStart !== -1 ? fullHtml.indexOf('</title>', titleStart) : -1;
+  const styleStart = fullHtml.indexOf('<link id="appMainStyles"');
+  const styleEnd = styleStart !== -1 ? fullHtml.indexOf('>', styleStart) : -1;
+  const rootStart = fullHtml.indexOf('<div id="appPageRoot">');
+  const shellMarker = '\n<div class="modal-backdrop app-alert-backdrop';
+  const rootEnd = rootStart !== -1 ? fullHtml.indexOf(shellMarker, rootStart) : -1;
+  const scriptStart = fullHtml.indexOf('<script type="text/plain" id="appPageScript"');
+  const scriptEnd = scriptStart !== -1 ? fullHtml.indexOf('</script>', scriptStart) : -1;
+  if (
+    titleStart === -1 ||
+    titleEnd === -1 ||
+    styleStart === -1 ||
+    styleEnd === -1 ||
+    rootStart === -1 ||
+    rootEnd === -1 ||
+    scriptStart === -1 ||
+    scriptEnd === -1
+  ) {
+    return null;
+  }
+  const titleTag = fullHtml.slice(titleStart, titleEnd + 8);
+  const styleTag = fullHtml.slice(styleStart, styleEnd + 1);
+  const rootHtml = fullHtml.slice(rootStart, rootEnd).trimEnd();
+  const scriptTag = fullHtml.slice(scriptStart, scriptEnd + 9);
+  return `<!DOCTYPE html><html><head>${titleTag}${styleTag}</head><body>${rootHtml}\n${scriptTag}</body></html>`;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const activeEnv = env.DATABASE_URL
@@ -97,7 +137,19 @@ export default {
     const url = new URL(request.url);
     const isMedia = url.pathname.startsWith('/media/');
     try {
-      const response = await handleRequest(request, activeEnv, url, ctx);
+      let response = await handleRequest(request, activeEnv, url, ctx);
+      if (
+        request.method === 'GET' &&
+        request.headers.get('X-Requested-With') === 'photogram-spa' &&
+        response.status === 200 &&
+        (response.headers.get('Content-Type') || '').includes('text/html')
+      ) {
+        const fullText = await response.text();
+        const frag = extractSpaFragmentHtml(fullText);
+        const h = new Headers(response.headers);
+        h.set('Vary', 'Cookie, X-Requested-With');
+        response = new Response(frag || fullText, { status: response.status, headers: h });
+      }
       return withSecurityHeaders(response, isMedia, url);
     } catch (err: any) {
       console.error(err);
@@ -178,6 +230,19 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
           }
         }
       }
+    }
+
+    if (pathname === '/app.css' && (method === 'GET' || method === 'HEAD')) {
+      return new Response(method === 'HEAD' ? null : getAppCssCached(), {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cache-Control': url.searchParams.has('v')
+            ? 'public, max-age=31536000, immutable'
+            : 'public, max-age=300',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
     }
 
     if (pathname === '/icon.svg' || pathname === '/favicon.ico') {
@@ -307,7 +372,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     if ((pathname === '/messages' || pathname === '/messages.ts') && method === 'GET') {
       const user = await getUserFromRequest(env, request);
       if (!user) return redirect('/login', request, setLangCookie);
-      const chatData = await getChatPageData(env, user);
+      const chatData = await getChatPageData(env, user, undefined, ctx);
       return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
 
@@ -326,7 +391,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
       if (decodedTarget === null) return new Response('Bad Request', { status: 400 });
       const targetUsername = decodedTarget.replace(/\/+$/, '').trim();
       if (!targetUsername) return redirect('/messages', request, setLangCookie);
-      const chatData = await getChatPageData(env, user, targetUsername);
+      const chatData = await getChatPageData(env, user, targetUsername, ctx);
       if (chatData.notFound) return redirect('/messages', request, setLangCookie);
       return html(messagesPage(chatData, user, t, userTheme, userTimeZone), setLangCookie, isHttps);
     }
@@ -735,7 +800,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     }
 
     if (pathname === '/api/messages/conversations' && method === 'GET') {
-      return handleGetConversations(request, env);
+      return handleGetConversations(request, env, ctx);
     }
 
     if (pathname === '/api/messages/start' && method === 'POST') {
@@ -743,7 +808,7 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     }
 
     if (pathname === '/api/messages/list' && method === 'GET') {
-      return handleGetMessages(request, env, url);
+      return handleGetMessages(request, env, url, ctx);
     }
 
     if (pathname === '/api/messages/poll' && method === 'GET') {
@@ -780,6 +845,14 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
 
     if (pathname === '/api/messages/unread' && method === 'GET') {
       return handleUnreadCount(request, env);
+    }
+
+    if (pathname === '/api/messages/link-preview' && method === 'GET') {
+      return handleLinkPreview(request, env, url);
+    }
+
+    if (pathname === '/api/messages/link-preview-img' && method === 'GET') {
+      return handleLinkPreviewImage(request, env, url);
     }
 
     if (pathname === '/api/notifications/unread' && method === 'GET') {
@@ -890,7 +963,7 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
     const wsOrigin = url ? ` ${wsScheme}//${url.host}` : '';
     headers.set(
       'Content-Security-Policy',
-      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'${wsOrigin}; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
+      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'${wsOrigin}; frame-src 'self' https://www.youtube-nocookie.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
     );
   }
 

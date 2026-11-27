@@ -161,7 +161,7 @@ export function messagesPage(
             : '';
 
           return `
-          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}" data-last-read="${lastRead ? '1' : '0'}" data-last-edit-version="${c.last_message_edit_version || 0}">
+          <a href="/messages/${encodeURIComponent(c.other_username)}" class="dm-conv-item ${isCurrent ? 'active' : ''} ${c.unread_count > 0 && !isCurrent ? 'unread' : ''}" data-conv-id="${c.id}" data-partner-id="${c.other_user_id}" data-partner-username="${escapeHtml(c.other_username)}" data-partner-display="${escapeHtml(c.other_display_name || c.other_username)}" data-partner-avatar="${escapeHtml(c.other_avatar_key || '')}" data-partner-verified="${c.other_is_verified ? '1' : '0'}" data-last-msg-id="${c.last_message_id || 0}" data-last-encrypted="${c.last_message_encrypted ? '1' : '0'}" data-last-mine="${c.last_message_sender_id === currentUser.id ? '1' : '0'}" data-last-read="${lastRead ? '1' : '0'}" data-last-edit-version="${c.last_message_edit_version || 0}">
             <div class="dm-avatar">${avatarHtml}</div>
             <div class="dm-conv-meta">
               <div class="dm-conv-top">
@@ -282,12 +282,13 @@ export function messagesPage(
     const seenVisible = lastReadOwnId > 0 && messages.length > 0 && Number(messages[messages.length - 1].sender_id) === Number(currentUser.id) && Number(messages[messages.length - 1].id) <= lastReadOwnId;
 
     threadHtml = `
+    <div class="dm-thread-active-wrap" id="dmActiveThreadWrap">
     <header class="dm-thread-header">
-      <a href="/messages" class="dm-back-btn" aria-label="${escapeHtml(t.post.back)}">${BACK_ICON}</a>
-      <a href="/u/${encodeURIComponent(activePartner.username)}" class="dm-thread-partner">
-        <div class="dm-avatar dm-avatar-sm">${pAvatar}</div>
+      <a href="/messages" class="dm-back-btn" id="dmThreadBackBtn" aria-label="${escapeHtml(t.post.back)}">${BACK_ICON}</a>
+      <a href="/u/${encodeURIComponent(activePartner.username)}" class="dm-thread-partner" id="dmThreadPartnerLink">
+        <div class="dm-avatar dm-avatar-sm" id="dmThreadAvatar">${pAvatar}</div>
         <div class="dm-thread-partner-info">
-          <div class="dm-thread-username">${escapeHtml(activePartner.username)}${activePartner.is_verified ? renderVerifiedBadge(13.5) : ''}</div>
+          <div class="dm-thread-username" id="dmThreadUsername">${escapeHtml(activePartner.username)}${activePartner.is_verified ? renderVerifiedBadge(13.5) : ''}</div>
           <div class="dm-thread-display" id="dmThreadSubtitle" data-default-text="${escapeHtml(activePartner.display_name || activePartner.username)}">${escapeHtml(activePartner.display_name || activePartner.username)}</div>
         </div>
       </a>
@@ -300,7 +301,7 @@ export function messagesPage(
 
     <div class="dm-messages-scroll" id="dmMessagesScroll">
       <div class="dm-e2ee-pill">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></div>
-      ${hasMore ? `<button type="button" class="dm-load-older-btn" id="dmLoadOlderBtn">${escapeHtml(t.messages.loadOlder)}</button>` : ''}
+      <button type="button" class="dm-load-older-btn" id="dmLoadOlderBtn"${hasMore ? '' : ' style="display:none;"'}>${escapeHtml(t.messages.loadOlder)}</button>
       <div class="dm-messages-list" id="dmMessagesList">
         ${msgsHtml}
       </div>
@@ -342,10 +343,77 @@ export function messagesPage(
       </div>
       <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" style="display:none;" disabled>${SEND_COMMENT_ICON}</button>
       <button type="button" class="dm-voice-btn" id="dmVoiceBtn" aria-label="${escapeHtml(t.messages.voiceLabel)}" title="${escapeHtml(t.messages.voiceHoldHint)}">${MIC_ICON}</button>
+    </div>
+    </div>
+    <div class="dm-thread-empty" id="dmThreadEmptyWrap" style="display:none;">
+      <div class="dm-empty-icon">${CHAT_BIG_ICON}</div>
+      <div class="dm-empty-title">${escapeHtml(t.messages.selectChatTitle)}</div>
+      <div class="dm-empty-desc">${escapeHtml(t.messages.selectChatDesc)}</div>
     </div>`;
   } else {
     threadHtml = `
-    <div class="dm-thread-empty">
+    <div class="dm-thread-active-wrap" id="dmActiveThreadWrap" style="display:none;">
+    <header class="dm-thread-header">
+      <a href="/messages" class="dm-back-btn" id="dmThreadBackBtn" aria-label="${escapeHtml(t.post.back)}">${BACK_ICON}</a>
+      <a href="/messages" class="dm-thread-partner" id="dmThreadPartnerLink">
+        <div class="dm-avatar dm-avatar-sm" id="dmThreadAvatar"></div>
+        <div class="dm-thread-partner-info">
+          <div class="dm-thread-username" id="dmThreadUsername"></div>
+          <div class="dm-thread-display" id="dmThreadSubtitle" data-default-text=""></div>
+        </div>
+      </a>
+    </header>
+
+    <div class="dm-e2ee-banner" id="dmE2eeBanner">
+      <span id="dmE2eeBannerText"></span>
+      <button type="button" class="dm-e2ee-banner-btn" id="dmE2eeBannerBtn" style="display:none;"></button>
+    </div>
+
+    <div class="dm-messages-scroll" id="dmMessagesScroll">
+      <div class="dm-e2ee-pill">${LOCK_XS_ICON}<span>${escapeHtml(t.messages.e2eeBadge)}</span></div>
+      <button type="button" class="dm-load-older-btn" id="dmLoadOlderBtn" style="display:none;">${escapeHtml(t.messages.loadOlder)}</button>
+      <div class="dm-messages-list" id="dmMessagesList"></div>
+      <div class="dm-seen-indicator" id="dmSeenIndicator">${escapeHtml(t.messages.seen)}</div>
+    </div>
+
+    <div class="dm-edit-bar" id="dmReplyBar" style="display:none;">
+      <div class="dm-edit-bar-icon">${REPLY_ARROW_ICON}</div>
+      <div class="dm-edit-bar-meta">
+        <div class="dm-edit-bar-title" id="dmReplyBarTitle"></div>
+        <div class="dm-edit-bar-preview" id="dmReplyBarPreview"></div>
+      </div>
+      <button type="button" class="dm-edit-bar-close" id="dmReplyCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+    </div>
+
+    <div class="dm-edit-bar" id="dmEditBar" style="display:none;">
+      <div class="dm-edit-bar-icon">${EDIT_SM_ICON}</div>
+      <div class="dm-edit-bar-meta">
+        <div class="dm-edit-bar-title">${escapeHtml(t.messages.editingMessage)}</div>
+        <div class="dm-edit-bar-preview" id="dmEditBarPreview"></div>
+      </div>
+      <button type="button" class="dm-edit-bar-close" id="dmEditCancelBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+    </div>
+
+    <div class="dm-attach-preview" id="dmAttachPreview" style="display:none;">
+      <img id="dmAttachThumb" src="" alt="${escapeHtml(t.messages.photoLabel)}">
+      <button type="button" class="dm-attach-clear" id="dmAttachClearBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+    </div>
+
+    <div class="dm-composer" id="dmComposeForm">
+      <input type="file" id="dmImageInput" style="display:none;">
+      <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
+      <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="true" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
+      <div class="dm-voice-rec-bar" id="dmVoiceRecBar" aria-live="polite">
+        <span class="dm-voice-rec-dot"></span>
+        <span class="dm-voice-rec-timer" id="dmVoiceRecTimer">0:00</span>
+        <div class="dm-voice-live-bars" id="dmVoiceLiveBars" aria-hidden="true"></div>
+        <span class="dm-voice-rec-hint" id="dmVoiceRecHint">${escapeHtml(t.messages.voiceSlideCancel)}</span>
+      </div>
+      <button type="button" class="dm-send-btn" id="dmSendBtn" aria-label="${escapeHtml(t.messages.send)}" title="${escapeHtml(t.messages.send)}" style="display:none;" disabled>${SEND_COMMENT_ICON}</button>
+      <button type="button" class="dm-voice-btn" id="dmVoiceBtn" aria-label="${escapeHtml(t.messages.voiceLabel)}" title="${escapeHtml(t.messages.voiceHoldHint)}">${MIC_ICON}</button>
+    </div>
+    </div>
+    <div class="dm-thread-empty" id="dmThreadEmptyWrap">
       <div class="dm-empty-icon">${CHAT_BIG_ICON}</div>
       <div class="dm-empty-title">${escapeHtml(t.messages.selectChatTitle)}</div>
       <div class="dm-empty-desc">${escapeHtml(t.messages.selectChatDesc)}</div>
@@ -384,6 +452,24 @@ export function messagesPage(
     <div class="dm-lightbox-inner">
       <button type="button" class="dm-lightbox-close" id="dmLightboxCloseBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
       <img id="dmLightboxImg" src="" alt="${escapeHtml(t.messages.photoLabel)}">
+    </div>
+  </div>
+
+  <div class="modal-backdrop dm-video-backdrop" id="dmVideoPlayerModal" aria-hidden="true">
+    <div class="dm-video-dialog" role="dialog" aria-modal="true" aria-labelledby="dmVideoTitle">
+      <div class="dm-video-header">
+        <div class="dm-video-title-wrap">
+          <span class="dm-video-title" id="dmVideoTitle">YouTube</span>
+          <span class="dm-video-time-pill" id="dmVideoTimePill" style="display:none;"></span>
+        </div>
+        <div class="dm-video-actions">
+          <a class="dm-video-ext-btn" id="dmVideoExtLink" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer">${escapeHtml(t.messages.openOnYoutube)}</a>
+          <button type="button" class="dm-video-close-btn" id="dmVideoCloseBtn" aria-label="${escapeHtml(t.common.close)}">${CLOSE_ICON}</button>
+        </div>
+      </div>
+      <div class="dm-video-frame-wrap">
+        <iframe id="dmVideoIframe" class="dm-video-iframe" src="about:blank" title="YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      </div>
     </div>
   </div>
 
@@ -479,6 +565,11 @@ export function messagesPage(
     networkError: t.common.networkError,
     photoLabel: t.messages.photoLabel,
     voiceLabel: t.messages.voiceLabel,
+    sharedPostPreview: t.share.sharedPostPreview,
+    sharedPostLabel: t.share.sharedPostLabel,
+    playVideoLabel: t.messages.playVideo,
+    openOnYoutubeLabel: t.messages.openOnYoutube,
+    verifiedBadgeSm: renderVerifiedBadge(12),
     voiceHoldHint: t.messages.voiceHoldHint,
     voiceSlideCancel: t.messages.voiceSlideCancel,
     voiceReleaseCancel: t.messages.voiceReleaseCancel,
@@ -979,24 +1070,155 @@ export function messagesPage(
   var mentionWaiters = {};
   var mentionFlushTimer = null;
 
-  function renderMentionNodes(txtEl, rawText) {
-    if (!txtEl) return;
-    var text = String(rawText || '');
-    txtEl.setAttribute('data-raw-text', text);
-    while (txtEl.firstChild) txtEl.removeChild(txtEl.firstChild);
-    if (!text) return;
+  var linkPreviewCache = {};
+  var linkPreviewInflight = {};
+  var YT_ID_CLIENT_RE = /^[A-Za-z0-9_-]{11}$/;
+  var URL_TOKEN_RE = /https?:\\/\\/[^\\s<>"'\`]+/gi;
 
+  function sanitizeClientHttpUrl(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    var s = raw.trim().replace(/[.,!?;:)\\]]+$/, '');
+    if (!s || s.length > 2048) return '';
+    try {
+      var u = new URL(s);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return '';
+      if (u.username || u.password) return '';
+      if (!u.hostname || u.hostname.indexOf('.') === -1) return '';
+      return u.toString();
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function extractFirstUrl(text) {
+    if (!text || typeof text !== 'string') return '';
+    URL_TOKEN_RE.lastIndex = 0;
+    var m = URL_TOKEN_RE.exec(text);
+    return m ? sanitizeClientHttpUrl(m[0]) : '';
+  }
+
+  function parseClientYtStart(raw) {
+    if (!raw) return 0;
+    var s = String(raw).trim().toLowerCase();
+    if (!s) return 0;
+    if (/^\\d{1,6}s?$/.test(s)) {
+      var n = parseInt(s, 10);
+      return isFinite(n) && n > 0 && n <= 86400 ? n : 0;
+    }
+    var m = /^(?:(\\d{1,2})h)?(?:(\\d{1,3})m)?(?:(\\d{1,3})s?)?$/.exec(s);
+    if (!m) return 0;
+    var tot = (m[1] ? parseInt(m[1], 10) * 3600 : 0) + (m[2] ? parseInt(m[2], 10) * 60 : 0) + (m[3] ? parseInt(m[3], 10) : 0);
+    return tot > 0 && tot <= 86400 ? tot : 0;
+  }
+
+  function extractYoutubeInfoClient(rawUrl) {
+    var clean = sanitizeClientHttpUrl(rawUrl);
+    if (!clean) return null;
+    try {
+      var u = new URL(clean);
+      var host = u.hostname.toLowerCase().replace(/\\.$/, '');
+      var id = '';
+      var parts = u.pathname.split('/').filter(Boolean);
+      if (host === 'youtu.be' || host === 'www.youtu.be') {
+        id = parts[0] || '';
+      } else if (host === 'youtube.com' || host === 'www.youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com' || host === 'www.youtube-nocookie.com') {
+        if (parts[0] === 'watch') id = u.searchParams.get('v') || '';
+        else if (parts[0] === 'shorts' || parts[0] === 'live' || parts[0] === 'embed') id = parts[1] || '';
+      }
+      if (!YT_ID_CLIENT_RE.test(id)) return null;
+      var startSec = parseClientYtStart(u.searchParams.get('t')) || parseClientYtStart(u.searchParams.get('start'));
+      return { videoId: id, startSec: startSec };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function formatTimecodeSeconds(sec) {
+    var s = Math.max(0, Math.floor(Number(sec) || 0));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var rem = s % 60;
+    var pad = function(v) { return v < 10 ? ('0' + v) : String(v); };
+    return h > 0 ? (h + ':' + pad(m) + ':' + pad(rem)) : (m + ':' + pad(rem));
+  }
+
+  async function fetchLinkPreviewClient(rawUrl) {
+    var clean = sanitizeClientHttpUrl(rawUrl);
+    if (!clean) return null;
+    if (Object.prototype.hasOwnProperty.call(linkPreviewCache, clean)) {
+      return linkPreviewCache[clean];
+    }
+    if (linkPreviewInflight[clean]) {
+      return linkPreviewInflight[clean];
+    }
+    var p = fetch('/api/messages/link-preview?url=' + encodeURIComponent(clean), {
+      credentials: 'same-origin'
+    }).then(function(res) {
+      if (!res.ok) return null;
+      return res.json();
+    }).then(function(data) {
+      var prev = (data && data.ok && data.preview) ? data.preview : null;
+      linkPreviewCache[clean] = prev;
+      return prev;
+    }).catch(function() {
+      return null;
+    }).finally(function() {
+      delete linkPreviewInflight[clean];
+    });
+    linkPreviewInflight[clean] = p;
+    return p;
+  }
+
+  function appendMentionsAndTimecodes(txtEl, segment, videoId, needsResolve) {
+    if (!segment) return;
+    if (videoId && YT_ID_CLIENT_RE.test(videoId)) {
+      var tcRe = /(^|[^0-9:])(?:(\\d{1,2}):)?([0-5]?\\d):([0-5]\\d)(?![0-9:])/g;
+      var tcLast = 0;
+      var tm;
+      while ((tm = tcRe.exec(segment)) !== null) {
+        var tcPre = tm[1] || '';
+        var tcStart = tm.index + tcPre.length;
+        if (tcStart > tcLast) {
+          appendMentionOnlySegment(txtEl, segment.slice(tcLast, tcStart), needsResolve);
+        }
+        var hrs = tm[2] ? parseInt(tm[2], 10) : 0;
+        var mins = parseInt(tm[3], 10);
+        var secs = parseInt(tm[4], 10);
+        var totalSec = hrs * 3600 + mins * 60 + secs;
+        var label = (tm[2] ? (tm[2] + ':') : '') + tm[3] + ':' + tm[4];
+        if (totalSec <= 86400) {
+          var tcBtn = document.createElement('button');
+          tcBtn.type = 'button';
+          tcBtn.className = 'dm-timecode-btn';
+          tcBtn.setAttribute('data-yt-id', videoId);
+          tcBtn.setAttribute('data-yt-start', String(totalSec));
+          tcBtn.textContent = label;
+          txtEl.appendChild(tcBtn);
+        } else {
+          txtEl.appendChild(document.createTextNode(label));
+        }
+        tcLast = tcStart + label.length;
+      }
+      if (tcLast < segment.length) {
+        appendMentionOnlySegment(txtEl, segment.slice(tcLast), needsResolve);
+      }
+      return;
+    }
+    appendMentionOnlySegment(txtEl, segment, needsResolve);
+  }
+
+  function appendMentionOnlySegment(txtEl, segment, needsResolve) {
+    if (!segment) return;
     var re = /(^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{3,24})(?![a-zA-Z0-9_])/g;
     var lastIdx = 0;
     var match;
-    var needsResolve = [];
-    while ((match = re.exec(text)) !== null) {
+    while ((match = re.exec(segment)) !== null) {
       var prefix = match[1] || '';
       var uname = match[2];
       var lower = uname.toLowerCase();
       var atIdx = match.index + prefix.length;
       if (atIdx > lastIdx) {
-        txtEl.appendChild(document.createTextNode(text.slice(lastIdx, atIdx)));
+        txtEl.appendChild(document.createTextNode(segment.slice(lastIdx, atIdx)));
       }
       if (mentionLookupCache[lower] === true) {
         var link = document.createElement('a');
@@ -1012,8 +1234,56 @@ export function messagesPage(
       }
       lastIdx = atIdx + 1 + uname.length;
     }
+    if (lastIdx < segment.length) {
+      txtEl.appendChild(document.createTextNode(segment.slice(lastIdx)));
+    }
+  }
+
+  function renderMentionNodes(txtEl, rawText, videoCtx) {
+    if (!txtEl) return;
+    var text = String(rawText || '');
+    txtEl.setAttribute('data-raw-text', text);
+    var videoId = (videoCtx && videoCtx.videoId && YT_ID_CLIENT_RE.test(videoCtx.videoId))
+      ? videoCtx.videoId
+      : (txtEl.getAttribute('data-yt-context') || '');
+    if (videoId && YT_ID_CLIENT_RE.test(videoId)) {
+      txtEl.setAttribute('data-yt-context', videoId);
+    } else {
+      videoId = '';
+    }
+    while (txtEl.firstChild) txtEl.removeChild(txtEl.firstChild);
+    if (!text) return;
+
+    var needsResolve = [];
+    URL_TOKEN_RE.lastIndex = 0;
+    var lastIdx = 0;
+    var um;
+    while ((um = URL_TOKEN_RE.exec(text)) !== null) {
+      var rawToken = um[0];
+      var cleanHref = sanitizeClientHttpUrl(rawToken);
+      var displayToken = rawToken.replace(/[.,!?;:)\\]]+$/, '');
+      var trailing = rawToken.slice(displayToken.length);
+      if (um.index > lastIdx) {
+        appendMentionsAndTimecodes(txtEl, text.slice(lastIdx, um.index), videoId, needsResolve);
+      }
+      if (cleanHref) {
+        var a = document.createElement('a');
+        a.className = 'dm-msg-link';
+        a.setAttribute('href', cleanHref);
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+        a.textContent = displayToken;
+        txtEl.appendChild(a);
+        if (trailing) {
+          appendMentionsAndTimecodes(txtEl, trailing, videoId, needsResolve);
+        }
+      } else {
+        appendMentionsAndTimecodes(txtEl, rawToken, videoId, needsResolve);
+      }
+      lastIdx = um.index + rawToken.length;
+    }
     if (lastIdx < text.length) {
-      txtEl.appendChild(document.createTextNode(text.slice(lastIdx)));
+      appendMentionsAndTimecodes(txtEl, text.slice(lastIdx), videoId, needsResolve);
     }
     if (needsResolve.length > 0) {
       for (var i = 0; i < needsResolve.length; i++) {
@@ -1084,7 +1354,9 @@ export function messagesPage(
     if (!listEl) return;
     listEl.querySelectorAll('.dm-msg-text:not(.dm-msg-decrypt-err)').forEach(function(el) {
       var raw = el.getAttribute('data-raw-text') || el.textContent || '';
-      if (raw.indexOf('@') !== -1) renderMentionNodes(el, raw);
+      if (raw.indexOf('@') !== -1 || raw.indexOf('http://') !== -1 || raw.indexOf('https://') !== -1) {
+        renderMentionNodes(el, raw);
+      }
     });
   }
 
@@ -1123,6 +1395,12 @@ export function messagesPage(
     if (row.getAttribute('data-msg-kind') === 'voice') {
       kind = 'voice';
       preview = state.voiceLabel;
+    } else if (row.getAttribute('data-msg-kind') === 'post') {
+      kind = 'post';
+      var spAuthor = row.getAttribute('data-shared-author') || '';
+      preview = spAuthor
+        ? String(state.sharedPostLabel || state.sharedPostPreview).replace('{username}', spAuthor)
+        : state.sharedPostPreview;
     } else {
       var txtEl = row.querySelector('.dm-msg-text:not(.dm-msg-decrypt-err)');
       var rawTxt = txtEl ? (txtEl.getAttribute('data-raw-text') || txtEl.textContent || '').trim() : '';
@@ -1136,12 +1414,19 @@ export function messagesPage(
         preview = state.encryptedPreview;
       }
     }
+    var ytVid = row.getAttribute('data-yt-video-id') || '';
+    if (!ytVid && kind === 'text') {
+      var rawForYt = txtEl ? (txtEl.getAttribute('data-raw-text') || txtEl.textContent || '') : '';
+      var ytFromTxt = extractYoutubeInfoClient(extractFirstUrl(rawForYt));
+      if (ytFromTxt && ytFromTxt.videoId) ytVid = ytFromTxt.videoId;
+    }
     replyingMsg = {
       id: Number(msgId),
       senderId: senderId,
       senderName: senderName,
       preview: preview,
-      kind: kind
+      kind: kind,
+      videoId: (ytVid && YT_ID_CLIENT_RE.test(ytVid)) ? ytVid : undefined
     };
     if (replyBarTitle) {
       replyBarTitle.textContent = String(state.replyingToLabel || '{username}').replace('{username}', '@' + senderName);
@@ -1190,7 +1475,9 @@ export function messagesPage(
     previewEl.className = 'dm-reply-quote-text';
     var fallbackLabel = replyMeta.kind === 'voice'
       ? state.voiceLabel
-      : (replyMeta.kind === 'image' ? state.photoLabel : '');
+      : (replyMeta.kind === 'post'
+        ? state.sharedPostPreview
+        : (replyMeta.kind === 'image' ? state.photoLabel : ''));
     previewEl.textContent = replyMeta.preview || fallbackLabel;
     if (authorLabel) btn.appendChild(authorEl);
     btn.appendChild(previewEl);
@@ -1422,6 +1709,7 @@ export function messagesPage(
       fetch('/api/messages/listened', {
         method: 'POST',
         credentials: 'same-origin',
+        keepalive: true,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message_id: vMsgId })
       }).catch(function() {});
@@ -1545,16 +1833,226 @@ export function messagesPage(
     return wrap;
   }
 
+  function buildSharedPostCardEl(sp) {
+    if (!sp || !sp.postId || !sp.authorUsername || !sp.imageKey) return null;
+    var imgKey = String(sp.imageKey).trim();
+    if (imgKey.indexOf('posts/') !== 0 || imgKey.indexOf('..') !== -1 || imgKey.indexOf('\\\\') !== -1) return null;
+    var author = String(sp.authorUsername).trim();
+    if (!author) return null;
+
+    var card = document.createElement('a');
+    card.className = 'dm-shared-post';
+    card.href = '/u/' + encodeURIComponent(author) + '?post=' + encodeURIComponent(String(sp.postId));
+
+    var head = document.createElement('div');
+    head.className = 'dm-shared-post-head';
+
+    var av = document.createElement('span');
+    av.className = 'dm-shared-post-avatar';
+    var avKey = sp.authorAvatar ? String(sp.authorAvatar).trim() : '';
+    if (avKey && avKey.indexOf('avatars/') === 0 && avKey.indexOf('..') === -1 && avKey.indexOf('\\\\') === -1) {
+      var avImg = document.createElement('img');
+      avImg.src = '/media/' + encodeURIComponent(avKey);
+      avImg.alt = author;
+      avImg.loading = 'lazy';
+      av.appendChild(avImg);
+    } else {
+      var avSp = document.createElement('span');
+      avSp.textContent = author.charAt(0).toUpperCase();
+      av.appendChild(avSp);
+    }
+
+    var nameWrap = document.createElement('span');
+    nameWrap.className = 'dm-shared-post-author';
+    var nameText = document.createElement('span');
+    nameText.textContent = author;
+    nameWrap.appendChild(nameText);
+    if (sp.authorVerified && state.verifiedBadgeSm) {
+      var badge = document.createElement('span');
+      badge.innerHTML = state.verifiedBadgeSm;
+      nameWrap.appendChild(badge);
+    }
+
+    head.appendChild(av);
+    head.appendChild(nameWrap);
+    card.appendChild(head);
+
+    var mediaWrap = document.createElement('div');
+    mediaWrap.className = 'dm-shared-post-media';
+    var img = document.createElement('img');
+    var baseMedia = '/media/' + encodeURIComponent(imgKey);
+    img.src = imgKey.slice(-5) === '.webp' ? (baseMedia + '?v=thumb') : baseMedia;
+    img.alt = author;
+    img.loading = 'lazy';
+    img.addEventListener('load', function() {
+      if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+        pinScrollBottomNow();
+      }
+    });
+    mediaWrap.appendChild(img);
+    card.appendChild(mediaWrap);
+
+    if (sp.caption) {
+      var cap = document.createElement('div');
+      cap.className = 'dm-shared-post-caption';
+      var capUser = document.createElement('strong');
+      capUser.textContent = author + ' ';
+      cap.appendChild(capUser);
+      cap.appendChild(document.createTextNode(String(sp.caption)));
+      card.appendChild(cap);
+    }
+
+    return card;
+  }
+
+  function buildLinkPreviewCardEl(preview) {
+    if (!preview || typeof preview !== 'object') return null;
+    var cleanUrl = sanitizeClientHttpUrl(preview.url);
+    if (!cleanUrl) return null;
+    var title = String(preview.title || '').trim();
+    var desc = String(preview.description || '').trim();
+    var site = String(preview.siteName || '').trim();
+    var vid = (preview.videoId && YT_ID_CLIENT_RE.test(String(preview.videoId))) ? String(preview.videoId) : '';
+    var startSec = Math.max(0, Math.floor(Number(preview.startSec || 0)));
+    var imgUrl = sanitizeClientHttpUrl(preview.image || '');
+    if (!title && !desc && !vid) return null;
+
+    var card = document.createElement('div');
+    card.className = 'dm-link-preview' + (vid ? ' is-youtube' : '');
+    if (vid) card.setAttribute('data-yt-id', vid);
+
+    var bar = document.createElement('div');
+    bar.className = 'dm-lp-bar';
+    card.appendChild(bar);
+
+    var body = document.createElement('div');
+    body.className = 'dm-lp-body';
+
+    if (site) {
+      var siteEl = document.createElement('div');
+      siteEl.className = 'dm-lp-site';
+      siteEl.textContent = site;
+      body.appendChild(siteEl);
+    }
+
+    if (title) {
+      var titleLink = document.createElement('a');
+      titleLink.className = 'dm-lp-title';
+      titleLink.setAttribute('href', cleanUrl);
+      titleLink.setAttribute('target', '_blank');
+      titleLink.setAttribute('rel', 'noopener noreferrer');
+      titleLink.textContent = title;
+      body.appendChild(titleLink);
+    }
+
+    if (desc && desc !== title) {
+      var descEl = document.createElement('div');
+      descEl.className = 'dm-lp-desc';
+      descEl.textContent = desc;
+      body.appendChild(descEl);
+    }
+
+    var thumbSrc = imgUrl
+      ? ('/api/messages/link-preview-img?url=' + encodeURIComponent(imgUrl))
+      : (vid ? ('/api/messages/link-preview-img?url=' + encodeURIComponent('https://i.ytimg.com/vi/' + vid + '/hqdefault.jpg')) : '');
+
+    if (vid || thumbSrc) {
+      var mediaWrap = document.createElement('div');
+      mediaWrap.className = 'dm-lp-media-wrap';
+      var imgEl = document.createElement('img');
+      imgEl.className = 'dm-lp-media-img';
+      imgEl.src = thumbSrc;
+      imgEl.alt = title || site || 'Preview';
+      imgEl.loading = 'lazy';
+      imgEl.addEventListener('error', function() {
+        if (vid) {
+          imgEl.style.opacity = '0.2';
+        } else {
+          mediaWrap.remove();
+        }
+      });
+      imgEl.addEventListener('load', function() {
+        if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+          pinScrollBottomNow();
+        }
+      });
+
+      if (vid) {
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'dm-lp-video-trigger';
+        trigger.setAttribute('data-yt-id', vid);
+        trigger.setAttribute('data-yt-start', String(startSec));
+        trigger.setAttribute('data-yt-title', title || 'YouTube');
+        trigger.setAttribute('data-yt-url', cleanUrl);
+        trigger.setAttribute('aria-label', state.playVideoLabel || 'Play video');
+        trigger.appendChild(imgEl);
+        var playSpan = document.createElement('span');
+        playSpan.className = 'dm-lp-play-btn';
+        playSpan.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
+        trigger.appendChild(playSpan);
+        mediaWrap.appendChild(trigger);
+      } else {
+        var imgLink = document.createElement('a');
+        imgLink.className = 'dm-lp-img-link';
+        imgLink.setAttribute('href', cleanUrl);
+        imgLink.setAttribute('target', '_blank');
+        imgLink.setAttribute('rel', 'noopener noreferrer');
+        imgLink.appendChild(imgEl);
+        mediaWrap.appendChild(imgLink);
+      }
+      body.appendChild(mediaWrap);
+    }
+
+    card.appendChild(body);
+    return card;
+  }
+
   function hydrateBubbleContent(bubble, timeEl, payload, imageKey, localMediaUrl, voiceOpts) {
     while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
     var isVoice = Boolean(payload && payload.media && payload.media.kind === 'voice' && (imageKey || localMediaUrl));
-    var hasImg = !isVoice && Boolean((payload && payload.media && imageKey) || localMediaUrl);
+    var hasSharedPost = !isVoice && Boolean(payload && payload.sharedPost && payload.sharedPost.postId && payload.sharedPost.imageKey);
+    var hasImg = !isVoice && !hasSharedPost && Boolean((payload && payload.media && imageKey) || localMediaUrl);
     var hasText = Boolean(payload && payload.text);
     var replyQuoteEl = (payload && payload.reply) ? buildReplyQuoteEl(payload.reply) : null;
     var parentRow = bubble.closest ? bubble.closest('.dm-msg-row') : null;
+    var firstUrl = hasText ? extractFirstUrl(payload.text) : '';
+    var ownYtInfo = (payload && payload.linkPreview && payload.linkPreview.videoId && YT_ID_CLIENT_RE.test(payload.linkPreview.videoId))
+      ? { videoId: payload.linkPreview.videoId, startSec: Number(payload.linkPreview.startSec || 0) }
+      : (firstUrl ? extractYoutubeInfoClient(firstUrl) : null);
+    var replyVideoId = '';
+    if (payload && payload.reply) {
+      if (payload.reply.videoId && YT_ID_CLIENT_RE.test(payload.reply.videoId)) {
+        replyVideoId = payload.reply.videoId;
+      } else if (payload.reply.id && listEl) {
+        var qRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + String(payload.reply.id) + '"]');
+        if (qRow) {
+          var qVid = qRow.getAttribute('data-yt-video-id') || '';
+          if (YT_ID_CLIENT_RE.test(qVid)) replyVideoId = qVid;
+        }
+      }
+    }
+    var activeVideoId = (ownYtInfo && ownYtInfo.videoId) ? ownYtInfo.videoId : replyVideoId;
     if (parentRow) {
-      if (isVoice) parentRow.setAttribute('data-msg-kind', 'voice');
-      else parentRow.removeAttribute('data-msg-kind');
+      if (ownYtInfo && ownYtInfo.videoId) {
+        parentRow.setAttribute('data-yt-video-id', ownYtInfo.videoId);
+        if (payload && payload.linkPreview && payload.linkPreview.title) {
+          parentRow.setAttribute('data-yt-title', String(payload.linkPreview.title));
+        }
+      } else {
+        parentRow.removeAttribute('data-yt-video-id');
+        parentRow.removeAttribute('data-yt-title');
+      }
+      if (isVoice) {
+        parentRow.setAttribute('data-msg-kind', 'voice');
+        parentRow.removeAttribute('data-shared-author');
+      } else if (hasSharedPost) {
+        parentRow.setAttribute('data-msg-kind', 'post');
+        parentRow.setAttribute('data-shared-author', String(payload.sharedPost.authorUsername || ''));
+      } else {
+        parentRow.removeAttribute('data-msg-kind');
+        parentRow.removeAttribute('data-shared-author');
+      }
     }
     if (isVoice) {
       var resolvedVoiceOpts = voiceOpts || {
@@ -1563,6 +2061,7 @@ export function messagesPage(
         isListened: parentRow ? parentRow.getAttribute('data-listened') === '1' : false
       };
       bubble.classList.remove('img-only');
+      bubble.classList.remove('shared-post-bubble');
       bubble.classList.add('voice-bubble');
       if (replyQuoteEl) bubble.appendChild(replyQuoteEl);
       bubble.appendChild(buildVoicePlayerEl(payload.media, imageKey, localMediaUrl, resolvedVoiceOpts));
@@ -1570,6 +2069,22 @@ export function messagesPage(
       return;
     }
     bubble.classList.remove('voice-bubble');
+    if (hasSharedPost) {
+      bubble.classList.remove('img-only');
+      bubble.classList.add('shared-post-bubble');
+      if (replyQuoteEl) bubble.appendChild(replyQuoteEl);
+      var spCard = buildSharedPostCardEl(payload.sharedPost);
+      if (spCard) bubble.appendChild(spCard);
+      if (hasText) {
+        var spTxt = document.createElement('div');
+        spTxt.className = 'dm-msg-text dm-shared-post-note';
+        renderMentionNodes(spTxt, payload.text, { videoId: activeVideoId });
+        bubble.appendChild(spTxt);
+      }
+      bubble.appendChild(timeEl);
+      return;
+    }
+    bubble.classList.remove('shared-post-bubble');
     if (hasImg && !hasText && !replyQuoteEl) bubble.classList.add('img-only');
     else bubble.classList.remove('img-only');
     if (replyQuoteEl) bubble.appendChild(replyQuoteEl);
@@ -1610,8 +2125,39 @@ export function messagesPage(
     if (hasText) {
       var txt = document.createElement('div');
       txt.className = 'dm-msg-text';
-      renderMentionNodes(txt, payload.text);
+      renderMentionNodes(txt, payload.text, { videoId: activeVideoId });
       bubble.appendChild(txt);
+    }
+
+    if (!hasImg && firstUrl) {
+      var directPreview = (payload && payload.linkPreview && payload.linkPreview.url) ? payload.linkPreview : null;
+      if (directPreview) {
+        var lpCard = buildLinkPreviewCardEl(directPreview);
+        if (lpCard) bubble.appendChild(lpCard);
+      } else {
+        var capturedUrl = firstUrl;
+        var capturedBubble = bubble;
+        var capturedTime = timeEl;
+        var capturedRow = parentRow;
+        fetchLinkPreviewClient(capturedUrl).then(function(resolved) {
+          if (!resolved || !capturedBubble || !capturedBubble.isConnected) return;
+          if (capturedBubble.querySelector('.dm-link-preview')) return;
+          var asyncCard = buildLinkPreviewCardEl(resolved);
+          if (!asyncCard) return;
+          if (capturedRow && resolved.videoId && YT_ID_CLIENT_RE.test(resolved.videoId)) {
+            capturedRow.setAttribute('data-yt-video-id', resolved.videoId);
+            if (resolved.title) capturedRow.setAttribute('data-yt-title', String(resolved.title));
+          }
+          if (capturedTime && capturedTime.parentNode === capturedBubble) {
+            capturedBubble.insertBefore(asyncCard, capturedTime);
+          } else {
+            capturedBubble.appendChild(asyncCard);
+          }
+          if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+            pinScrollBottomNow();
+          }
+        });
+      }
     }
 
     bubble.appendChild(timeEl);
@@ -1762,9 +2308,10 @@ export function messagesPage(
             var txtEl = lastRow.querySelector('.dm-msg-text');
             var txt = txtEl ? (txtEl.textContent || '') : '';
             var isVoiceRow = lastRow.getAttribute('data-msg-kind') === 'voice';
-            var hasImg = !isVoiceRow && Boolean(lastRow.querySelector('.dm-msg-img') || lastRow.getAttribute('data-image-key'));
+            var isPostRow = lastRow.getAttribute('data-msg-kind') === 'post';
+            var hasImg = !isVoiceRow && !isPostRow && Boolean(lastRow.querySelector('.dm-msg-img') || lastRow.getAttribute('data-image-key'));
             var isEnc = lastRow.getAttribute('data-encrypted') === '1';
-            previewEl.textContent = txt ? (prefix + txt) : (isVoiceRow ? (prefix + state.voiceLabel) : (hasImg ? (prefix + state.photoLabel) : (isEnc ? (prefix + state.encryptedPreview) : '')));
+            previewEl.textContent = txt ? (prefix + txt) : (isVoiceRow ? (prefix + state.voiceLabel) : (isPostRow ? (prefix + state.sharedPostPreview) : (hasImg ? (prefix + state.photoLabel) : (isEnc ? (prefix + state.encryptedPreview) : ''))));
           }
           var lastRowId = parseInt(lastRow.getAttribute('data-msg-id') || '0', 10);
           var lastRowMine = lastRow.classList.contains('mine');
@@ -1798,7 +2345,9 @@ export function messagesPage(
     var isMine = Number(senderId) === Number(state.currentUserId);
     var prefix = isMine ? state.youPrefix : '';
     if (previewEl) {
-      var mediaLabel = mediaKind === 'voice' ? state.voiceLabel : state.photoLabel;
+      var mediaLabel = mediaKind === 'voice'
+        ? state.voiceLabel
+        : (mediaKind === 'post' ? state.sharedPostPreview : state.photoLabel);
       previewEl.textContent = plainText ? (prefix + plainText) : (hasImg ? (prefix + mediaLabel) : (prefix + state.encryptedPreview));
     }
     if (timeEl) timeEl.textContent = state.justNow;
@@ -1833,6 +2382,18 @@ export function messagesPage(
       do {
         needSidebarRehydrate = false;
         var items = convListEl.querySelectorAll('.dm-conv-item[data-last-encrypted="1"]');
+        var batchIds = [];
+        for (var bi = 0; bi < items.length; bi++) {
+          var bItem = items[bi];
+          var bLastId = parseInt(bItem.getAttribute('data-last-msg-id') || '0', 10);
+          var bVer = parseInt(bItem.getAttribute('data-last-edit-version') || '0', 10);
+          if (bLastId && bItem.getAttribute('data-preview-hydrated') !== (bLastId + ':' + bVer)) {
+            batchIds.push(bLastId);
+          }
+        }
+        var batchMap = (batchIds.length > 0 && typeof c.getCachedMessagesBatch === 'function')
+          ? await c.getCachedMessagesBatch(batchIds)
+          : new Map();
         for (var i = 0; i < items.length; i++) {
           var item = items[i];
           var convId = item.getAttribute('data-conv-id') || '';
@@ -1842,7 +2403,10 @@ export function messagesPage(
           var verKey = lastId + ':' + editVer;
           if (item.getAttribute('data-preview-hydrated') === verKey) continue;
           var payload = null;
-          var cached = await c.getCachedMessage(lastId);
+          var cached = batchMap.get(lastId);
+          if (!cached && typeof c.getCachedMessage === 'function' && typeof c.getCachedMessagesBatch !== 'function') {
+            cached = await c.getCachedMessage(lastId);
+          }
           if (cached && Number(cached.editVersion || 0) >= editVer) {
             payload = cached;
           } else {
@@ -1870,10 +2434,12 @@ export function messagesPage(
             continue;
           }
           var cleanTxt = cleanPreviewText(payload.text);
-          var mediaLabel = (payload.media && payload.media.kind === 'voice') ? state.voiceLabel : state.photoLabel;
+          var mediaLabel = (payload.media && payload.media.kind === 'voice')
+            ? state.voiceLabel
+            : (payload.sharedPost ? state.sharedPostPreview : state.photoLabel);
           previewEl.textContent = cleanTxt
             ? (prefix + cleanTxt)
-            : (payload.media ? (prefix + mediaLabel) : (prefix + state.encryptedPreview));
+            : ((payload.media || payload.sharedPost) ? (prefix + mediaLabel) : (prefix + state.encryptedPreview));
           item.setAttribute('data-preview-hydrated', verKey);
         }
       } while (needSidebarRehydrate);
@@ -1888,6 +2454,14 @@ export function messagesPage(
       if (!c) return;
 
       var list = Array.isArray(state.initialEncrypted) ? state.initialEncrypted : [];
+      var initIds = [];
+      for (var ii = 0; ii < list.length; ii++) {
+        var mid = Number(list[ii].id || 0);
+        if (mid > 0) initIds.push(mid);
+      }
+      var initCachedMap = (initIds.length > 0 && typeof c.getCachedMessagesBatch === 'function')
+        ? await c.getCachedMessagesBatch(initIds)
+        : new Map();
       for (var i = 0; i < list.length; i++) {
         var m = list[i];
         var row = listEl ? listEl.querySelector('.dm-msg-row[data-msg-id="' + m.id + '"]') : null;
@@ -1895,7 +2469,11 @@ export function messagesPage(
         var bubble = row.querySelector('.dm-msg-bubble');
         var timeEl = row.querySelector('.dm-msg-time');
         if (!bubble || !timeEl) continue;
-        var res = await c.decryptMessage(m);
+        var mVer = Math.max(0, Number(m.edit_version || 0));
+        var preCached = initCachedMap.get(Number(m.id || 0));
+        var res = (preCached && Number(preCached.editVersion || 0) >= mVer)
+          ? { ok: true, payload: preCached }
+          : await c.decryptMessage(m);
         if (res.ok && res.payload) {
           hydrateBubbleContent(bubble, timeEl, res.payload, m.image_key || '', '', {
             msgId: Number(m.id || 0),
@@ -2254,6 +2832,20 @@ export function messagesPage(
         }
 
         var replySnap = replyingMsg ? Object.assign({}, replyingMsg) : null;
+        var linkPreviewSnap = null;
+        if (!fileBytes && text) {
+          var firstSendUrl = extractFirstUrl(text);
+          if (firstSendUrl) {
+            try {
+              linkPreviewSnap = await Promise.race([
+                fetchLinkPreviewClient(firstSendUrl),
+                new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 900); })
+              ]);
+            } catch (lpErr) {
+              linkPreviewSnap = null;
+            }
+          }
+        }
         var enc;
         try {
           enc = await c.encryptMessage({
@@ -2261,7 +2853,8 @@ export function messagesPage(
             text: text,
             fileBytes: fileBytes,
             fileMime: fileMime,
-            reply: replySnap
+            reply: replySnap,
+            linkPreview: linkPreviewSnap
           });
         } catch (encErr) {
           if (sentLocalPreview) { try { URL.revokeObjectURL(sentLocalPreview); } catch (e2) {} }
@@ -2921,8 +3514,8 @@ export function messagesPage(
       msgCopyBtn.style.display = canCopyMsg ? 'flex' : 'none';
     }
     if (msgEditBtn) {
-      var isVoiceRowCtx = row.getAttribute('data-msg-kind') === 'voice';
-      var canEditMsg = row.classList.contains('mine') && !isVoiceRowCtx && !row.querySelector('.dm-msg-decrypt-err');
+      var rowKindCtx = row.getAttribute('data-msg-kind') || '';
+      var canEditMsg = row.classList.contains('mine') && rowKindCtx !== 'voice' && rowKindCtx !== 'post' && !row.querySelector('.dm-msg-decrypt-err');
       msgEditBtn.style.display = canEditMsg ? 'flex' : 'none';
     }
     if (msgActionList) {
@@ -3302,6 +3895,32 @@ export function messagesPage(
         if (rMsgId && rEmoji) toggleMessageReaction(rMsgId, rEmoji);
         return;
       }
+      var tcBtn = e.target && e.target.closest ? e.target.closest('.dm-timecode-btn[data-yt-id]') : null;
+      if (tcBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var tcVid = tcBtn.getAttribute('data-yt-id') || '';
+        var tcSec = parseInt(tcBtn.getAttribute('data-yt-start') || '0', 10) || 0;
+        var tcTitle = '';
+        if (tcVid && listEl) {
+          var srcRow = listEl.querySelector('.dm-msg-row[data-yt-video-id="' + tcVid + '"]');
+          if (srcRow) tcTitle = srcRow.getAttribute('data-yt-title') || '';
+        }
+        openDmVideoPlayer(tcVid, tcSec, tcTitle, '');
+        return;
+      }
+      var ytTrigger = e.target && e.target.closest ? e.target.closest('.dm-lp-video-trigger[data-yt-id]') : null;
+      if (ytTrigger) {
+        e.preventDefault();
+        e.stopPropagation();
+        openDmVideoPlayer(
+          ytTrigger.getAttribute('data-yt-id') || '',
+          parseInt(ytTrigger.getAttribute('data-yt-start') || '0', 10) || 0,
+          ytTrigger.getAttribute('data-yt-title') || '',
+          ytTrigger.getAttribute('data-yt-url') || ''
+        );
+        return;
+      }
       var imgBtn = e.target && e.target.closest ? e.target.closest('[data-dm-lightbox]') : null;
       if (imgBtn && lightbox && lightboxImg) {
         lightboxImg.src = imgBtn.getAttribute('data-dm-lightbox') || '';
@@ -3313,6 +3932,78 @@ export function messagesPage(
         }
         return;
       }
+    });
+  }
+
+  var videoModal = document.getElementById('dmVideoPlayerModal');
+  var videoIframe = document.getElementById('dmVideoIframe');
+  var videoTitleEl = document.getElementById('dmVideoTitle');
+  var videoTimePill = document.getElementById('dmVideoTimePill');
+  var videoExtLink = document.getElementById('dmVideoExtLink');
+  var videoCloseBtn = document.getElementById('dmVideoCloseBtn');
+
+  function openDmVideoPlayer(videoId, startSec, title, fallbackUrl) {
+    if (!videoModal || !videoIframe) return;
+    if (!videoId || !YT_ID_CLIENT_RE.test(videoId)) return;
+    var sec = Math.max(0, Math.min(86400, Math.floor(Number(startSec) || 0)));
+    var embedUrl = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(videoId) + '?autoplay=1&rel=0&modestbranding=1' + (sec > 0 ? ('&start=' + sec) : '');
+    var watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId) + (sec > 0 ? ('&t=' + sec + 's') : '');
+    if (videoTitleEl) videoTitleEl.textContent = title || 'YouTube';
+    if (videoTimePill) {
+      if (sec > 0) {
+        videoTimePill.textContent = formatTimecodeSeconds(sec);
+        videoTimePill.style.display = 'inline-flex';
+      } else {
+        videoTimePill.textContent = '';
+        videoTimePill.style.display = 'none';
+      }
+    }
+    if (videoExtLink) {
+      videoExtLink.setAttribute('href', sanitizeClientHttpUrl(fallbackUrl) && sec === 0 ? sanitizeClientHttpUrl(fallbackUrl) : watchUrl);
+    }
+    videoIframe.setAttribute('src', embedUrl);
+    videoModal.classList.add('visible');
+    videoModal.setAttribute('aria-hidden', 'false');
+    if (window.__pgPushOverlay) {
+      window.__pgPushOverlay('dm-video-player', function(fromPop) {
+        closeDmVideoPlayer(fromPop);
+      });
+    }
+  }
+
+  function closeDmVideoPlayer(fromPop) {
+    if (!videoModal) return;
+    if (videoIframe) videoIframe.setAttribute('src', 'about:blank');
+    if (fromPop) {
+      videoModal.classList.add('pg-no-transition');
+      videoModal.classList.remove('visible');
+      void videoModal.offsetWidth;
+      videoModal.classList.remove('pg-no-transition');
+    } else {
+      videoModal.classList.remove('visible');
+      if (window.__pgPopOverlay) window.__pgPopOverlay('dm-video-player');
+    }
+    videoModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (videoModal) {
+    if (videoCloseBtn) {
+      videoCloseBtn.addEventListener('click', function() {
+        closeDmVideoPlayer(false);
+      });
+    }
+    videoModal.addEventListener('click', function(e) {
+      if (e.target === videoModal) closeDmVideoPlayer(false);
+    });
+    function onVideoKeydown(e) {
+      if (e.key === 'Escape' && videoModal.classList.contains('visible')) {
+        closeDmVideoPlayer(false);
+      }
+    }
+    document.addEventListener('keydown', onVideoKeydown);
+    extraCleanups.push(function() {
+      document.removeEventListener('keydown', onVideoKeydown);
+      if (videoIframe) videoIframe.setAttribute('src', 'about:blank');
     });
   }
 
@@ -3862,7 +4553,8 @@ export function messagesPage(
               state.activeConversationId,
               m.sender_id,
               dec ? dec.text : (m.is_encrypted ? '' : m.body),
-              dec ? Boolean(dec.media) : Boolean(m.image_key)
+              dec ? Boolean(dec.media || dec.sharedPost) : Boolean(m.image_key),
+              dec && dec.sharedPost ? 'post' : (dec && dec.media && dec.media.kind ? dec.media.kind : '')
             );
           }
         }
@@ -3934,6 +4626,18 @@ export function messagesPage(
             }
           }
         }
+        if (Array.isArray(d.listened_message_ids) && d.listened_message_ids.length > 0 && listEl) {
+          for (var li = 0; li < d.listened_message_ids.length; li++) {
+            var lId = Number(d.listened_message_ids[li]);
+            if (!lId) continue;
+            var lRow = listEl.querySelector('.dm-msg-row[data-msg-id="' + String(lId) + '"]');
+            if (lRow && lRow.getAttribute('data-listened') !== '1') {
+              lRow.setAttribute('data-listened', '1');
+              var lDot = lRow.querySelector('.dm-voice-unheard-dot');
+              if (lDot && lDot.parentNode) lDot.parentNode.removeChild(lDot);
+            }
+          }
+        }
         if (d.reactions_map && typeof d.reactions_map === 'object' && listEl) {
           listEl.querySelectorAll('.dm-msg-row[data-msg-id]').forEach(function(row) {
             var mid = row.getAttribute('data-msg-id');
@@ -3969,6 +4673,9 @@ export function messagesPage(
     a.setAttribute('data-conv-id', String(c.id));
     a.setAttribute('data-partner-id', String(c.other_user_id || 0));
     a.setAttribute('data-partner-username', String(c.other_username || ''));
+    a.setAttribute('data-partner-display', String(c.other_display_name || c.other_username || ''));
+    a.setAttribute('data-partner-avatar', String(c.other_avatar_key || ''));
+    a.setAttribute('data-partner-verified', c.other_is_verified ? '1' : '0');
     a.setAttribute('data-last-msg-id', String(c.last_message_id || 0));
     a.setAttribute('data-last-encrypted', c.last_message_encrypted ? '1' : '0');
     a.setAttribute('data-last-mine', isMine ? '1' : '0');
@@ -4470,8 +5177,8 @@ export function messagesPage(
             };
           }
           var cleanTxt = cleanPreviewText(dec ? dec.text : (m.is_encrypted ? '' : (m.body || '')));
-          var hasImg = dec ? Boolean(dec.media) : Boolean(m.image_key);
-          var mKind = (dec && dec.media && dec.media.kind) ? dec.media.kind : '';
+          var hasImg = dec ? Boolean(dec.media || dec.sharedPost) : Boolean(m.image_key);
+          var mKind = (dec && dec.sharedPost) ? 'post' : ((dec && dec.media && dec.media.kind) ? dec.media.kind : '');
           updateSidebarPreview(mConvId, m.sender_id, cleanTxt, hasImg, mKind);
           if (dec || !m.is_encrypted) {
             item.setAttribute('data-preview-hydrated', Number(m.id) + ':' + Number(m.edit_version || 0));
@@ -4525,7 +5232,364 @@ export function messagesPage(
     ? window.PhotogramRealtime.on(handleRealtimeDmEvent)
     : null;
 
+  var dmPageLayoutEl = document.querySelector('.dm-page-layout');
+  var dmShellEl = document.querySelector('.dm-shell');
+  var dmActiveWrapEl = document.getElementById('dmActiveThreadWrap');
+  var dmEmptyWrapEl = document.getElementById('dmThreadEmptyWrap');
+  var dmThreadBackBtn = document.getElementById('dmThreadBackBtn');
+  var dmThreadPartnerLink = document.getElementById('dmThreadPartnerLink');
+  var dmThreadAvatarEl = document.getElementById('dmThreadAvatar');
+  var dmThreadUsernameEl = document.getElementById('dmThreadUsername');
+  var dmThreadSubtitleEl = document.getElementById('dmThreadSubtitle');
+  var threadFragCache = {};
+  var dmSwitchSeq = 0;
+  var dmSwitchAbort = null;
+
+  function saveCurrentThreadToCache() {
+    var curCid = Number(state.activeConversationId || 0);
+    if (!curCid || !listEl) return;
+    if (listEl.querySelector('.dm-thread-loading')) return;
+    var frag = document.createDocumentFragment();
+    while (listEl.firstChild) {
+      frag.appendChild(listEl.firstChild);
+    }
+    threadFragCache[curCid] = {
+      frag: frag,
+      lastMsgId: Number(state.lastMsgId || 0),
+      oldestMsgId: Number(state.oldestMsgId || 0),
+      lastReadOwnId: Number(state.lastReadOwnId || 0),
+      hasMore: Boolean(loadOlderBtn && loadOlderBtn.style.display !== 'none'),
+      savedAt: Date.now()
+    };
+  }
+
+  function renderPartnerHeader(partner) {
+    if (dmThreadPartnerLink) {
+      dmThreadPartnerLink.setAttribute('href', '/u/' + encodeURIComponent(partner.username || ''));
+    }
+    if (dmThreadAvatarEl) {
+      while (dmThreadAvatarEl.firstChild) dmThreadAvatarEl.removeChild(dmThreadAvatarEl.firstChild);
+      var avKey = String(partner.avatarKey || '').trim();
+      if (avKey && avKey.indexOf('..') === -1 && avKey.indexOf('\\\\') === -1) {
+        var avImg = document.createElement('img');
+        avImg.src = '/media/' + encodeURIComponent(avKey);
+        avImg.alt = partner.username || '';
+        dmThreadAvatarEl.appendChild(avImg);
+      } else {
+        var avSpan = document.createElement('span');
+        avSpan.textContent = String(partner.displayName || partner.username || '?').charAt(0).toUpperCase();
+        dmThreadAvatarEl.appendChild(avSpan);
+      }
+    }
+    if (dmThreadUsernameEl) {
+      while (dmThreadUsernameEl.firstChild) dmThreadUsernameEl.removeChild(dmThreadUsernameEl.firstChild);
+      dmThreadUsernameEl.appendChild(document.createTextNode(partner.username || ''));
+      if (partner.isVerified && typeof window.renderVerifiedBadge === 'function') {
+        var vWrap = document.createElement('span');
+        vWrap.innerHTML = window.renderVerifiedBadge(13.5);
+        if (vWrap.firstChild) dmThreadUsernameEl.appendChild(vWrap.firstChild);
+      }
+    }
+    if (dmThreadSubtitleEl) {
+      var defText = partner.displayName || partner.username || '';
+      dmThreadSubtitleEl.setAttribute('data-default-text', defText);
+      dmThreadSubtitleEl.textContent = defText;
+      dmThreadSubtitleEl.classList.remove('is-typing');
+    }
+  }
+
+  function closeConversationToList(pushHist) {
+    dmSwitchSeq++;
+    if (dmSwitchAbort) {
+      try { dmSwitchAbort.abort(); } catch (e) {}
+      dmSwitchAbort = null;
+    }
+    if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
+    clearPartnerTyping();
+    sendStopTypingNow();
+    cancelReplyMode();
+    cancelEditMode();
+    clearPendingFile();
+    hideBanner();
+    saveCurrentThreadToCache();
+    state.activeConversationId = 0;
+    state.activePartnerId = 0;
+    state.activePartnerUsername = '';
+    state.lastMsgId = 0;
+    state.oldestMsgId = 0;
+    state.lastReadOwnId = 0;
+    if (dmActiveWrapEl) dmActiveWrapEl.style.display = 'none';
+    if (dmEmptyWrapEl) dmEmptyWrapEl.style.display = '';
+    if (dmPageLayoutEl) dmPageLayoutEl.classList.remove('dm-mobile-in-chat');
+    if (dmShellEl) dmShellEl.classList.remove('has-active-chat');
+    document.documentElement.classList.remove('dm-lock-scroll');
+    document.body.classList.remove('dm-lock-scroll');
+    if (convListEl) {
+      convListEl.querySelectorAll('.dm-conv-item.active').forEach(function(el) {
+        el.classList.remove('active');
+      });
+    }
+    if (pushHist) {
+      try {
+        history.pushState({ spa: true, dmInPlace: true }, '', '/messages');
+      } catch (e) {}
+    }
+  }
+
+  async function openConversationInPlace(partner, pushHist) {
+    if (!partner || !partner.convId || !partner.username) return false;
+    var targetConvId = Number(partner.convId);
+    if (targetConvId === Number(state.activeConversationId || 0) && dmActiveWrapEl && dmActiveWrapEl.style.display !== 'none') {
+      if (dmPageLayoutEl) dmPageLayoutEl.classList.add('dm-mobile-in-chat');
+      if (dmShellEl) dmShellEl.classList.add('has-active-chat');
+      return true;
+    }
+
+    var mySeq = ++dmSwitchSeq;
+    if (dmSwitchAbort) {
+      try { dmSwitchAbort.abort(); } catch (e) {}
+    }
+    dmSwitchAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+    if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
+    clearPartnerTyping();
+    sendStopTypingNow();
+    cancelReplyMode();
+    cancelEditMode();
+    clearPendingFile();
+    hideBanner();
+    if (inputEl) inputEl.value = '';
+    syncSendState();
+
+    saveCurrentThreadToCache();
+
+    state.activeConversationId = targetConvId;
+    state.activePartnerId = Number(partner.partnerId || 0);
+    state.activePartnerUsername = String(partner.username || '');
+    if (state.activePartnerUsername) {
+      mentionLookupCache[state.activePartnerUsername.toLowerCase()] = true;
+    }
+
+    renderPartnerHeader(partner);
+    if (dmEmptyWrapEl) dmEmptyWrapEl.style.display = 'none';
+    if (dmActiveWrapEl) dmActiveWrapEl.style.display = '';
+    if (dmPageLayoutEl) dmPageLayoutEl.classList.add('dm-mobile-in-chat');
+    if (dmShellEl) dmShellEl.classList.add('has-active-chat');
+    if (window.innerWidth <= 768) {
+      document.documentElement.classList.add('dm-lock-scroll');
+      document.body.classList.add('dm-lock-scroll');
+    }
+
+    if (convListEl) {
+      convListEl.querySelectorAll('.dm-conv-item').forEach(function(el) {
+        var cid = parseInt(el.getAttribute('data-conv-id') || '0', 10);
+        if (cid === targetConvId) {
+          el.classList.add('active');
+          el.classList.remove('unread');
+          var dot = el.querySelector('.dm-conv-unread');
+          if (dot) dot.remove();
+        } else {
+          el.classList.remove('active');
+        }
+      });
+    }
+
+    var nextPath = '/messages/' + encodeURIComponent(partner.username);
+    if (pushHist) {
+      try {
+        history.pushState({ spa: true, dmInPlace: true }, '', nextPath);
+      } catch (e) {}
+    }
+
+    var cached = threadFragCache[targetConvId];
+    if (cached && listEl) {
+      delete threadFragCache[targetConvId];
+      while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+      listEl.appendChild(cached.frag);
+      state.lastMsgId = cached.lastMsgId;
+      state.oldestMsgId = cached.oldestMsgId;
+      state.lastReadOwnId = cached.lastReadOwnId;
+      if (loadOlderBtn) loadOlderBtn.style.display = cached.hasMore ? '' : 'none';
+      updateSeenUI();
+      if (scrollEl) scrollToBottom();
+      markActiveChatReadAsync(targetConvId);
+      pollActiveChat();
+      return true;
+    }
+
+    state.lastMsgId = 0;
+    state.oldestMsgId = 0;
+    state.lastReadOwnId = 0;
+    if (loadOlderBtn) loadOlderBtn.style.display = 'none';
+    if (listEl) {
+      while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+      var ld = document.createElement('div');
+      ld.className = 'dm-no-msgs dm-thread-loading';
+      ld.textContent = state.e2eeInitializing || '';
+      listEl.appendChild(ld);
+    }
+
+    try {
+      var listRes = await fetch(
+        '/api/messages/list?conversation_id=' + encodeURIComponent(String(targetConvId)) + '&mark_read=1',
+        {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: dmSwitchAbort ? dmSwitchAbort.signal : undefined
+        }
+      );
+      if (mySeq !== dmSwitchSeq) return false;
+      var data = await listRes.json();
+      if (mySeq !== dmSwitchSeq) return false;
+      if (!listRes.ok || !data || !Array.isArray(data.messages)) {
+        if (listEl) while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+        return false;
+      }
+
+      var msgs = data.messages;
+      var c = await ensureE2eeReady();
+      if (mySeq !== dmSwitchSeq) return false;
+
+      var encIds = [];
+      for (var ei = 0; ei < msgs.length; ei++) {
+        if (msgs[ei].is_encrypted && Number(msgs[ei].id || 0) > 0) {
+          encIds.push(Number(msgs[ei].id));
+        }
+      }
+      var cachedMap = (c && encIds.length > 0 && typeof c.getCachedMessagesBatch === 'function')
+        ? await c.getCachedMessagesBatch(encIds)
+        : new Map();
+      if (mySeq !== dmSwitchSeq) return false;
+
+      var frag = document.createDocumentFragment();
+      var maxId = 0;
+      var minId = 0;
+      for (var mi = 0; mi < msgs.length; mi++) {
+        var m = msgs[mi];
+        var mId = Number(m.id || 0);
+        if (mId > maxId) maxId = mId;
+        if (mId > 0 && (minId === 0 || mId < minId)) minId = mId;
+        var decPayload = null;
+        if (m.is_encrypted && c) {
+          var mVer = Math.max(0, Number(m.edit_version || 0));
+          var hit = cachedMap.get(mId);
+          if (hit && Number(hit.editVersion || 0) >= mVer) {
+            decPayload = hit;
+          } else {
+            var decRes = await c.decryptMessage(m);
+            if (mySeq !== dmSwitchSeq) return false;
+            if (decRes && decRes.ok && decRes.payload) {
+              decPayload = decRes.payload;
+            }
+          }
+        }
+        frag.appendChild(buildMessageRowEl(m, decPayload, ''));
+      }
+
+      if (mySeq !== dmSwitchSeq) return false;
+      if (listEl) {
+        while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+        if (msgs.length === 0) {
+          var emptyDiv = document.createElement('div');
+          emptyDiv.className = 'dm-no-msgs';
+          emptyDiv.id = 'dmNoMsgs';
+          emptyDiv.textContent = state.noMessagesYet;
+          listEl.appendChild(emptyDiv);
+        } else {
+          listEl.appendChild(frag);
+          syncDateSeparators();
+        }
+      }
+      state.lastMsgId = maxId;
+      state.oldestMsgId = minId;
+      state.lastReadOwnId = Number(data.last_read_own_id || 0);
+      if (loadOlderBtn) loadOlderBtn.style.display = data.has_more ? '' : 'none';
+      updateSeenUI();
+      if (scrollEl) {
+        scrollToBottom();
+        setTimeout(scrollToBottom, 50);
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function extractPartnerFromConvEl(el) {
+    if (!el) return null;
+    var cid = parseInt(el.getAttribute('data-conv-id') || '0', 10);
+    var pid = parseInt(el.getAttribute('data-partner-id') || '0', 10);
+    var uname = el.getAttribute('data-partner-username') || '';
+    if (!cid || !uname) return null;
+    return {
+      convId: cid,
+      partnerId: pid,
+      username: uname,
+      displayName: el.getAttribute('data-partner-display') || uname,
+      avatarKey: el.getAttribute('data-partner-avatar') || '',
+      isVerified: el.getAttribute('data-partner-verified') === '1'
+    };
+  }
+
+  if (convListEl) {
+    convListEl.addEventListener('click', function(e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      var item = e.target && e.target.closest ? e.target.closest('.dm-conv-item[data-conv-id]') : null;
+      if (!item) return;
+      var partner = extractPartnerFromConvEl(item);
+      if (!partner) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openConversationInPlace(partner, true);
+    });
+  }
+
+  if (dmThreadBackBtn) {
+    dmThreadBackBtn.addEventListener('click', function(e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeConversationToList(true);
+    });
+  }
+
+  window.__pgHandleDmPopstate = function() {
+    var p = window.location.pathname;
+    if (p === '/messages' || p === '/messages/') {
+      if (state.activeConversationId > 0 || (dmActiveWrapEl && dmActiveWrapEl.style.display !== 'none')) {
+        closeConversationToList(false);
+        return true;
+      }
+      return true;
+    }
+    if (p.indexOf('/messages/') === 0) {
+      var uname = decodeURIComponent(p.slice('/messages/'.length).replace(/\\/+$/, ''));
+      if (uname && convListEl) {
+        var found = null;
+        convListEl.querySelectorAll('.dm-conv-item[data-conv-id]').forEach(function(el) {
+          if ((el.getAttribute('data-partner-username') || '').toLowerCase() === uname.toLowerCase()) {
+            found = el;
+          }
+        });
+        if (found) {
+          var partner = extractPartnerFromConvEl(found);
+          if (partner) {
+            openConversationInPlace(partner, false);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
   extraCleanups.push(function() {
+    threadFragCache = {};
+    window.__pgHandleDmPopstate = null;
+    if (dmSwitchAbort) {
+      try { dmSwitchAbort.abort(); } catch (e) {}
+      dmSwitchAbort = null;
+    }
     clearPartnerTyping();
     sendStopTypingNow();
     if (unsubRealtime) {

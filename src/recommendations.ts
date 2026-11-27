@@ -213,7 +213,7 @@ async function hydratePostsByIds(
   const placeholders = cleanIds.map((_, idx) => `?${idx + 2}`).join(', ');
   const res = await env.DB.prepare(
     `WITH target_posts AS (
-       SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+       SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at, COALESCE(p.shares_count, 0) AS shares_count
        FROM posts p
        WHERE p.id IN (${placeholders})
          AND (p.reports_count IS NULL OR p.reports_count < 5)
@@ -230,7 +230,7 @@ async function hydratePostsByIds(
        JOIN target_posts tp ON tp.id = c.post_id
        GROUP BY c.post_id
      )
-     SELECT tp.id, tp.user_id, tp.image_key, tp.caption, tp.created_at,
+     SELECT tp.id, tp.user_id, tp.image_key, tp.caption, tp.created_at, tp.shares_count,
             u.username, u.display_name, u.avatar_key, u.is_verified,
             COALESCE(pl.likes_count, 0) AS likes_count,
             COALESCE(pc.comments_count, 0) AS comments_count,
@@ -260,6 +260,7 @@ async function hydratePostsByIds(
       author_avatar_key: p.avatar_key,
       likes_count: Number(p.likes_count) || 0,
       comments_count: Number(p.comments_count) || 0,
+      shares_count: Number(p.shares_count) || 0,
       is_liked: Boolean(p.is_liked),
       is_followed_author: isFollowedMap ? isFollowedMap.has(id) : false,
       is_verified: Number(p.is_verified) === 1 ? 1 : 0,
@@ -947,7 +948,7 @@ export async function getPersonalizedExplore(
       const postRows = beforeId > 0
         ? await env.DB.prepare(
             `WITH candidate_posts AS (
-               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at, COALESCE(p.shares_count, 0) AS shares_count
                FROM posts p
                WHERE (p.reports_count IS NULL OR p.reports_count < 5)
                  AND p.id < ?2
@@ -966,7 +967,7 @@ export async function getPersonalizedExplore(
                JOIN candidate_posts cp ON cp.id = c.post_id
                GROUP BY c.post_id
              )
-             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
+             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at, cp.shares_count,
                     u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                     COALESCE(pl.likes_count, 0) AS likes_count,
                     COALESCE(pc.comments_count, 0) AS comments_count,
@@ -982,7 +983,7 @@ export async function getPersonalizedExplore(
           ).bind(viewerId, beforeId, fetchLimit).all<any>()
         : await env.DB.prepare(
             `WITH candidate_posts AS (
-               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+               SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at, COALESCE(p.shares_count, 0) AS shares_count
                FROM posts p
                WHERE (p.reports_count IS NULL OR p.reports_count < 5)
                ORDER BY p.id DESC
@@ -1000,7 +1001,7 @@ export async function getPersonalizedExplore(
                JOIN candidate_posts cp ON cp.id = c.post_id
                GROUP BY c.post_id
              )
-             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
+             SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at, cp.shares_count,
                     u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
                     COALESCE(pl.likes_count, 0) AS likes_count,
                     COALESCE(pc.comments_count, 0) AS comments_count,
@@ -1029,6 +1030,7 @@ export async function getPersonalizedExplore(
         author_avatar_key: p.author_avatar_key,
         likes_count: Number(p.likes_count) || 0,
         comments_count: Number(p.comments_count) || 0,
+        shares_count: Number(p.shares_count) || 0,
         is_liked: Boolean(p.is_liked),
         is_verified: Number(p.is_verified) === 1 ? 1 : 0
       }));
@@ -1178,7 +1180,7 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
 
     const rows = await env.DB.prepare(
       `WITH candidate_posts AS (
-         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at
+         SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at, COALESCE(p.shares_count, 0) AS shares_count
          FROM posts p
          WHERE p.id != ?1
            AND (p.reports_count IS NULL OR p.reports_count < 5)
@@ -1223,7 +1225,7 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
          JOIN candidate_posts cp ON cp.id = c.post_id
          GROUP BY c.post_id
        )
-       SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at,
+       SELECT cp.id, cp.user_id, cp.image_key, cp.caption, cp.created_at, cp.shares_count,
               u.username, u.display_name, u.avatar_key AS author_avatar_key, u.is_verified,
               COALESCE(pl.likes_count, 0) AS likes_count,
               COALESCE(pc.comments_count, 0) AS comments_count,
@@ -1257,6 +1259,7 @@ export async function getRelatedPosts(env: Env, postId: number, viewerId: number
       author_avatar_key: p.author_avatar_key,
       likes_count: Number(p.likes_count) || 0,
       comments_count: Number(p.comments_count) || 0,
+      shares_count: Number(p.shares_count) || 0,
       is_liked: Boolean(p.is_liked),
       is_verified: Number(p.is_verified) === 1 ? 1 : 0
     }));

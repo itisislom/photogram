@@ -62,6 +62,7 @@ export async function getProfileData(
       const viewerId = currentUserId || 0;
       const postRows = await env.DB.prepare(
         `SELECT p.id, p.user_id, p.image_key, p.caption, p.created_at,
+                COALESCE(p.shares_count, 0) AS shares_count,
                 (SELECT COUNT(*) FROM likes WHERE post_id = p.id) AS likes_count,
                 (SELECT COUNT(*) FROM comments WHERE post_id = p.id) AS comments_count,
                 EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) AS is_liked
@@ -71,12 +72,13 @@ export async function getProfileData(
          LIMIT 120`
       )
         .bind(viewerId, user.id)
-        .all<Post & { likes_count: number; comments_count: number; is_liked: number | boolean }>();
+        .all<Post & { likes_count: number; comments_count: number; shares_count: number; is_liked: number | boolean }>();
       if (postRows.results) {
         userPosts = postRows.results.map(p => ({
           ...p,
           likes_count: Number(p.likes_count) || 0,
           comments_count: Number(p.comments_count) || 0,
+          shares_count: Number(p.shares_count) || 0,
           is_liked: Boolean(p.is_liked)
         }));
         if (!postsCount) postsCount = userPosts.length;

@@ -8,9 +8,10 @@ import { ProfileData } from '../types';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
 import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON, PIN_COMMENT_ICON, AUTHOR_HEART_MINI_ICON } from './commentsModal';
+import { SHARE_ICON, renderShareSheetHtml, renderShareSheetScript } from './share';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
-import { getClientDateFormat, getCompactCountUnits } from '../languages';
+import { getClientDateFormat, getCompactCountUnits, formatCompactCount } from '../languages';
 
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>`;
 const MENU_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
@@ -74,7 +75,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     ? `
     <div class="profile-grid" id="profileGrid">
       ${postList.map(p => `
-        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-author-verified="${(p.is_verified ?? user.is_verified) ? '1' : '0'}" data-img="${postMediaUrl(p.image_key, 'full')}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
+        <button class="profile-grid-item post-item-btn" type="button" data-post-id="${p.id}" data-author-id="${user.id}" data-author-username="${usernameSafe}" data-author-avatar="${escapeHtml(user.avatar_key || '')}" data-author-verified="${(p.is_verified ?? user.is_verified) ? '1' : '0'}" data-image-key="${escapeHtml(p.image_key)}" data-img="${postMediaUrl(p.image_key, 'full')}" data-caption="${escapeHtml(p.caption)}" data-date="${escapeHtml(p.created_at)}" data-likes-count="${p.likes_count ?? 0}" data-comments-count="${p.comments_count ?? 0}" data-shares-count="${p.shares_count ?? 0}" data-is-liked="${p.is_liked ? '1' : '0'}">
           <img src="${postMediaUrl(p.image_key, 'thumb')}" alt="${escapeHtml(t.profile.postsTab)}" loading="lazy">
           <div class="profile-grid-overlay">
             <div class="profile-grid-stat">${HEART_ICON} <span class="grid-likes-val">${p.likes_count ?? 0}</span></div>
@@ -175,6 +176,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
           <button class="post-like-btn" id="viewPostLikeBtn" type="button" aria-label="${escapeHtml(t.common.likesCount(1))}">
             ${HEART_ICON}
           </button>
+          ${data.current_user_id ? `<button class="post-share-btn" id="viewPostShareBtn" type="button" aria-label="${escapeHtml(t.share.ariaShare)}" title="${escapeHtml(t.share.title)}">${SHARE_ICON}<span class="post-share-count" id="viewPostSharesCount"></span></button>` : ''}
           <div class="post-likes-count" id="viewPostLikesCount">${t.common.likesCount(0)}</div>
         </div>
         <div class="post-view-meta">
@@ -244,6 +246,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   </div>`
       : ''
   }
+  ${data.current_user_id ? renderShareSheetHtml(t) : ''}
 </div>`;
 
   const clientI18n = safeJsonForScript({
@@ -291,6 +294,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
   });
 
   const script = `
+${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
 (function() {
   var i18n = ${clientI18n};
   var isOwner = ${is_owner ? 'true' : 'false'};
@@ -897,10 +901,12 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
             'data-author-username="' + escapeHtmlClient(p.username || '') + '" ' +
             'data-author-avatar="' + escapeHtmlClient(avKey) + '" ' +
             'data-author-verified="' + (Number(p.is_verified) === 1 ? '1' : '0') + '" ' +
+            'data-image-key="' + escapeHtmlClient(p.image_key || '') + '" ' +
             'data-img="/media/' + encodeURIComponent(p.image_key) + '" ' +
             'data-caption="' + escapeHtmlClient(p.caption || '') + '" ' +
             'data-likes-count="' + (p.likes_count || 0) + '" ' +
             'data-comments-count="' + (p.comments_count || 0) + '" ' +
+            'data-shares-count="' + (p.shares_count || 0) + '" ' +
             'data-is-liked="' + (p.is_liked ? '1' : '0') + '" ' +
             'data-date="' + escapeHtmlClient(p.created_at || '') + '">';
           html += '<img src="/media/' + encodeURIComponent(p.image_key) + '" loading="lazy" alt="Related">';
@@ -1032,6 +1038,24 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
       viewPostMoreBtn.setAttribute('data-post-more-id', activePostId || '');
       viewPostMoreBtn.setAttribute('data-post-more-user', postAuthorUsername || '');
     }
+    var viewShareBtn = document.getElementById('viewPostShareBtn');
+    if (viewShareBtn) {
+      viewShareBtn.dataset.postId = activePostId || '';
+      viewShareBtn.dataset.authorUsername = postAuthorUsername || '';
+      viewShareBtn.dataset.authorAvatar = postAuthorAvatar || '';
+      viewShareBtn.dataset.authorVerified = postAuthorVerified || '0';
+      viewShareBtn.dataset.imageKey = btn.dataset.imageKey || '';
+      viewShareBtn.dataset.caption = (btn.dataset.caption || '').slice(0, 200);
+    }
+    var viewShareCountEl = document.getElementById('viewPostSharesCount');
+    if (viewShareCountEl) {
+      var sharesCount = parseInt(btn.dataset.sharesCount, 10) || 0;
+      viewShareCountEl.textContent = sharesCount > 0
+        ? (typeof window.formatPhotogramCompactCount === 'function'
+          ? window.formatPhotogramCompactCount(sharesCount)
+          : String(sharesCount))
+        : '';
+    }
 
     if (btn.dataset.date) {
       try {
@@ -1121,6 +1145,23 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     viewLikeBtn.addEventListener('click', function(e) {
       e.stopPropagation();
       toggleLike(false);
+    });
+  }
+
+  var viewShareBtnInit = document.getElementById('viewPostShareBtn');
+  if (viewShareBtnInit) {
+    viewShareBtnInit.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (window.openShareSheet) {
+        window.openShareSheet({
+          postId: parseInt(this.dataset.postId || '0', 10),
+          authorUsername: this.dataset.authorUsername || '',
+          authorAvatar: this.dataset.authorAvatar || '',
+          authorVerified: this.dataset.authorVerified === '1',
+          imageKey: this.dataset.imageKey || '',
+          caption: this.dataset.caption || ''
+        });
+      }
     });
   }
 
