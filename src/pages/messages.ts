@@ -1527,6 +1527,8 @@ export function messagesPage(
 
   async function startEditMode(msgId, row) {
     if (!msgId || !row || !inputEl) return;
+    var startKind = row.getAttribute('data-msg-kind') || '';
+    if (startKind === 'voice' || startKind === 'post' || row.querySelector('.dm-voice-msg, .voice-bubble, .shared-post-bubble')) return;
     cancelReplyMode();
     var currentText = '';
     var existingMedia = null;
@@ -2227,8 +2229,17 @@ export function messagesPage(
     row.setAttribute('data-image-key', m.image_key || '');
     row.setAttribute('data-listened', m.listened_at ? '1' : '0');
 
+    var stack = document.createElement('div');
+    stack.className = 'dm-msg-stack';
     var bubble = document.createElement('div');
     bubble.className = 'dm-msg-bubble';
+    stack.appendChild(bubble);
+    var reactWrap = document.createElement('div');
+    reactWrap.className = 'dm-msg-reactions';
+    reactWrap.setAttribute('data-reactions-for', String(m.id));
+    stack.appendChild(reactWrap);
+    row.appendChild(stack);
+
     var timeEl = document.createElement('div');
     timeEl.className = 'dm-msg-time';
     var isReadInit = isMine && ((state.lastReadOwnId > 0 && Number(m.id) <= state.lastReadOwnId) || Boolean(m.read_at));
@@ -2273,14 +2284,6 @@ export function messagesPage(
       bubble.appendChild(timeEl);
     }
 
-    var stack = document.createElement('div');
-    stack.className = 'dm-msg-stack';
-    stack.appendChild(bubble);
-    var reactWrap = document.createElement('div');
-    reactWrap.className = 'dm-msg-reactions';
-    reactWrap.setAttribute('data-reactions-for', String(m.id));
-    stack.appendChild(reactWrap);
-    row.appendChild(stack);
     renderMessageReactions(row, Array.isArray(m.reactions) ? m.reactions : []);
     return row;
   }
@@ -3827,7 +3830,9 @@ export function messagesPage(
     }
     if (msgEditBtn) {
       var rowKindCtx = row.getAttribute('data-msg-kind') || '';
-      var canEditMsg = row.classList.contains('mine') && rowKindCtx !== 'voice' && rowKindCtx !== 'post' && !row.querySelector('.dm-msg-decrypt-err');
+      var isVoiceRow = rowKindCtx === 'voice' || Boolean(row.querySelector('.dm-voice-msg, .voice-bubble'));
+      var isPostRow = rowKindCtx === 'post' || Boolean(row.querySelector('.shared-post-bubble'));
+      var canEditMsg = row.classList.contains('mine') && !isVoiceRow && !isPostRow && !row.querySelector('.dm-msg-decrypt-err');
       msgEditBtn.style.display = canEditMsg ? 'flex' : 'none';
     }
     if (msgActionList) {

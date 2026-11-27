@@ -2679,7 +2679,8 @@ body {
   display: block;
 }
 
-.comment-item[data-can-pin="1"] {
+.comment-item[data-can-pin="1"],
+.comment-item[data-can-delete="1"] {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -2721,8 +2722,13 @@ body {
   cursor: pointer;
 }
 
+.comment-ctx-btn:hover,
 .comment-ctx-btn:active {
   background: var(--bg-tertiary);
+}
+
+.comment-ctx-btn.is-danger {
+  color: var(--like-color, #ed4956);
 }
 
 .comment-ctx-btn svg {
@@ -3357,6 +3363,12 @@ body {
 
   #viewPostModal .post-view-actions {
     padding: 10px 14px 4px 14px;
+    flex-shrink: 0;
+  }
+
+  #viewPostModal .post-likes-count {
+    padding: 2px 14px 6px 14px;
+    margin-top: 0;
     flex-shrink: 0;
   }
 

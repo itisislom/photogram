@@ -7,7 +7,7 @@ export function formatBioHtml(bio?: string | null): string {
 import { ProfileData } from '../types';
 import { layout, escapeHtml, safeJsonForScript, renderVerifiedBadge, MORE_DOTS_ICON, postMediaUrl } from './layout';
 import { renderBottomNav, CLOSE_ICON } from './nav';
-import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON, PIN_COMMENT_ICON, AUTHOR_HEART_MINI_ICON } from './commentsModal';
+import { SEND_COMMENT_ICON, COMMENT_HEART_ICON, REPLY_CHEVRON_ICON, REPLY_ARROW_ICON, PIN_COMMENT_ICON, DELETE_COMMENT_ICON, AUTHOR_HEART_MINI_ICON } from './commentsModal';
 import { SHARE_ICON, renderShareSheetHtml, renderShareSheetScript } from './share';
 import { Translations } from '../languages/types';
 import { ru } from '../languages/ru';
@@ -256,6 +256,7 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
     heartIcon: COMMENT_HEART_ICON,
     chevronIcon: REPLY_CHEVRON_ICON,
     pinIcon: PIN_COMMENT_ICON,
+    deleteIcon: DELETE_COMMENT_ICON,
     authorHeartIcon: AUTHOR_HEART_MINI_ICON,
     justNow: t.common.justNow,
     minShort: t.common.minutesShort,
@@ -545,9 +546,68 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     }
   }
 
+  function confirmDeleteComment(commentId) {
+    if (!commentId || isNaN(commentId)) return;
+    async function doDeleteComment() {
+      try {
+        var res = await fetch('/api/posts/comment/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comment_id: commentId })
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          var item = document.getElementById('commentItem_' + commentId);
+          if (item) {
+            var parentIdAttr = parseInt(item.getAttribute('data-comment-parent-id') || '0', 10);
+            var parentThread = item.closest('.comment-thread');
+            if (parentIdAttr > 0) {
+              item.remove();
+              if (parentThread) updateThreadToggleLabel(parentThread);
+            } else if (parentThread) {
+              parentThread.remove();
+            } else {
+              item.remove();
+            }
+          }
+          if (replyingTo && Number(replyingTo.rootId) === Number(commentId)) {
+            cancelReplyMode();
+          }
+          updateCommentsCountUI(data.comments_count);
+          if (viewCommentsList && !viewCommentsList.querySelector('.comment-thread')) {
+            viewCommentsList.innerHTML = '<div class="comment-empty-text">' + escapeHtmlClient(i18n.emptyComments) + '</div>';
+          }
+        } else {
+          if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
+            if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
+          } else {
+            if (window.showAppAlert) window.showAppAlert({ message: data ? data.error : escapeHtmlClient(i18n.networkError) });
+          }
+        }
+      } catch (err) {
+        if (window.showAppAlert) window.showAppAlert({ message: escapeHtmlClient(i18n.networkError) });
+      }
+    }
+
+    if (window.showAppConfirm) {
+      window.showAppConfirm({
+        title: i18n.deleteCommentTitle,
+        message: i18n.deleteCommentConfirm,
+        okText: i18n.deleteBtn,
+        cancelText: i18n.cancelBtn,
+        onOk: doDeleteComment
+      });
+    } else {
+      doDeleteComment();
+    }
+  }
+
   function openCommentCtxMenu(itemEl, clientX, clientY) {
     closeCommentCtxMenu();
-    if (!itemEl || itemEl.getAttribute('data-can-pin') !== '1') return;
+    if (!itemEl) return;
+    var canPin = itemEl.getAttribute('data-can-pin') === '1';
+    var canDelete = itemEl.getAttribute('data-can-delete') === '1';
+    if (!canPin && !canDelete) return;
     var cid = parseInt(itemEl.getAttribute('data-comment-id') || '0', 10);
     if (!cid) return;
     var isPinned = itemEl.getAttribute('data-is-pinned') === '1';
@@ -564,16 +624,31 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     menu.className = 'comment-ctx-menu';
     menu.setAttribute('role', 'menu');
 
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'comment-ctx-btn';
-    btn.setAttribute('role', 'menuitem');
-    btn.innerHTML = i18n.pinIcon + '<span>' + escapeHtmlClient(isPinned ? i18n.unpinBtn : i18n.pinBtn) + '</span>';
-    btn.addEventListener('click', function() {
-      closeCommentCtxMenu();
-      togglePinComment(cid);
-    });
-    menu.appendChild(btn);
+    if (canPin) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'comment-ctx-btn';
+      btn.setAttribute('role', 'menuitem');
+      btn.innerHTML = i18n.pinIcon + '<span>' + escapeHtmlClient(isPinned ? i18n.unpinBtn : i18n.pinBtn) + '</span>';
+      btn.addEventListener('click', function() {
+        closeCommentCtxMenu();
+        togglePinComment(cid);
+      });
+      menu.appendChild(btn);
+    }
+
+    if (canDelete) {
+      var delCtxBtn = document.createElement('button');
+      delCtxBtn.type = 'button';
+      delCtxBtn.className = 'comment-ctx-btn is-danger';
+      delCtxBtn.setAttribute('role', 'menuitem');
+      delCtxBtn.innerHTML = (i18n.deleteIcon || '') + '<span>' + escapeHtmlClient(i18n.deleteBtn) + '</span>';
+      delCtxBtn.addEventListener('click', function() {
+        closeCommentCtxMenu();
+        confirmDeleteComment(cid);
+      });
+      menu.appendChild(delCtxBtn);
+    }
 
     document.body.appendChild(backdrop);
     document.body.appendChild(menu);
@@ -626,17 +701,14 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
       ? '<img src="/media/' + encodeURIComponent(c.avatar_key) + '" alt="' + escapeHtmlClient(c.username) + '">'
       : '<span>' + initial + '</span>';
 
-    var deleteBtn = c.can_delete
-      ? '<button type="button" class="comment-delete-btn" data-comment-id="' + c.id + '">' + escapeHtmlClient(i18n.deleteBtn) + '</button>'
-      : '';
-
     var replyBtn = '<button type="button" class="comment-reply-btn" data-reply-root-id="' + rootId + '" data-reply-username="' + escapeHtmlClient(c.username) + '" data-reply-nested="' + (isReply ? '1' : '0') + '">' + escapeHtmlClient(i18n.replyBtn) + '</button>';
 
     var badge = (Number(c.is_verified) === 1 && window.renderVerifiedBadge) ? window.renderVerifiedBadge(13) : '';
     var timeTxt = c._justNow ? escapeHtmlClient(i18n.justNow) : formatCommentTime(c.created_at);
     var isPinned = !isReply && Boolean(c.is_pinned);
     var canPin = !isReply && Boolean(c.can_pin);
-    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="commentItem_' + c.id + '" data-comment-id="' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '" data-can-pin="' + (canPin ? '1' : '0') + '" data-is-pinned="' + (isPinned ? '1' : '0') + '">' +
+    var canDelete = Boolean(c.can_delete);
+    return '<div class="comment-item' + (isReply ? ' is-reply' : '') + '" id="commentItem_' + c.id + '" data-comment-id="' + c.id + '" data-comment-parent-id="' + (isReply ? rootId : 0) + '" data-can-pin="' + (canPin ? '1' : '0') + '" data-can-delete="' + (canDelete ? '1' : '0') + '" data-is-pinned="' + (isPinned ? '1' : '0') + '">' +
       '<a href="/u/' + encodeURIComponent(c.username) + '" class="comment-avatar' + (isReply ? ' is-reply-avatar' : '') + '">' + avatarHtml + '</a>' +
       '<div class="comment-content-wrap">' +
         (isPinned ? renderPinnedBadgeHtml() : '') +
@@ -647,7 +719,6 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
         '<div class="comment-meta">' +
           '<span class="comment-time">' + timeTxt + '</span>' +
           replyBtn +
-          deleteBtn +
         '</div>' +
       '</div>' +
       renderCommentLikeBtn(c.id, Boolean(c.is_liked), c.likes_count || 0, Boolean(c.liked_by_author)) +
@@ -1406,71 +1477,11 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
       var delBtn = e.target && e.target.closest ? e.target.closest('.comment-delete-btn') : null;
       if (!delBtn) return;
       var commentId = parseInt(delBtn.dataset.commentId, 10);
-      if (!commentId || isNaN(commentId)) return;
-
-      async function doDeleteComment() {
-        delBtn.disabled = true;
-        delBtn.textContent = '...';
-
-        try {
-          var res = await fetch('/api/posts/comment/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ comment_id: commentId })
-          });
-          var data = await res.json();
-          if (res.ok && data.success) {
-            var item = document.getElementById('commentItem_' + commentId);
-            if (item) {
-              var parentIdAttr = parseInt(item.getAttribute('data-comment-parent-id') || '0', 10);
-              var parentThread = item.closest('.comment-thread');
-              if (parentIdAttr > 0) {
-                item.remove();
-                if (parentThread) updateThreadToggleLabel(parentThread);
-              } else if (parentThread) {
-                parentThread.remove();
-              } else {
-                item.remove();
-              }
-            }
-            if (replyingTo && Number(replyingTo.rootId) === Number(commentId)) {
-              cancelReplyMode();
-            }
-            updateCommentsCountUI(data.comments_count);
-            if (!viewCommentsList.querySelector('.comment-thread')) {
-              viewCommentsList.innerHTML = '<div class="comment-empty-text">' + escapeHtmlClient(i18n.emptyComments) + '</div>';
-            }
-          } else {
-            if (res.status === 401 || (data && data.error && data.error.includes('авториз'))) {
-              if (window.showAppAlert) window.showAppAlert({ isAuth: true, message: data ? data.error : '' });
-            } else {
-              if (window.showAppAlert) window.showAppAlert({ message: data ? data.error : escapeHtmlClient(i18n.networkError) });
-            }
-            delBtn.disabled = false;
-            delBtn.textContent = i18n.deleteBtn;
-          }
-        } catch (err) {
-          if (window.showAppAlert) window.showAppAlert({ message: escapeHtmlClient(i18n.networkError) });
-          delBtn.disabled = false;
-          delBtn.textContent = i18n.deleteBtn;
-        }
-      }
-
-      if (window.showAppConfirm) {
-        window.showAppConfirm({
-          title: i18n.deleteCommentTitle,
-          message: i18n.deleteCommentConfirm,
-          okText: i18n.deleteBtn,
-          cancelText: i18n.cancelBtn,
-          onOk: doDeleteComment
-        });
-      } else {
-        doDeleteComment();
-      }
+      if (commentId && !isNaN(commentId)) confirmDeleteComment(commentId);
     });
 
     viewCommentsList.addEventListener('contextmenu', function(e) {
-      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"]') : null;
+      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"], .comment-item[data-can-delete="1"]') : null;
       if (!item) return;
       e.preventDefault();
       openCommentCtxMenu(item, e.clientX, e.clientY);
@@ -1479,7 +1490,7 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     viewCommentsList.addEventListener('touchstart', function(e) {
       if (!e.touches || e.touches.length !== 1) return;
       if (e.target && e.target.closest && e.target.closest('a, button')) return;
-      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"]') : null;
+      var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"], .comment-item[data-can-delete="1"]') : null;
       if (!item) return;
       var touch = e.touches[0];
       commentHoldStartX = touch.clientX;
