@@ -33,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v15';
+export const APP_STYLE_VERSION = '20261127-v16';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -150,6 +150,304 @@ ${body}
 window.renderVerifiedBadge = function(size) {
   var s = size || 13.5;
   return '<svg class="verified-badge" viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" style="margin-left: 2px; vertical-align: middle; flex-shrink: 0; display: inline-flex;" aria-label="Verified"><circle cx="12" cy="12" r="9.8" fill="#29B6F6"/><path fill="#FFFFFF" d="M10.43 14.8L7.49 11.86l1.16-1.16 1.78 1.78 5.26-5.26L16.85 8.38z"/></svg>';
+};
+window.pgBindPostPhotoGestures = function(container, opts) {
+  if (!container || container.__pgPhotoGesturesBound) return;
+  container.__pgPhotoGesturesBound = true;
+  opts = opts || {};
+
+  var ignoreSel = opts.ignoreSelector || '';
+  var imgSel = opts.imgSelector || 'img';
+  var coordTarget = opts.coordTarget || container;
+  var onDoubleTap = typeof opts.onDoubleTap === 'function' ? opts.onDoubleTap : null;
+
+  var hadMultiTouch = false;
+  var multiTouchCooldownUntil = 0;
+  var singleStartX = 0;
+  var singleStartY = 0;
+  var singleMoved = false;
+  var singleDownAt = 0;
+  var lastSingleTapAt = 0;
+  var lastSingleTapX = 0;
+  var lastSingleTapY = 0;
+  var lastTouchDoubleTapAt = 0;
+
+  var pinchActive = false;
+  var pinchImgEl = null;
+  var pinchBackdrop = null;
+  var pinchClone = null;
+  var pinchSnapTimer = null;
+  var pinchStartDist = 1;
+  var pinchStartMidX = 0;
+  var pinchStartMidY = 0;
+  var pinchOriginFx = 0;
+  var pinchOriginFy = 0;
+  var pinchBaseRect = null;
+
+  function isMobileTouch() {
+    if (typeof window === 'undefined') return false;
+    var coarse = Boolean(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    if (coarse) return true;
+    return ('ontouchstart' in window) && (window.innerWidth || 0) <= 1024;
+  }
+
+  function isIgnoredTarget(target) {
+    if (!ignoreSel || !target || typeof target.closest !== 'function') return false;
+    return Boolean(target.closest(ignoreSel));
+  }
+
+  function computeLocalCoords(clientX, clientY) {
+    var rect = coordTarget.getBoundingClientRect ? coordTarget.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+    var rawX = (clientX != null ? clientX : (rect.left + rect.width / 2)) - rect.left;
+    var rawY = (clientY != null ? clientY : (rect.top + rect.height / 2)) - rect.top;
+    var maxW = Math.max(40, rect.width || 40);
+    var maxH = Math.max(40, rect.height || 40);
+    return {
+      x: Math.max(20, Math.min(maxW - 20, rawX)),
+      y: Math.max(20, Math.min(maxH - 20, rawY))
+    };
+  }
+
+  function cleanupPinchImmediate() {
+    if (pinchSnapTimer) {
+      clearTimeout(pinchSnapTimer);
+      pinchSnapTimer = null;
+    }
+    if (pinchImgEl) {
+      pinchImgEl.style.visibility = '';
+      pinchImgEl = null;
+    }
+    if (pinchClone && pinchClone.parentNode) pinchClone.parentNode.removeChild(pinchClone);
+    if (pinchBackdrop && pinchBackdrop.parentNode) pinchBackdrop.parentNode.removeChild(pinchBackdrop);
+    pinchClone = null;
+    pinchBackdrop = null;
+    pinchBaseRect = null;
+    pinchActive = false;
+  }
+
+  function startPinch(t1, t2) {
+    if (!isMobileTouch()) return;
+    var img = container.querySelector ? container.querySelector(imgSel) : null;
+    if (!img || !img.getBoundingClientRect) return;
+    var src = img.currentSrc || img.getAttribute('src') || '';
+    if (!src) return;
+    cleanupPinchImmediate();
+
+    var rect = img.getBoundingClientRect();
+    if (!rect || rect.width < 10 || rect.height < 10) return;
+
+    var dx = t2.clientX - t1.clientX;
+    var dy = t2.clientY - t1.clientY;
+    pinchStartDist = Math.max(10, Math.sqrt(dx * dx + dy * dy));
+    pinchStartMidX = (t1.clientX + t2.clientX) / 2;
+    pinchStartMidY = (t1.clientY + t2.clientY) / 2;
+    pinchOriginFx = pinchStartMidX - (rect.left + rect.width / 2);
+    pinchOriginFy = pinchStartMidY - (rect.top + rect.height / 2);
+    pinchBaseRect = rect;
+    pinchImgEl = img;
+    pinchActive = true;
+
+    var imgCs = window.getComputedStyle ? window.getComputedStyle(img) : null;
+    var contCs = window.getComputedStyle ? window.getComputedStyle(container) : null;
+    var objectFit = (imgCs && imgCs.objectFit) || 'cover';
+    var borderRadius = (imgCs && imgCs.borderRadius && imgCs.borderRadius !== '0px')
+      ? imgCs.borderRadius
+      : ((contCs && contCs.overflow === 'hidden' && contCs.borderRadius && contCs.borderRadius !== '0px') ? contCs.borderRadius : '0px');
+
+    var bd = document.createElement('div');
+    bd.className = 'pg-pinch-zoom-backdrop';
+    bd.style.opacity = '0';
+
+    var cl = document.createElement('img');
+    cl.className = 'pg-pinch-zoom-img';
+    cl.src = src;
+    cl.alt = '';
+    cl.style.left = rect.left + 'px';
+    cl.style.top = rect.top + 'px';
+    cl.style.width = rect.width + 'px';
+    cl.style.height = rect.height + 'px';
+    cl.style.objectFit = objectFit;
+    cl.style.borderRadius = borderRadius;
+    cl.style.transform = 'translate3d(0px, 0px, 0) scale(1)';
+
+    document.body.appendChild(bd);
+    document.body.appendChild(cl);
+    img.style.visibility = 'hidden';
+
+    pinchBackdrop = bd;
+    pinchClone = cl;
+  }
+
+  function updatePinch(t1, t2) {
+    if (!pinchActive || !pinchClone || !pinchBackdrop) return;
+    var dx = t2.clientX - t1.clientX;
+    var dy = t2.clientY - t1.clientY;
+    var curDist = Math.max(10, Math.sqrt(dx * dx + dy * dy));
+    var rawScale = curDist / pinchStartDist;
+    var scale = rawScale < 1
+      ? Math.max(0.75, 1 - (1 - rawScale) * 0.45)
+      : Math.min(4, rawScale);
+    var curMidX = (t1.clientX + t2.clientX) / 2;
+    var curMidY = (t1.clientY + t2.clientY) / 2;
+    var tx = (curMidX - pinchStartMidX) + pinchOriginFx * (1 - scale);
+    var ty = (curMidY - pinchStartMidY) + pinchOriginFy * (1 - scale);
+
+    pinchClone.style.transition = 'none';
+    pinchClone.style.transform = 'translate3d(' + tx.toFixed(2) + 'px, ' + ty.toFixed(2) + 'px, 0) scale(' + scale.toFixed(4) + ')';
+    var bdOpacity = scale > 1 ? Math.min(0.78, (scale - 1) * 0.48) : 0;
+    pinchBackdrop.style.transition = 'none';
+    pinchBackdrop.style.opacity = bdOpacity.toFixed(3);
+  }
+
+  function endPinchSnapBack() {
+    if (!pinchActive) return;
+    pinchActive = false;
+    var img = pinchImgEl;
+    var cl = pinchClone;
+    var bd = pinchBackdrop;
+    var baseRect = pinchBaseRect;
+    if (!cl || !bd) {
+      cleanupPinchImmediate();
+      return;
+    }
+    var targetTx = 0;
+    var targetTy = 0;
+    if (img && baseRect && img.getBoundingClientRect) {
+      var curRect = img.getBoundingClientRect();
+      if (curRect && curRect.width > 0 && curRect.height > 0) {
+        targetTx = curRect.left - baseRect.left;
+        targetTy = curRect.top - baseRect.top;
+      }
+    }
+    void cl.offsetWidth;
+    cl.style.transition = 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)';
+    cl.style.transform = 'translate3d(' + targetTx.toFixed(2) + 'px, ' + targetTy.toFixed(2) + 'px, 0) scale(1)';
+    bd.style.transition = 'opacity 0.24s ease';
+    bd.style.opacity = '0';
+
+    pinchSnapTimer = setTimeout(function() {
+      cleanupPinchImmediate();
+    }, 295);
+  }
+
+  container.addEventListener('touchstart', function(e) {
+    if (isIgnoredTarget(e.target)) return;
+    var count = e.touches ? e.touches.length : 0;
+    if (count >= 2) {
+      hadMultiTouch = true;
+      lastSingleTapAt = 0;
+      singleMoved = true;
+      if (isMobileTouch()) {
+        if (e.cancelable) e.preventDefault();
+        if (!pinchActive) {
+          startPinch(e.touches[0], e.touches[1]);
+        }
+      }
+      return;
+    }
+    if (count === 1 && !hadMultiTouch && !pinchActive) {
+      var t0 = e.touches[0];
+      singleStartX = t0.clientX;
+      singleStartY = t0.clientY;
+      singleMoved = false;
+      singleDownAt = Date.now();
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', function(e) {
+    var count = e.touches ? e.touches.length : 0;
+    if (count >= 2) {
+      hadMultiTouch = true;
+      lastSingleTapAt = 0;
+      singleMoved = true;
+      if (isMobileTouch()) {
+        if (e.cancelable) e.preventDefault();
+        if (!pinchActive) {
+          startPinch(e.touches[0], e.touches[1]);
+        } else {
+          updatePinch(e.touches[0], e.touches[1]);
+        }
+      }
+      return;
+    }
+    if (pinchActive) {
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+    if (count === 1 && !hadMultiTouch) {
+      var t0 = e.touches[0];
+      if (Math.abs(t0.clientX - singleStartX) > 14 || Math.abs(t0.clientY - singleStartY) > 14) {
+        singleMoved = true;
+      }
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', function(e) {
+    var remaining = e.touches ? e.touches.length : 0;
+    var changed = e.changedTouches ? e.changedTouches.length : 0;
+    if (pinchActive) {
+      if (remaining < 2) {
+        endPinchSnapBack();
+      }
+      hadMultiTouch = remaining > 0;
+      multiTouchCooldownUntil = Date.now() + 450;
+      lastSingleTapAt = 0;
+      return;
+    }
+    if (hadMultiTouch) {
+      if (remaining === 0) {
+        hadMultiTouch = false;
+        multiTouchCooldownUntil = Date.now() + 450;
+      }
+      lastSingleTapAt = 0;
+      return;
+    }
+    if (isIgnoredTarget(e.target)) return;
+    if (remaining !== 0 || changed !== 1 || singleMoved) {
+      lastSingleTapAt = 0;
+      return;
+    }
+    var now = Date.now();
+    if (now < multiTouchCooldownUntil || (singleDownAt > 0 && (now - singleDownAt) > 350)) {
+      lastSingleTapAt = 0;
+      return;
+    }
+    var ct = e.changedTouches[0];
+    if (lastSingleTapAt > 0 && (now - lastSingleTapAt) <= 320 && Math.abs(ct.clientX - lastSingleTapX) <= 44 && Math.abs(ct.clientY - lastSingleTapY) <= 44) {
+      lastSingleTapAt = 0;
+      lastTouchDoubleTapAt = now;
+      if (e.cancelable) e.preventDefault();
+      if (onDoubleTap) {
+        var coords = computeLocalCoords(ct.clientX, ct.clientY);
+        onDoubleTap(coords.x, coords.y);
+      }
+      return;
+    }
+    lastSingleTapAt = now;
+    lastSingleTapX = ct.clientX;
+    lastSingleTapY = ct.clientY;
+  }, { passive: false });
+
+  container.addEventListener('touchcancel', function() {
+    if (pinchActive) endPinchSnapBack();
+    hadMultiTouch = false;
+    singleMoved = true;
+    lastSingleTapAt = 0;
+    multiTouchCooldownUntil = Date.now() + 300;
+  }, { passive: true });
+
+  container.addEventListener('dblclick', function(e) {
+    if (isIgnoredTarget(e.target)) return;
+    var now = Date.now();
+    if (now - lastTouchDoubleTapAt < 650 || now < multiTouchCooldownUntil) return;
+    e.preventDefault();
+    if (onDoubleTap) {
+      var coords = computeLocalCoords(e.clientX, e.clientY);
+      onDoubleTap(coords.x, coords.y);
+    }
+  });
+
+  window.addEventListener('pagehide', cleanupPinchImmediate);
 };
 window.pgBindPlainEditable = function(el, opts) {
   if (!el || el.__pgCeBound) return;

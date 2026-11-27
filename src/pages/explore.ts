@@ -835,38 +835,17 @@ ${renderShareSheetScript(currentUser.id, t)}
         };
       }
 
-      var touchMoved = false;
-      var lastTap = 0;
-      slide.ontouchstart = function(e) {
-        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
-        touchMoved = false;
-      };
-      slide.ontouchmove = function() {
-        touchMoved = true;
-      };
-      slide.ontouchend = function(e) {
-        if (touchMoved) return;
-        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
-        var now = new Date().getTime();
-        var diff = now - lastTap;
-        if (diff > 0 && diff < 350) {
-          e.preventDefault();
-          var coords = getEventCoords(e, imageWrap || this);
-          if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
-          toggleSlideLike(slide, true, coords.x, coords.y);
-          lastTap = 0;
-          return;
-        }
-        lastTap = now;
-      };
-
-      slide.ondblclick = function(e) {
-        if (e.target && e.target.closest && e.target.closest('.pics-side-bar, .pics-bottom-info, .pics-top-bar')) return;
-        e.preventDefault();
-        var coords = getEventCoords(e, imageWrap || this);
-        if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
-        toggleSlideLike(slide, true, coords.x, coords.y);
-      };
+      if (window.pgBindPostPhotoGestures) {
+        window.pgBindPostPhotoGestures(slide, {
+          imgSelector: '.pics-image',
+          coordTarget: imageWrap || slide,
+          ignoreSelector: '.pics-side-bar, .pics-bottom-info, .pics-top-bar',
+          onDoubleTap: function(x, y) {
+            if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
+            toggleSlideLike(slide, true, x, y);
+          }
+        });
+      }
     });
 
     if (window.initTelemetryObserver) {

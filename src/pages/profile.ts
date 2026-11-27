@@ -1166,23 +1166,13 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     });
   }
 
-  if (viewImageWrap) {
-    viewImageWrap.addEventListener('dblclick', function(e) {
-      e.preventDefault();
-      var coords = getEventCoords(e, this);
-      toggleLike(true, coords.x, coords.y);
-    });
-
-    var lastTap = 0;
-    viewImageWrap.addEventListener('touchend', function(e) {
-      var now = new Date().getTime();
-      var diff = now - lastTap;
-      if (diff > 0 && diff < 350) {
-        e.preventDefault();
-        var coords = getEventCoords(e, this);
-        toggleLike(true, coords.x, coords.y);
+  if (viewImageWrap && window.pgBindPostPhotoGestures) {
+    window.pgBindPostPhotoGestures(viewImageWrap, {
+      imgSelector: '#viewPostImg',
+      coordTarget: viewImageWrap,
+      onDoubleTap: function(x, y) {
+        toggleLike(true, x, y);
       }
-      lastTap = now;
     });
   }
 

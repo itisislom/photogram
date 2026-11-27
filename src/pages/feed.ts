@@ -582,25 +582,15 @@ ${renderShareSheetScript(currentUser.id, t)}
     scope.querySelectorAll('.feed-card-image-wrap').forEach(function(wrap) {
       if (wrap.dataset.feedBound) return;
       wrap.dataset.feedBound = '1';
-      wrap.addEventListener('dblclick', function(e) {
-        e.preventDefault();
-        var pid = this.dataset.postId;
-        var coords = getEventCoords(e, this);
-        toggleLike(pid, true, coords.x, coords.y);
-      });
-
-      var lastTap = 0;
-      wrap.addEventListener('touchend', function(e) {
-        var now = new Date().getTime();
-        var diff = now - lastTap;
-        if (diff > 0 && diff < 350) {
-          e.preventDefault();
-          var pid = this.dataset.postId;
-          var coords = getEventCoords(e, this);
-          toggleLike(pid, true, coords.x, coords.y);
-        }
-        lastTap = now;
-      });
+      if (window.pgBindPostPhotoGestures) {
+        window.pgBindPostPhotoGestures(wrap, {
+          imgSelector: '.feed-card-img',
+          coordTarget: wrap,
+          onDoubleTap: function(x, y) {
+            toggleLike(wrap.dataset.postId, true, x, y);
+          }
+        });
+      }
     });
 
     scope.querySelectorAll('.feed-card-author, .feed-caption-user').forEach(function(link) {

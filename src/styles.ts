@@ -1510,6 +1510,7 @@ body {
   overflow: hidden;
   user-select: none;
   cursor: pointer;
+  touch-action: pan-y;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2305,6 +2306,26 @@ body {
   aspect-ratio: 1 / 1;
   max-height: 580px;
   overflow: hidden;
+  touch-action: pan-y;
+}
+
+.pg-pinch-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #000000;
+  z-index: 23000;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.pg-pinch-zoom-img {
+  position: fixed;
+  z-index: 23001;
+  pointer-events: none;
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .feed-card-img {
