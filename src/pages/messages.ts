@@ -339,6 +339,7 @@ export function messagesPage(
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
       <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="true" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
       <div class="dm-voice-rec-bar" id="dmVoiceRecBar" aria-live="polite">
+        <button type="button" class="dm-voice-cancel-btn" id="dmVoiceCancelBtn" aria-label="${escapeHtml(t.common.cancel)}" title="${escapeHtml(t.common.cancel)}">${TRASH_SM_ICON}</button>
         <span class="dm-voice-rec-dot"></span>
         <span class="dm-voice-rec-timer" id="dmVoiceRecTimer">0:00</span>
         <div class="dm-voice-live-bars" id="dmVoiceLiveBars" aria-hidden="true"></div>
@@ -410,6 +411,7 @@ export function messagesPage(
       <button type="button" class="dm-attach-btn" id="dmAttachBtn" aria-label="${escapeHtml(t.messages.photoLabel)}" title="${escapeHtml(t.messages.photoLabel)}">${PHOTO_ICON}</button>
       <div class="dm-input pg-ce-input" id="dmMessageInput" contenteditable="plaintext-only" role="textbox" aria-multiline="true" inputmode="text" enterkeyhint="send" data-placeholder="${escapeHtml(t.messages.inputPlaceholder)}" data-maxlength="2000" aria-label="${escapeHtml(t.messages.inputPlaceholder)}"></div>
       <div class="dm-voice-rec-bar" id="dmVoiceRecBar" aria-live="polite">
+        <button type="button" class="dm-voice-cancel-btn" id="dmVoiceCancelBtn" aria-label="${escapeHtml(t.common.cancel)}" title="${escapeHtml(t.common.cancel)}">${TRASH_SM_ICON}</button>
         <span class="dm-voice-rec-dot"></span>
         <span class="dm-voice-rec-timer" id="dmVoiceRecTimer">0:00</span>
         <div class="dm-voice-live-bars" id="dmVoiceLiveBars" aria-hidden="true"></div>
@@ -628,6 +630,9 @@ export function messagesPage(
     e2eePartnerNotReady: t.messages.e2eePartnerNotReady,
     e2eeDecryptFailed: t.messages.e2eeDecryptFailed,
     trashIcon: TRASH_SM_ICON,
+    micIcon: MIC_ICON,
+    sendIcon: SEND_COMMENT_ICON,
+    sendLabel: t.messages.send,
   });
 
   const script = `
@@ -782,6 +787,7 @@ export function messagesPage(
   var sendBtn = document.getElementById('dmSendBtn');
   var voiceBtn = document.getElementById('dmVoiceBtn');
   var voiceRecBar = document.getElementById('dmVoiceRecBar');
+  var voiceCancelBtn = document.getElementById('dmVoiceCancelBtn');
   var voiceRecTimer = document.getElementById('dmVoiceRecTimer');
   var voiceLiveBars = document.getElementById('dmVoiceLiveBars');
   var voiceRecHint = document.getElementById('dmVoiceRecHint');
@@ -3049,12 +3055,16 @@ export function messagesPage(
 
   var VOICE_MAX_MS = 120000;
   var VOICE_MIN_MS = 500;
+  var VOICE_TAP_LOCK_MS = 320;
   var VOICE_LIVE_BAR_COUNT = 24;
   var VOICE_WAVEFORM_BARS = 32;
   var VOICE_CANCEL_PX = 70;
   var voiceRecording = false;
   var voiceStarting = false;
   var voicePointerHeld = false;
+  var voiceLocked = false;
+  var voiceTapLockWanted = false;
+  var voicePressDownAt = 0;
   var voiceCancelActive = false;
   var voicePointerId = null;
   var voiceStartX = 0;
@@ -3221,14 +3231,37 @@ export function messagesPage(
     voiceAnalyser = null;
   }
 
+  function enterVoiceLockedMode() {
+    voiceLocked = true;
+    voiceTapLockWanted = false;
+    voicePointerHeld = false;
+    voicePointerId = null;
+    voiceCancelActive = false;
+    if (formEl) {
+      formEl.classList.remove('is-voice-cancelling');
+      formEl.classList.add('is-voice-locked');
+    }
+    if (voiceBtn) {
+      voiceBtn.innerHTML = state.sendIcon;
+      voiceBtn.setAttribute('aria-label', state.sendLabel || state.voiceLabel);
+    }
+  }
+
   function resetVoiceUi() {
     voiceRecording = false;
     voiceStarting = false;
     voicePointerHeld = false;
+    voiceLocked = false;
+    voiceTapLockWanted = false;
+    voicePressDownAt = 0;
     voiceCancelActive = false;
     voicePointerId = null;
-    if (formEl) formEl.classList.remove('is-recording', 'is-voice-cancelling');
-    if (voiceBtn) voiceBtn.classList.remove('recording');
+    if (formEl) formEl.classList.remove('is-recording', 'is-voice-cancelling', 'is-voice-locked');
+    if (voiceBtn) {
+      voiceBtn.classList.remove('recording');
+      if (state.micIcon) voiceBtn.innerHTML = state.micIcon;
+      voiceBtn.setAttribute('aria-label', state.voiceLabel);
+    }
     if (voiceRecTimer) voiceRecTimer.textContent = '0:00';
     if (voiceRecHint) voiceRecHint.textContent = state.voiceSlideCancel;
     for (var i = 0; i < voiceLiveBarEls.length; i++) {
@@ -3476,9 +3509,11 @@ export function messagesPage(
     stopActiveVoicePlayback();
     voiceStarting = true;
     voicePointerHeld = true;
+    voiceLocked = false;
     voiceCancelActive = false;
     voicePointerId = pointerId;
     voiceStartX = clientX;
+    if (!voicePressDownAt) voicePressDownAt = Date.now();
     voiceChunks = [];
     voicePeakSamples = [];
     voiceLastSampleAt = 0;
@@ -3510,6 +3545,7 @@ export function messagesPage(
       if (preAudioCtx) { try { preAudioCtx.close(); } catch (ce) {} }
       voiceStarting = false;
       voicePointerHeld = false;
+      voiceTapLockWanted = false;
       var errName = err && err.name ? String(err.name) : '';
       if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
         if (window.showAppToast) window.showAppToast(state.voiceMicDenied);
@@ -3519,7 +3555,7 @@ export function messagesPage(
       return;
     }
 
-    if (!voicePointerHeld) {
+    if (!voicePointerHeld && !voiceTapLockWanted) {
       if (preAudioCtx) { try { preAudioCtx.close(); } catch (ce2) {} }
       try { stream.getTracks().forEach(function(tr) { tr.stop(); }); } catch (e) {}
       voiceStarting = false;
@@ -3595,6 +3631,19 @@ export function messagesPage(
       }
     }, 100);
     pumpVoiceMeter();
+    if (voiceTapLockWanted) {
+      enterVoiceLockedMode();
+    }
+  }
+
+  if (voiceCancelBtn) {
+    voiceCancelBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (voiceRecording || voiceStarting) {
+        abortVoiceRecording();
+      }
+    });
   }
 
   if (voiceBtn) {
@@ -3604,11 +3653,18 @@ export function messagesPage(
     voiceBtn.addEventListener('pointerdown', function(e) {
       if (e.button !== undefined && e.button !== 0) return;
       e.preventDefault();
+      if (voiceRecording && voiceLocked) {
+        finishVoiceRecording(false);
+        return;
+      }
+      if (voiceRecording || voiceStarting || isSending) return;
+      voicePressDownAt = Date.now();
+      voiceTapLockWanted = false;
       try { voiceBtn.setPointerCapture(e.pointerId); } catch (ce) {}
       startVoiceRecording(e.clientX, e.pointerId);
     });
     voiceBtn.addEventListener('pointermove', function(e) {
-      if (!voiceRecording || (voicePointerId !== null && e.pointerId !== voicePointerId)) return;
+      if (!voiceRecording || voiceLocked || (voicePointerId !== null && e.pointerId !== voicePointerId)) return;
       var dx = voiceStartX - e.clientX;
       var nextCancel = dx >= VOICE_CANCEL_PX;
       if (nextCancel !== voiceCancelActive) {
@@ -3623,18 +3679,32 @@ export function messagesPage(
       }
     });
     function onVoicePointerEnd(e) {
+      if (voiceLocked) return;
       if (voicePointerId !== null && e && e.pointerId !== undefined && e.pointerId !== voicePointerId) return;
+      var holdMs = voicePressDownAt > 0 ? (Date.now() - voicePressDownAt) : 0;
       if (voiceStarting) {
         voicePointerHeld = false;
+        if (holdMs < VOICE_TAP_LOCK_MS) {
+          voiceTapLockWanted = true;
+        }
         return;
       }
       if (voiceRecording) {
-        finishVoiceRecording(voiceCancelActive);
+        if (!voiceCancelActive && holdMs < VOICE_TAP_LOCK_MS) {
+          enterVoiceLockedMode();
+        } else {
+          finishVoiceRecording(voiceCancelActive);
+        }
       }
     }
     voiceBtn.addEventListener('pointerup', onVoicePointerEnd);
     voiceBtn.addEventListener('pointercancel', function() {
-      if (voiceStarting) { voicePointerHeld = false; return; }
+      if (voiceLocked) return;
+      if (voiceStarting) {
+        voicePointerHeld = false;
+        voiceTapLockWanted = false;
+        return;
+      }
       if (voiceRecording) finishVoiceRecording(true);
     });
   }
@@ -5741,6 +5811,7 @@ export function messagesPage(
       try { dmSwitchAbort.abort(); } catch (e) {}
       dmSwitchAbort = null;
     }
+    if (voiceRecording || voiceStarting) abortVoiceRecording();
     if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
     clearPartnerTyping();
     sendStopTypingNow();
@@ -5788,6 +5859,7 @@ export function messagesPage(
     }
     dmSwitchAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
 
+    if (voiceRecording || voiceStarting) abortVoiceRecording();
     if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
     clearPartnerTyping();
     sendStopTypingNow();

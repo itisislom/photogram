@@ -177,8 +177,8 @@ export function profilePage(data: ProfileData, t: Translations = ru, theme?: str
             ${HEART_ICON}
           </button>
           ${data.current_user_id ? `<button class="post-share-btn" id="viewPostShareBtn" type="button" aria-label="${escapeHtml(t.share.ariaShare)}" title="${escapeHtml(t.share.title)}">${SHARE_ICON}<span class="post-share-count" id="viewPostSharesCount"></span></button>` : ''}
-          <div class="post-likes-count" id="viewPostLikesCount">${t.common.likesCount(0)}</div>
         </div>
+        <div class="post-likes-count" id="viewPostLikesCount">${t.common.likesCount(0)}</div>
         <div class="post-view-meta">
           <div class="post-view-caption" id="viewPostCaption"></div>
           <div class="post-view-date" id="viewPostDate"></div>

@@ -1578,6 +1578,9 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+  padding: 0 2px;
+  margin-top: -6px;
+  flex-shrink: 0;
 }
 
 .post-view-meta {
@@ -6023,6 +6026,36 @@ body.dm-lock-scroll {
 
 .dm-composer.is-recording .dm-voice-rec-bar {
   display: flex;
+}
+
+.dm-voice-cancel-btn {
+  display: none;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--like-color, #ed4956);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  margin-left: -4px;
+}
+
+.dm-composer.is-voice-locked .dm-voice-cancel-btn {
+  display: inline-flex;
+}
+
+.dm-composer.is-voice-locked .dm-voice-rec-hint {
+  display: none;
+}
+
+.dm-composer.is-voice-locked .dm-voice-btn.recording {
+  box-shadow: none;
 }
 
 .dm-voice-rec-dot {
