@@ -5447,6 +5447,7 @@ body.dm-lock-scroll {
   align-items: flex-end;
   gap: 6px;
   max-width: 100%;
+  touch-action: manipulation;
 }
 
 .dm-msg-row.mine {
@@ -6134,13 +6135,14 @@ body.dm-lock-scroll {
 }
 
 .dm-voice-bar {
-  width: 2.5px;
+  flex: 1 1 2.5px;
+  min-width: 2px;
+  max-width: 3px;
   min-height: 4px;
   max-height: 24px;
   border-radius: 2px;
   background: var(--accent-color, #0095f6);
   opacity: 0.35;
-  flex-shrink: 0;
 }
 
 .dm-voice-bar.played {

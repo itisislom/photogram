@@ -1282,7 +1282,10 @@ export async function handleMarkRead(request: Request, env: Env, ctx?: Execution
   const partnerId = conv.user1_id === Number(user.id) ? conv.user2_id : conv.user1_id;
   const partnerSlot: 1 | 2 = conv.user1_id === partnerId ? 1 : 2;
   const partnerCleared = partnerSlot === 1 ? conv.user1_cleared_before_id : conv.user2_cleared_before_id;
-  const unreadTotal = await getTotalUnreadCount(env, user.id);
+  const [unreadTotal, lastReadOwnId] = await Promise.all([
+    getTotalUnreadCount(env, user.id),
+    getLastReadOwnMessageId(env, convId, user.id, conv.cleared_before_id, viewerSlot),
+  ]);
   await runBackground(ctx, async () => {
     const partnerLastRead = await getLastReadOwnMessageId(env, convId, partnerId, partnerCleared, partnerSlot);
     await Promise.all([
@@ -1300,7 +1303,7 @@ export async function handleMarkRead(request: Request, env: Env, ctx?: Execution
       }),
     ]);
   });
-  return jsonResponse({ success: true, unread_total: unreadTotal }, 200);
+  return jsonResponse({ success: true, unread_total: unreadTotal, last_read_own_id: lastReadOwnId }, 200);
 }
 
 async function deleteDmStorageKeys(env: Env, keys: string[]): Promise<void> {

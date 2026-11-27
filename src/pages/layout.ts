@@ -33,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v12';
+export const APP_STYLE_VERSION = '20261127-v14';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -935,9 +935,10 @@ window.showAppConfirm = function(opts) {
     if (!imgUrl || isDownloadingPostPhoto) return;
     var cleanUrl = String(imgUrl).trim();
     var ownBlobPrefix = 'blob:' + window.location.origin + '/';
-    var isAllowedPost = cleanUrl.indexOf('/media/posts/') === 0 || cleanUrl.indexOf('/media/posts%2F') === 0;
-    var isAllowedDm = cleanUrl.indexOf('/media/dm/') === 0 || cleanUrl.indexOf('/media/dm%2F') === 0;
-    var isOwnBlob = cleanUrl.indexOf(ownBlobPrefix) === 0;
+    var hasTraversal = cleanUrl.indexOf('..') !== -1 || /%2e/i.test(cleanUrl) || cleanUrl.indexOf('\\\\') !== -1 || /[\\r\\n\\0]/.test(cleanUrl);
+    var isAllowedPost = !hasTraversal && (cleanUrl.indexOf('/media/posts/') === 0 || cleanUrl.indexOf('/media/posts%2F') === 0);
+    var isAllowedDm = !hasTraversal && (cleanUrl.indexOf('/media/dm/') === 0 || cleanUrl.indexOf('/media/dm%2F') === 0);
+    var isOwnBlob = !hasTraversal && cleanUrl.indexOf(ownBlobPrefix) === 0;
     if (!isAllowedPost && !isAllowedDm && !isOwnBlob) {
       window.showAppToast(${safeJsonForScript(t.post.downloadError)});
       return;
@@ -955,7 +956,8 @@ window.showAppConfirm = function(opts) {
         da.style.display = 'none';
         document.body.appendChild(da);
         da.click();
-        da.remove();
+        if (da.parentNode) da.parentNode.removeChild(da);
+        else if (da.remove) da.remove();
         window.showAppToast(${safeJsonForScript(t.post.downloadSuccess)});
         return;
       }

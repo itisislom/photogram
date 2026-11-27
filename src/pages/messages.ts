@@ -1629,6 +1629,15 @@ export function messagesPage(
       var stEl = r.querySelector('.dm-msg-status');
       if (stEl) setStatusCheckIcon(stEl, isRead);
     }
+    if (convListEl && state.activeConversationId > 0 && state.lastReadOwnId > 0) {
+      var activeConvItem = convListEl.querySelector('.dm-conv-item[data-conv-id="' + state.activeConversationId + '"]');
+      if (activeConvItem && activeConvItem.getAttribute('data-last-mine') === '1') {
+        var activeLastId = parseInt(activeConvItem.getAttribute('data-last-msg-id') || '0', 10);
+        if (activeLastId > 0) {
+          setConvItemCheck(activeConvItem, true, state.lastReadOwnId >= activeLastId);
+        }
+      }
+    }
     if (seenEl) {
       if (!rows.length) {
         seenEl.classList.remove('visible');
@@ -3061,6 +3070,8 @@ export function messagesPage(
   var voiceLiveBarEls = [];
   var voicePeakSamples = [];
   var voiceLastSampleAt = 0;
+  var voiceFramePeak = 0;
+  var voiceSilentGain = null;
 
   if (voiceLiveBars) {
     for (var vbIdx = 0; vbIdx < VOICE_LIVE_BAR_COUNT; vbIdx++) {
@@ -3090,20 +3101,98 @@ export function messagesPage(
       for (var i = 0; i < count; i++) out.push(18);
       return out;
     }
+    var raw = [];
+    var minV = 100;
+    var maxV = 0;
     var step = samples.length / count;
     for (var j = 0; j < count; j++) {
       var start = Math.floor(j * step);
       var end = Math.max(start + 1, Math.floor((j + 1) * step));
       var sum = 0;
       var cnt = 0;
+      var localMax = 0;
       for (var k = start; k < end && k < samples.length; k++) {
-        sum += samples[k];
+        var sv = Number(samples[k]) || 0;
+        sum += sv;
+        if (sv > localMax) localMax = sv;
         cnt++;
       }
-      var avg = cnt > 0 ? Math.round(sum / cnt) : 14;
-      out.push(Math.max(10, Math.min(100, avg)));
+      var blended = cnt > 0 ? Math.round((sum / cnt) * 0.45 + localMax * 0.55) : 14;
+      if (blended < minV) minV = blended;
+      if (blended > maxV) maxV = blended;
+      raw.push(blended);
+    }
+    var spread = maxV - minV;
+    for (var n = 0; n < raw.length; n++) {
+      var v = raw[n];
+      if (maxV > 12 && spread >= 4 && maxV < 75) {
+        v = Math.round(14 + ((v - minV) / Math.max(1, spread)) * 78);
+      }
+      out.push(Math.max(12, Math.min(100, v)));
     }
     return out;
+  }
+
+  async function extractWaveformFromBlob(audioBlob, count) {
+    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx || !audioBlob) return null;
+    var decodeCtx = null;
+    try {
+      var ab = await audioBlob.arrayBuffer();
+      if (!ab || ab.byteLength === 0) return null;
+      decodeCtx = new AudioCtx();
+      var audioBuf = await decodeCtx.decodeAudioData(ab.slice(0));
+      if (!audioBuf || !audioBuf.length) return null;
+      var ch = audioBuf.getChannelData(0);
+      if (!ch || !ch.length) return null;
+      var blockSize = Math.max(1, Math.floor(ch.length / count));
+      var rawPeaks = [];
+      var maxPeak = 0;
+      for (var i = 0; i < count; i++) {
+        var bStart = i * blockSize;
+        var bEnd = Math.min(ch.length, bStart + blockSize);
+        var stride = Math.max(1, Math.floor((bEnd - bStart) / 256));
+        var sumSq = 0;
+        var pMax = 0;
+        var n = 0;
+        for (var k = bStart; k < bEnd; k += stride) {
+          var s = Math.abs(ch[k]);
+          sumSq += s * s;
+          if (s > pMax) pMax = s;
+          n++;
+        }
+        var rms = n > 0 ? Math.sqrt(sumSq / n) : 0;
+        var val = rms * 0.65 + pMax * 0.35;
+        if (val > maxPeak) maxPeak = val;
+        rawPeaks.push(val);
+      }
+      if (maxPeak < 0.002) return null;
+      var normOut = [];
+      for (var j = 0; j < rawPeaks.length; j++) {
+        var ratio = Math.min(1, rawPeaks[j] / maxPeak);
+        var bar = Math.round(14 + Math.pow(ratio, 0.72) * 84);
+        normOut.push(Math.max(12, Math.min(100, bar)));
+      }
+      return normOut;
+    } catch (e) {
+      return null;
+    } finally {
+      if (decodeCtx) {
+        try { decodeCtx.close(); } catch (ce) {}
+      }
+    }
+  }
+
+  function hasDynamicWaveform(samples) {
+    if (!samples || samples.length < 4) return false;
+    var lo = 100;
+    var hi = 0;
+    for (var i = 0; i < samples.length; i++) {
+      var v = Number(samples[i]) || 0;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return hi >= 18 && (hi - lo) >= 6;
   }
 
   function cleanupVoiceHardware() {
@@ -3120,6 +3209,10 @@ export function messagesPage(
         voiceMediaStream.getTracks().forEach(function(tr) { tr.stop(); });
       } catch (e) {}
       voiceMediaStream = null;
+    }
+    if (voiceSilentGain) {
+      try { voiceSilentGain.disconnect(); } catch (ge) {}
+      voiceSilentGain = null;
     }
     if (voiceAudioCtx) {
       try { voiceAudioCtx.close(); } catch (e2) {}
@@ -3161,21 +3254,31 @@ export function messagesPage(
 
   function pumpVoiceMeter() {
     if (!voiceRecording || !voiceAnalyser) return;
+    if (voiceAudioCtx && voiceAudioCtx.state === 'suspended' && typeof voiceAudioCtx.resume === 'function') {
+      try { voiceAudioCtx.resume().catch(function() {}); } catch (re) {}
+    }
     var buf = new Uint8Array(voiceAnalyser.fftSize);
     voiceAnalyser.getByteTimeDomainData(buf);
     var sumSq = 0;
+    var maxAbs = 0;
     for (var i = 0; i < buf.length; i++) {
       var norm = (buf[i] - 128) / 128;
+      var absV = Math.abs(norm);
+      if (absV > maxAbs) maxAbs = absV;
       sumSq += norm * norm;
     }
     var rms = Math.sqrt(sumSq / buf.length);
-    var level = Math.max(8, Math.min(100, Math.round(Math.pow(Math.min(1, rms * 4.2), 0.72) * 100)));
+    var energy = Math.max(rms * 5.2, maxAbs * 1.45);
+    var level = Math.max(8, Math.min(100, Math.round(Math.pow(Math.min(1, energy), 0.7) * 100)));
+    if (level > voiceFramePeak) voiceFramePeak = level;
     var now = Date.now();
     if (now - voiceLastSampleAt >= 48) {
       voiceLastSampleAt = now;
-      voicePeakSamples.push(level);
+      var sampleLevel = voiceFramePeak || level;
+      voiceFramePeak = 0;
+      voicePeakSamples.push(sampleLevel);
       voiceLiveLevels.shift();
-      voiceLiveLevels.push(level);
+      voiceLiveLevels.push(sampleLevel);
       for (var j = 0; j < voiceLiveBarEls.length; j++) {
         var px = Math.max(4, Math.round((voiceLiveLevels[j] / 100) * 24));
         voiceLiveBarEls[j].style.height = px + 'px';
@@ -3299,12 +3402,18 @@ export function messagesPage(
       if (window.showAppToast) window.showAppToast(state.voiceHoldHint);
       return;
     }
-    rec.onstop = function() {
+    rec.onstop = async function() {
       var chunks = voiceChunks.slice();
       voiceChunks = [];
       var finalMime = (rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm');
       var blob = new Blob(chunks, { type: finalMime });
-      var waveform = downsampleVoiceWaveform(samplesCopy, VOICE_WAVEFORM_BARS);
+      var waveform = null;
+      if (!hasDynamicWaveform(samplesCopy)) {
+        waveform = await extractWaveformFromBlob(blob, VOICE_WAVEFORM_BARS);
+      }
+      if (!waveform) {
+        waveform = downsampleVoiceWaveform(samplesCopy, VOICE_WAVEFORM_BARS);
+      }
       sendVoiceMessage(blob, elapsedMs, waveform);
     };
     try {
@@ -3373,6 +3482,18 @@ export function messagesPage(
     voiceChunks = [];
     voicePeakSamples = [];
     voiceLastSampleAt = 0;
+    voiceFramePeak = 0;
+
+    var preAudioCtx = null;
+    try {
+      var PreAudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (PreAudioCtx) {
+        preAudioCtx = new PreAudioCtx();
+        if (preAudioCtx.state === 'suspended' && typeof preAudioCtx.resume === 'function') {
+          preAudioCtx.resume().catch(function() {});
+        }
+      }
+    } catch (pe) {}
 
     var stream;
     try {
@@ -3386,6 +3507,7 @@ export function messagesPage(
         }
       });
     } catch (err) {
+      if (preAudioCtx) { try { preAudioCtx.close(); } catch (ce) {} }
       voiceStarting = false;
       voicePointerHeld = false;
       var errName = err && err.name ? String(err.name) : '';
@@ -3398,6 +3520,7 @@ export function messagesPage(
     }
 
     if (!voicePointerHeld) {
+      if (preAudioCtx) { try { preAudioCtx.close(); } catch (ce2) {} }
       try { stream.getTracks().forEach(function(tr) { tr.stop(); }); } catch (e) {}
       voiceStarting = false;
       if (window.showAppToast) window.showAppToast(state.voiceHoldHint);
@@ -3414,6 +3537,7 @@ export function messagesPage(
       try {
         voiceRecorder = new MediaRecorder(stream);
       } catch (e3) {
+        if (preAudioCtx) { try { preAudioCtx.close(); } catch (ce3) {} }
         cleanupVoiceHardware();
         resetVoiceUi();
         if (window.showAppToast) window.showAppToast(state.voiceUnsupported);
@@ -3427,13 +3551,22 @@ export function messagesPage(
 
     try {
       var AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        voiceAudioCtx = new AudioCtx();
+      voiceAudioCtx = preAudioCtx || (AudioCtx ? new AudioCtx() : null);
+      if (voiceAudioCtx) {
+        if (voiceAudioCtx.state === 'suspended' && typeof voiceAudioCtx.resume === 'function') {
+          voiceAudioCtx.resume().catch(function() {});
+        }
         var src = voiceAudioCtx.createMediaStreamSource(stream);
         voiceAnalyser = voiceAudioCtx.createAnalyser();
         voiceAnalyser.fftSize = 256;
-        voiceAnalyser.smoothingTimeConstant = 0.5;
+        voiceAnalyser.smoothingTimeConstant = 0.45;
         src.connect(voiceAnalyser);
+        if (typeof voiceAudioCtx.createGain === 'function' && voiceAudioCtx.destination) {
+          voiceSilentGain = voiceAudioCtx.createGain();
+          voiceSilentGain.gain.value = 0;
+          voiceAnalyser.connect(voiceSilentGain);
+          voiceSilentGain.connect(voiceAudioCtx.destination);
+        }
       }
     } catch (e4) {}
 
@@ -3884,11 +4017,40 @@ export function messagesPage(
       }
     }
 
+    var QUICK_HEART_EMOJI = '${ALLOWED_DM_REACTIONS[0]}';
+    var lastTapMsgId = 0;
+    var lastTapAt = 0;
+    var lastTapX = 0;
+    var lastTapY = 0;
+    var activeTapMsgId = 0;
+    var activeTapRow = null;
+    var activeTapMoved = false;
+    var lastDoubleTapReactAt = 0;
+
+    function isInteractiveMsgTarget(target) {
+      if (!target || typeof target.closest !== 'function') return false;
+      return Boolean(target.closest('a, button, .dm-reaction-pill, .dm-mention-link, .dm-timecode-btn, .dm-lp-video-trigger, .dm-reply-quote, .dm-voice-play-btn, .dm-voice-wave, .dm-shared-post-card, .dm-msg-img-btn, .dm-load-older-btn'));
+    }
+
+    function triggerQuickHeartReaction(row) {
+      if (!row) return;
+      var msgId = parseInt(row.getAttribute('data-msg-id') || '0', 10);
+      if (!msgId) return;
+      closeReactionPicker();
+      if (navigator.vibrate) {
+        try { navigator.vibrate(12); } catch (ve) {}
+      }
+      toggleMessageReaction(msgId, QUICK_HEART_EMOJI);
+    }
+
     function handleMsgTouchStart(e) {
       if (e.__dmSwipeHandled) return;
       e.__dmSwipeHandled = true;
       if (!e.touches || e.touches.length !== 1) {
         clearMsgLongPressTimer();
+        activeTapMsgId = 0;
+        activeTapRow = null;
+        activeTapMoved = false;
         return;
       }
       if (e.target && e.target.closest && e.target.closest('.dm-reaction-pill, .dm-mention-link, .dm-reply-quote, .dm-load-older-btn')) return;
@@ -3900,6 +4062,16 @@ export function messagesPage(
       msgLongPressDidFire = false;
       msgLongPressStartX = t0.clientX;
       msgLongPressStartY = t0.clientY;
+      var pickerWasOpen = Boolean(reactionPicker && reactionPicker.classList.contains('visible'));
+      if (!pickerWasOpen && !isInteractiveMsgTarget(e.target)) {
+        activeTapMsgId = parseInt(row.getAttribute('data-msg-id') || '0', 10) || 0;
+        activeTapRow = activeTapMsgId ? row : null;
+        activeTapMoved = false;
+      } else {
+        activeTapMsgId = 0;
+        activeTapRow = null;
+        activeTapMoved = false;
+      }
       resetSwipeReply(false);
       var isCoarseMobile = (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth || 0) <= 900;
       var onVoiceWave = Boolean(e.target && e.target.closest && e.target.closest('.dm-voice-wave'));
@@ -3932,6 +4104,9 @@ export function messagesPage(
       e.__dmSwipeHandled = true;
       if (!e.touches || !e.touches.length) return;
       var t0 = e.touches[0];
+      if (Math.abs(t0.clientX - msgLongPressStartX) > 12 || Math.abs(t0.clientY - msgLongPressStartY) > 12) {
+        activeTapMoved = true;
+      }
       if (msgLongPressTimer && (Math.abs(t0.clientX - msgLongPressStartX) > 10 || Math.abs(t0.clientY - msgLongPressStartY) > 10)) {
         clearMsgLongPressTimer();
       }
@@ -3978,21 +4153,70 @@ export function messagesPage(
     function handleMsgTouchEnd(e) {
       if (e.__dmSwipeHandled) return;
       e.__dmSwipeHandled = true;
+      var wasSwipe = Boolean(swipeLocked || swipeTriggered);
+      var wasLongPress = Boolean(msgLongPressDidFire);
+      var tapId = activeTapMsgId;
+      var tapRow = activeTapRow;
+      var tapMoved = activeTapMoved;
+      activeTapMsgId = 0;
+      activeTapRow = null;
+      activeTapMoved = false;
       clearMsgLongPressTimer();
       resetSwipeReply(true);
-      if (msgLongPressDidFire) {
+      if (wasLongPress) {
         suppressNextMsgClickUntil = Date.now() + 500;
         msgLongPressDidFire = false;
+        lastTapMsgId = 0;
+        lastTapAt = 0;
+        return;
+      }
+      if (!wasSwipe && !tapMoved && tapId > 0 && tapRow) {
+        var nowTap = Date.now();
+        if (lastTapMsgId === tapId && (nowTap - lastTapAt) <= 320 && Math.abs(msgLongPressStartX - lastTapX) <= 36 && Math.abs(msgLongPressStartY - lastTapY) <= 36) {
+          lastTapMsgId = 0;
+          lastTapAt = 0;
+          lastDoubleTapReactAt = nowTap;
+          suppressNextMsgClickUntil = nowTap + 400;
+          triggerQuickHeartReaction(tapRow);
+        } else {
+          lastTapMsgId = tapId;
+          lastTapAt = nowTap;
+          lastTapX = msgLongPressStartX;
+          lastTapY = msgLongPressStartY;
+        }
+      } else {
+        lastTapMsgId = 0;
+        lastTapAt = 0;
       }
     }
 
     function handleMsgTouchCancel(e) {
       if (e.__dmSwipeHandled) return;
       e.__dmSwipeHandled = true;
+      activeTapMsgId = 0;
+      activeTapRow = null;
+      activeTapMoved = false;
+      lastTapMsgId = 0;
+      lastTapAt = 0;
       clearMsgLongPressTimer();
       resetSwipeReply(false);
       msgLongPressDidFire = false;
     }
+
+    listEl.addEventListener('dblclick', function(e) {
+      if (Date.now() < suppressNextMsgClickUntil || (Date.now() - lastDoubleTapReactAt) < 600) return;
+      if (isInteractiveMsgTarget(e.target)) return;
+      var row = e.target && e.target.closest ? e.target.closest('.dm-msg-row[data-msg-id]') : null;
+      if (!row) return;
+      e.preventDefault();
+      if (window.getSelection) {
+        try {
+          var sel = window.getSelection();
+          if (sel && typeof sel.removeAllRanges === 'function') sel.removeAllRanges();
+        } catch (se) {}
+      }
+      triggerQuickHeartReaction(row);
+    });
 
     listEl.addEventListener('touchstart', handleMsgTouchStart, { passive: true });
     listEl.addEventListener('touchmove', handleMsgTouchMove, { passive: false });
@@ -5126,6 +5350,10 @@ export function messagesPage(
         if (d && typeof d.unread_total === 'number' && window.updateUnreadMessagesBadge) {
           window.updateUnreadMessagesBadge(d.unread_total);
         }
+        if (d && typeof d.last_read_own_id === 'number' && convId === Number(state.activeConversationId) && d.last_read_own_id > state.lastReadOwnId) {
+          state.lastReadOwnId = d.last_read_own_id;
+          updateSeenUI();
+        }
       })
       .catch(function() {});
   }
@@ -5168,6 +5396,8 @@ export function messagesPage(
         if (readConvId === Number(state.activeConversationId) && nextRead > state.lastReadOwnId) {
           state.lastReadOwnId = nextRead;
           updateSeenUI();
+        } else if (readConvId > 0 && threadFragCache[readConvId] && nextRead > Number(threadFragCache[readConvId].lastReadOwnId || 0)) {
+          threadFragCache[readConvId].lastReadOwnId = nextRead;
         }
         if (convListEl && readConvId > 0 && nextRead > 0) {
           var rConvItem = convListEl.querySelector('.dm-conv-item[data-conv-id="' + readConvId + '"]');

@@ -144,11 +144,17 @@ export function createPostgresClient(databaseUrl: string): PostgresDb {
         return { results };
       },
       async run(): Promise<{ meta: { changes: number; last_row_id?: number } }> {
-        const rows = await execute(rawSql, params);
-        const lastId = rows && rows[0] && rows[0].id ? Number(rows[0].id) : undefined;
+        const pgSql = toPostgresSql(rawSql);
+        const full = (await sql.query(pgSql, params, { fullResults: true })) as {
+          rows?: any[];
+          rowCount?: number | null;
+        };
+        const rows = Array.isArray(full?.rows) ? full.rows : [];
+        const lastId = rows[0] && rows[0].id ? Number(rows[0].id) : undefined;
+        const changes = typeof full?.rowCount === 'number' ? full.rowCount : rows.length;
         return {
           meta: {
-            changes: rows ? rows.length : 0,
+            changes,
             last_row_id: lastId
           }
         };
