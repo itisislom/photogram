@@ -1036,9 +1036,9 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
   const [allowed, senderDevRow, existingConv] = await Promise.all([
     consumeRateLimitAtomic(env, `dm:send:user:${user.id}`, SEND_LIMIT_PER_MIN, 60),
     senderDeviceId > 0
-      ? env.DB.prepare('SELECT id FROM e2ee_devices WHERE user_id = ? AND device_id = ?')
+      ? env.DB.prepare('SELECT id, approval_status FROM e2ee_devices WHERE user_id = ? AND device_id = ?')
           .bind(user.id, senderDeviceId)
-          .first<{ id: number }>()
+          .first<{ id: number; approval_status?: string }>()
       : Promise.resolve(null),
     convId > 0 ? getConversationForUser(env, convId, user.id) : Promise.resolve(null),
   ]);
@@ -1049,6 +1049,9 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
 
   if (!senderDeviceId || !senderDevRow) {
     return jsonError(t.messages.e2eeRequired, 400);
+  }
+  if (senderDevRow.approval_status && senderDevRow.approval_status !== 'approved') {
+    return jsonResponse({ error: t.security.devicePendingBanner, code: 'DEVICE_PENDING' }, 403);
   }
 
   let resolvedConvId = 0;
@@ -1077,10 +1080,10 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
   }
 
   const [partnerDevRows, selfDevRows] = await Promise.all([
-    env.DB.prepare('SELECT device_id FROM e2ee_devices WHERE user_id = ?')
+    env.DB.prepare("SELECT device_id FROM e2ee_devices WHERE user_id = ? AND approval_status = 'approved'")
       .bind(recipientUserId)
       .all<{ device_id: number }>(),
-    env.DB.prepare('SELECT device_id FROM e2ee_devices WHERE user_id = ?')
+    env.DB.prepare("SELECT device_id FROM e2ee_devices WHERE user_id = ? AND approval_status = 'approved'")
       .bind(user.id)
       .all<{ device_id: number }>(),
   ]);
@@ -1949,12 +1952,15 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
   }
 
   const senderDevRow = await env.DB.prepare(
-    'SELECT id FROM e2ee_devices WHERE user_id = ? AND device_id = ?',
+    'SELECT id, approval_status FROM e2ee_devices WHERE user_id = ? AND device_id = ?',
   )
     .bind(user.id, senderDeviceId)
-    .first<{ id: number }>();
+    .first<{ id: number; approval_status?: string }>();
   if (!senderDevRow) {
     return jsonError(t.messages.e2eeRequired, 400);
+  }
+  if (senderDevRow.approval_status && senderDevRow.approval_status !== 'approved') {
+    return jsonResponse({ error: t.security.devicePendingBanner, code: 'DEVICE_PENDING' }, 403);
   }
 
   const recipientUserId = Number(msg.user1_id) === Number(user.id) ? Number(msg.user2_id) : Number(msg.user1_id);
@@ -1965,10 +1971,10 @@ export async function handleEditMessage(request: Request, env: Env, ctx?: Execut
   }
 
   const [partnerDevRows, selfDevRows] = await Promise.all([
-    env.DB.prepare('SELECT device_id FROM e2ee_devices WHERE user_id = ?')
+    env.DB.prepare("SELECT device_id FROM e2ee_devices WHERE user_id = ? AND approval_status = 'approved'")
       .bind(recipientUserId)
       .all<{ device_id: number }>(),
-    env.DB.prepare('SELECT device_id FROM e2ee_devices WHERE user_id = ?')
+    env.DB.prepare("SELECT device_id FROM e2ee_devices WHERE user_id = ? AND approval_status = 'approved'")
       .bind(user.id)
       .all<{ device_id: number }>(),
   ]);

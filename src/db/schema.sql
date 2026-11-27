@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_device_id    INTEGER NOT NULL DEFAULT 0,
     ciphertext_envelope TEXT    NOT NULL DEFAULT '',
     read_at             TEXT,
+    listened_at         TEXT,
     deleted_at          TEXT,
     deleted_for_user1   INTEGER NOT NULL DEFAULT 0,
     deleted_for_user2   INTEGER NOT NULL DEFAULT 0,

@@ -10,6 +10,7 @@
     "build:realtime": "esbuild workers/realtime/src/index.ts --bundle --format=esm --target=es2022 --outfile=workers/realtime/dist/index.js",
     "build:pages": "esbuild src/client/e2ee.ts --bundle --format=iife --target=es2020 --minify \"--banner:js=/* Photogram E2EE Client (GPL-3.0-only) | Source & License: https://github.com/itisislom/photogram/blob/main/src/client/LICENSE-GPL-3.0.txt | Includes qrcode-generator (MIT, Copyright (c) 2016 Kazuhiko Arase) */\" --outfile=dist/e2ee.js && esbuild src/index.ts --bundle --format=esm --target=es2022 --outfile=dist/_worker.js && node -e \"const fs = require('fs'); ['icon.svg', 'icon.jpg', 'public/manifest.webmanifest', 'public/sw.js', 'public/_headers'].forEach(f => fs.copyFileSync(f, 'dist/' + f.split(/[/\\\\]/).pop()));\"",
     "deploy:pages": "npm run build:pages && wrangler pages deploy dist --project-name=photogramapp",
+    "test": "node tests/e2ee.test.mjs",
     "db:local": "wrangler d1 execute photogram-db --local --file=src/db/schema.sql",
     "db:remote": "wrangler d1 execute photogram-db --remote --file=src/db/schema.sql"
   },

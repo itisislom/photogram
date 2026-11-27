@@ -495,5 +495,8 @@ export const en: Translations = {
     safetyKeyChangedWarning: 'This contact’s device or chat protection changed. Check the code before continuing.',
     safetyVerifyBtn: 'Check code',
     e2eeSessionRecoveredNote: 'This message could not be decrypted. Protection has been restored for new messages.',
+    e2eeNotForThisDevice: 'Sent before this device was connected and unavailable without a backup.',
+    e2eeSentFromOtherDevice: 'Sent from another device before this device was connected.',
+    e2eeKeyChangedInline: 'Chat protection changed — confirm the update above.',
   },
 };

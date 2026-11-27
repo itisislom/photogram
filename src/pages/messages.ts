@@ -1702,7 +1702,24 @@ export function messagesPage(
   function showKeyChangedBanner(kc) {
     pendingKeyChange = kc;
     var secLabel = (state.secI18n && state.secI18n.safetyVerifyBtn) ? state.secI18n.safetyVerifyBtn : '';
-    showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey, secLabel, 'key_changed');
+    var primaryLabel = (kc && kc.rollbackDetected) ? '' : state.e2eeAcceptNewKey;
+    showBanner(state.e2eeKeyChanged, true, primaryLabel, secLabel, 'key_changed');
+  }
+
+  function getDecryptFailText(reason) {
+    if (reason === 'NOT_FOR_THIS_DEVICE' && state.secI18n && state.secI18n.e2eeNotForThisDevice) {
+      return state.secI18n.e2eeNotForThisDevice;
+    }
+    if (reason === 'SENT_FROM_OTHER_DEVICE' && state.secI18n && state.secI18n.e2eeSentFromOtherDevice) {
+      return state.secI18n.e2eeSentFromOtherDevice;
+    }
+    if (reason === 'KEY_CHANGED' && state.secI18n && state.secI18n.e2eeKeyChangedInline) {
+      return state.secI18n.e2eeKeyChangedInline;
+    }
+    if (reason === 'SESSION_RECOVERED_PRE_RESET' && state.secI18n && state.secI18n.e2eeSessionRecoveredNote) {
+      return state.secI18n.e2eeSessionRecoveredNote;
+    }
+    return state.e2eeDecryptFailed;
   }
 
   function showPendingDeviceBanner(code) {
@@ -2339,7 +2356,7 @@ export function messagesPage(
     bubble.appendChild(timeEl);
   }
 
-  function buildMessageRowEl(m, decryptedPayload, localMediaUrl) {
+  function buildMessageRowEl(m, decryptedPayload, localMediaUrl, decReason) {
     var isMine = Number(m.sender_id) === Number(state.currentUserId);
     var row = document.createElement('div');
     row.className = 'dm-msg-row ' + (isMine ? 'mine' : 'theirs');
@@ -2375,7 +2392,7 @@ export function messagesPage(
       } else {
         var err = document.createElement('div');
         err.className = 'dm-msg-text dm-msg-decrypt-err';
-        err.textContent = state.e2eeDecryptFailed;
+        err.textContent = getDecryptFailText(decReason);
         bubble.appendChild(err);
         bubble.appendChild(timeEl);
       }
@@ -2455,12 +2472,12 @@ export function messagesPage(
     }
   }
 
-  function appendMessageIfNew(m, shouldScroll, decryptedPayload, localMediaUrl) {
+  function appendMessageIfNew(m, shouldScroll, decryptedPayload, localMediaUrl, decReason) {
     if (!listEl || !m || !m.id) return;
     if (listEl.querySelector('.dm-msg-row[data-msg-id="' + m.id + '"]')) return;
     var emptyPlaceholder = document.getElementById('dmNoMsgs');
     if (emptyPlaceholder) emptyPlaceholder.remove();
-    listEl.appendChild(buildMessageRowEl(m, decryptedPayload, localMediaUrl));
+    listEl.appendChild(buildMessageRowEl(m, decryptedPayload, localMediaUrl, decReason));
     if (Number(m.id) > state.lastMsgId) state.lastMsgId = Number(m.id);
     if (!state.oldestMsgId || Number(m.id) < state.oldestMsgId) state.oldestMsgId = Number(m.id);
     syncDateSeparators();
@@ -2671,9 +2688,7 @@ export function messagesPage(
           }
           var slot = bubble.querySelector('[data-enc-slot="1"]');
           if (slot) {
-            slot.textContent = (res && res.reason === 'SESSION_RECOVERED_PRE_RESET' && state.secI18n)
-              ? state.secI18n.e2eeSessionRecoveredNote
-              : state.e2eeDecryptFailed;
+            slot.textContent = getDecryptFailText(res && res.reason);
           }
         }
       }
@@ -2970,7 +2985,7 @@ export function messagesPage(
           ? kc.devices
           : [{ userId: kc.userId, deviceId: kc.deviceId, identityKey: kc.identityKey || '' }];
         if (typeof c.acceptKeyChanges === 'function') {
-          await c.acceptKeyChanges(items, kc.userId || state.activePartnerId, kc.nextListVersion || 0);
+          await c.acceptKeyChanges(items, kc.userId || state.activePartnerId, kc.nextListVersion || 0, Boolean(kc.rollbackDetected));
         } else {
           for (var ki = 0; ki < items.length; ki++) {
             await c.acceptKeyChange(items[ki].userId, items[ki].deviceId, items[ki].identityKey || '');
@@ -3247,6 +3262,7 @@ export function messagesPage(
                 identityKey: encEditErr.identityKey,
                 devices: encEditErr.changes || encEditErr.devices,
                 nextListVersion: encEditErr.nextListVersion || 0,
+                rollbackDetected: Boolean(encEditErr.rollbackDetected),
                 retryAction: 'send'
               });
               return;
@@ -3388,6 +3404,7 @@ export function messagesPage(
               identityKey: encErr.identityKey,
               devices: encErr.changes || encErr.devices,
               nextListVersion: encErr.nextListVersion || 0,
+              rollbackDetected: Boolean(encErr.rollbackDetected),
               retryAction: 'send'
             });
             return;
@@ -3769,7 +3786,8 @@ export function messagesPage(
             deviceId: encErr.deviceId,
             identityKey: encErr.identityKey,
             devices: encErr.changes || encErr.devices,
-            nextListVersion: encErr.nextListVersion || 0
+            nextListVersion: encErr.nextListVersion || 0,
+            rollbackDetected: Boolean(encErr.rollbackDetected)
           });
           return;
         }
@@ -4141,20 +4159,24 @@ export function messagesPage(
             var m = data.messages[i];
             if (listEl.querySelector('.dm-msg-row[data-msg-id="' + m.id + '"]')) continue;
             var dec = null;
+            var decReason = '';
             if (m.is_encrypted && c) {
               var rDec = await c.decryptMessage(m);
               if (rDec.ok && rDec.payload) {
                 dec = rDec.payload;
-              } else if (rDec && rDec.reason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
-                pendingKeyChange = {
-                  userId: rDec.userId,
-                  deviceId: rDec.deviceId,
-                  identityKey: rDec.identityKey || ''
-                };
-                showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              } else {
+                decReason = (rDec && rDec.reason) || '';
+                if (decReason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+                  showKeyChangedBanner({
+                    userId: rDec.userId,
+                    deviceId: rDec.deviceId,
+                    identityKey: rDec.identityKey || '',
+                    retryAction: 'decrypt'
+                  });
+                }
               }
             }
-            frag.appendChild(buildMessageRowEl(m, dec, ''));
+            frag.appendChild(buildMessageRowEl(m, dec, '', decReason));
           }
           listEl.insertBefore(frag, listEl.firstChild);
           if (data.messages.length > 0) {
@@ -5438,20 +5460,24 @@ export function messagesPage(
           for (var i = 0; i < d.messages.length; i++) {
             var m = d.messages[i];
             var dec = null;
+            var decReason = '';
             if (m.is_encrypted && c) {
               var rDec = await c.decryptMessage(m);
               if (rDec.ok && rDec.payload) {
                 dec = rDec.payload;
-              } else if (rDec && rDec.reason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
-                pendingKeyChange = {
-                  userId: rDec.userId,
-                  deviceId: rDec.deviceId,
-                  identityKey: rDec.identityKey || ''
-                };
-                showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+              } else {
+                decReason = (rDec && rDec.reason) || '';
+                if (decReason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+                  showKeyChangedBanner({
+                    userId: rDec.userId,
+                    deviceId: rDec.deviceId,
+                    identityKey: rDec.identityKey || '',
+                    retryAction: 'decrypt'
+                  });
+                }
               }
             }
-            appendMessageIfNew(m, nearBottom, dec, '');
+            appendMessageIfNew(m, nearBottom, dec, '', decReason);
             updateSidebarPreview(
               state.activeConversationId,
               m.sender_id,
@@ -6074,20 +6100,23 @@ export function messagesPage(
       var isForActive = mConvId > 0 && mConvId === Number(state.activeConversationId);
       var isMine = Number(m.sender_id) === Number(state.currentUserId);
       var dec = null;
+      var decReason = '';
       if (m.is_encrypted) {
         var cNew = await ensureE2eeReady();
         if (cNew) {
           var rDec = await cNew.decryptMessage(m);
           if (rDec.ok && rDec.payload) {
             dec = rDec.payload;
-          } else if (rDec && rDec.reason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
-            pendingKeyChange = {
-              userId: rDec.userId,
-              deviceId: rDec.deviceId,
-              identityKey: rDec.identityKey || '',
-              retryAction: 'decrypt'
-            };
-            showBanner(state.e2eeKeyChanged, true, state.e2eeAcceptNewKey);
+          } else {
+            decReason = (rDec && rDec.reason) || '';
+            if (decReason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+              showKeyChangedBanner({
+                userId: rDec.userId,
+                deviceId: rDec.deviceId,
+                identityKey: rDec.identityKey || '',
+                retryAction: 'decrypt'
+              });
+            }
           }
         }
       }
@@ -6095,7 +6124,7 @@ export function messagesPage(
       if (isForActive) {
         if (!isMine) clearPartnerTyping();
         var nearBottom = !scrollEl || (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 140);
-        appendMessageIfNew(m, nearBottom, dec, '');
+        appendMessageIfNew(m, nearBottom, dec, '', decReason);
         if (!isMine && document.visibilityState === 'visible') {
           markActiveChatReadAsync(mConvId);
         }
@@ -6414,6 +6443,7 @@ export function messagesPage(
         if (mId > maxId) maxId = mId;
         if (mId > 0 && (minId === 0 || mId < minId)) minId = mId;
         var decPayload = null;
+        var decReason = '';
         if (m.is_encrypted && c) {
           var mVer = Math.max(0, Number(m.edit_version || 0));
           var hit = cachedMap.get(mId);
@@ -6424,10 +6454,20 @@ export function messagesPage(
             if (mySeq !== dmSwitchSeq) return false;
             if (decRes && decRes.ok && decRes.payload) {
               decPayload = decRes.payload;
+            } else {
+              decReason = (decRes && decRes.reason) || '';
+              if (decReason === 'KEY_CHANGED' && decRes.userId && decRes.deviceId) {
+                showKeyChangedBanner({
+                  userId: decRes.userId,
+                  deviceId: decRes.deviceId,
+                  identityKey: decRes.identityKey || '',
+                  retryAction: 'decrypt'
+                });
+              }
             }
           }
         }
-        frag.appendChild(buildMessageRowEl(m, decPayload, ''));
+        frag.appendChild(buildMessageRowEl(m, decPayload, '', decReason));
       }
 
       if (mySeq !== dmSwitchSeq) return false;

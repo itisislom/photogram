@@ -495,5 +495,8 @@ export const uz: Translations = {
     safetyKeyChangedWarning: 'Suhbatdoshning qurilmasi yoki chat himoyasi o‘zgardi. Davom etishdan oldin kodni tekshiring.',
     safetyVerifyBtn: 'Kodni tekshirish',
     e2eeSessionRecoveredNote: 'Bu xabarni ochib bo‘lmadi. Keyingi xabarlar uchun himoya tiklandi.',
+    e2eeNotForThisDevice: 'Xabar ushbu qurilma ulanishidan oldin yuborilgan va zaxira nusxasiz ko‘rinmaydi.',
+    e2eeSentFromOtherDevice: 'Boshqa qurilmangizdan ushbu qurilma ulanishidan oldin yuborilgan.',
+    e2eeKeyChangedInline: 'Chat himoyasi o‘zgardi — yuqorida tasdiqlang.',
   },
 };

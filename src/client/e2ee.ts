@@ -431,6 +431,27 @@ export function buildDeviceListCanonicalMsg(
   return `pg-e2ee-devlist-v1|${userId}|${listVersion}|${isRecoveryReset ? 1 : 0}|${body}`;
 }
 
+export function buildUnregisterDeviceMsg(
+  userId: number,
+  deviceId: number,
+  timestamp: number,
+): string {
+  return `pg-e2ee-unreg-v1|${userId}|${deviceId}|${timestamp}`;
+}
+
+function concatKeyBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
+  let total = 0;
+  for (let i = 0; i < buffers.length; i++) total += buffers[i].byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (let i = 0; i < buffers.length; i++) {
+    const view = new Uint8Array(buffers[i]);
+    out.set(view, offset);
+    offset += view.byteLength;
+  }
+  return out.buffer;
+}
+
 export async function computeDeviceVerificationCode(
   userId: number,
   deviceId: number,
@@ -469,7 +490,11 @@ async function verifySignalEd25519(
 const localMutexChains = new Map<string, Promise<unknown>>();
 const tabLockOwner = `tab_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 
-async function acquireFallbackLease(lockName: string, fn: () => Promise<unknown>): Promise<unknown> {
+async function acquireFallbackLease(
+  lockName: string,
+  fn: () => Promise<unknown>,
+  timeoutMs: number = 12000,
+): Promise<unknown> {
   const ls = (
     globalThis as unknown as {
       localStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void };
@@ -480,7 +505,8 @@ async function acquireFallbackLease(lockName: string, fn: () => Promise<unknown>
   }
   const storageKey = `pg_e2ee_lock:${lockName}`;
   const leaseMs = 8000;
-  const deadline = Date.now() + 12000;
+  const effectiveTimeout = Math.max(50, Math.floor(Number(timeoutMs) || 12000));
+  const deadline = Date.now() + effectiveTimeout;
   const token = `${tabLockOwner}:${Math.random().toString(36).slice(2)}`;
   let acquired = false;
   while (Date.now() < deadline) {
@@ -507,21 +533,26 @@ async function acquireFallbackLease(lockName: string, fn: () => Promise<unknown>
     }
     await new Promise((r) => setTimeout(r, 15));
   }
+  if (!acquired) {
+    throw Object.assign(new Error('Failed to acquire crypto mutex'), { code: 'LOCK_TIMEOUT' });
+  }
   try {
     return await fn();
   } finally {
-    if (acquired) {
-      try {
-        const cur = ls.getItem(storageKey);
-        if (cur && cur.includes(token)) {
-          ls.removeItem(storageKey);
-        }
-      } catch {}
-    }
+    try {
+      const cur = ls.getItem(storageKey);
+      if (cur && cur.includes(token)) {
+        ls.removeItem(storageKey);
+      }
+    } catch {}
   }
 }
 
-export async function withCryptoLock<T>(lockName: string, fn: () => Promise<T>): Promise<T> {
+export async function withCryptoLock<T>(
+  lockName: string,
+  fn: () => Promise<T>,
+  opts?: { timeoutMs?: number },
+): Promise<T> {
   const navLocks = (
     globalThis as unknown as {
       navigator?: {
@@ -546,7 +577,7 @@ export async function withCryptoLock<T>(lockName: string, fn: () => Promise<T>):
 
   await prev;
   try {
-    return (await acquireFallbackLease(lockName, fn)) as T;
+    return (await acquireFallbackLease(lockName, fn, opts?.timeoutMs)) as T;
   } finally {
     release();
     if (localMutexChains.get(lockName) === chained) {
@@ -789,8 +820,11 @@ class SignalStore implements StorageType {
   }
 
   async setPinnedDeviceListVersion(partnerUserId: number, version: number): Promise<void> {
-    if (version > 0) {
-      await this.backend.put('meta', `pinned_list_ver_${partnerUserId}`, version);
+    const next = Math.floor(Number(version || 0));
+    if (!Number.isFinite(next) || next <= 0) return;
+    const cur = await this.getPinnedDeviceListVersion(partnerUserId);
+    if (next > cur) {
+      await this.backend.put('meta', `pinned_list_ver_${partnerUserId}`, next);
     }
   }
 
@@ -2229,8 +2263,7 @@ export class E2eeClient {
     }
 
     const senderId = Number(msg.sender_id || 0);
-    const senderDeviceId = Number(msg.sender_device_id || 0);
-    const crossTabLock = `pg_e2ee_u_${this.userId}:sess:${senderId}:${senderDeviceId}`;
+    const crossTabLock = `pg_e2ee_u_${this.userId}:partner:${senderId}`;
 
     const work = withCryptoLock(crossTabLock, async () => {
       if (msgId > 0) {
@@ -2388,7 +2421,10 @@ export class E2eeClient {
       (i) => Number(i.u) === Number(this.userId) && Number(i.d) === Number(myDeviceId),
     );
     if (!target || !target.b) {
-      return { ok: false, reason: 'NOT_FOR_THIS_DEVICE' };
+      return {
+        ok: false,
+        reason: senderId === Number(this.userId) ? 'SENT_FROM_OTHER_DEVICE' : 'NOT_FOR_THIS_DEVICE',
+      };
     }
 
     try {
@@ -2587,7 +2623,7 @@ export class E2eeClient {
     const localKp = await this.store.getIdentityKeyPair();
     if (!localKp) throw new Error('Missing local identity key');
 
-    const res = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${partnerUserId}`, {
+    const res = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${partnerUserId}&include_self=1`, {
       credentials: 'same-origin',
       cache: 'no-store',
     });
@@ -2595,29 +2631,60 @@ export class E2eeClient {
     const data = (await res.json()) as {
       devices?: RemoteIdentityDevice[];
       device_list?: ServerDeviceList | null;
+      self_devices?: RemoteIdentityDevice[];
+      self_device_list?: ServerDeviceList | null;
     };
     const devs = data.devices || [];
     if (devs.length === 0) {
       throw Object.assign(new Error('Partner has no E2EE keys'), { code: 'PARTNER_NOT_READY' });
     }
 
-    const primary = devs.find((d) => d.is_primary) || [...devs].sort((a, b) => a.device_id - b.device_id)[0];
+    const sortedPartnerDevs = [...devs].sort((a, b) => Number(a.device_id) - Number(b.device_id));
+    const primary = devs.find((d) => d.is_primary) || sortedPartnerDevs[0];
     const trustCheck = await this.verifyRemoteDeviceTrust(partnerUserId, devs, data.device_list, 0);
     const keyChanged = trustCheck.changes.length > 0;
     const hasLegacyDevices = devs.some((d) => !d.trust_origin || d.trust_origin === 'legacy');
 
-    const pinnedPrimary = await this.store.getTrustedIdentityB64(
-      makeDeviceAddress(partnerUserId, Number(primary.device_id)).getName(),
-    );
-    const effectiveRemoteKey = pinnedPrimary || primary.identity_key_pub;
-    const remoteBuf = base64ToArrayBuffer(effectiveRemoteKey);
+    const remoteKeyBufs: ArrayBuffer[] = [];
+    const seenPartnerIds = new Set<number>();
+    let effectivePrimaryKey = primary.identity_key_pub;
+    for (const d of sortedPartnerDevs) {
+      const devId = Number(d.device_id);
+      if (seenPartnerIds.has(devId)) continue;
+      seenPartnerIds.add(devId);
+      const pinned = await this.store.getTrustedIdentityB64(
+        makeDeviceAddress(partnerUserId, devId).getName(),
+      );
+      const effectiveKey = pinned || d.identity_key_pub;
+      if (devId === Number(primary.device_id)) {
+        effectivePrimaryKey = effectiveKey;
+      }
+      remoteKeyBufs.push(base64ToArrayBuffer(effectiveKey));
+    }
+
+    const selfDevs = Array.isArray(data.self_devices) ? data.self_devices : [];
+    const sortedSelfDevs = [...selfDevs].sort((a, b) => Number(a.device_id) - Number(b.device_id));
+    const localKeyBufs: ArrayBuffer[] = [];
+    const seenSelfIds = new Set<number>();
+    for (const sd of sortedSelfDevs) {
+      const devId = Number(sd.device_id);
+      if (seenSelfIds.has(devId)) continue;
+      seenSelfIds.add(devId);
+      localKeyBufs.push(base64ToArrayBuffer(sd.identity_key_pub));
+    }
+    if (localKeyBufs.length === 0) {
+      localKeyBufs.push(localKp.pubKey);
+    }
+
+    const localCanonicalBuf = concatKeyBuffers(localKeyBufs);
+    const remoteCanonicalBuf = concatKeyBuffers(remoteKeyBufs);
 
     const fpGen = new FingerprintGenerator(5200);
     const fingerprint60 = await fpGen.createFor(
       String(this.userId),
-      localKp.pubKey,
+      localCanonicalBuf,
       String(partnerUserId),
-      remoteBuf,
+      remoteCanonicalBuf,
     );
     const groups: string[] = [];
     for (let i = 0; i < fingerprint60.length; i += 5) {
@@ -2652,7 +2719,7 @@ export class E2eeClient {
       qrSize,
       verified,
       partnerDeviceCount: devs.length,
-      partnerKeyPub: effectiveRemoteKey,
+      partnerKeyPub: effectivePrimaryKey,
       keyChanged,
       hasLegacyDevices,
     };
@@ -2699,61 +2766,145 @@ export class E2eeClient {
   }
 
   async acceptKeyChanges(
-    items: Array<{ userId: number; deviceId: number; identityKey: string }>,
+    items: Array<{ userId: number; deviceId: number; identityKey: string; reason?: string }>,
     partnerUserId?: number,
     nextListVersion?: number,
+    rollbackDetected?: boolean,
   ): Promise<void> {
     if (!Array.isArray(items)) return;
-    const affectedUsers = new Set<number>();
-    for (const item of items) {
-      if (!item || !item.userId || !item.deviceId) continue;
-      affectedUsers.add(Number(item.userId));
-      await this.acceptKeyChange(
-        Number(item.userId),
-        Number(item.deviceId),
-        String(item.identityKey || ''),
-      );
-    }
     const targetUid = partnerUserId || (items[0] ? Number(items[0].userId) : 0);
-    if (targetUid > 0 && nextListVersion && nextListVersion > 0) {
-      await this.store.setPinnedDeviceListVersion(targetUid, nextListVersion);
+    if (rollbackDetected || items.some((i) => i && i.reason === 'LIST_ROLLBACK')) {
+      throw Object.assign(new Error('Device list rollback cannot be accepted'), {
+        code: 'LIST_ROLLBACK_FORBIDDEN',
+      });
     }
-    if (targetUid > 0) {
-      try {
-        const res = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${targetUid}`, {
-          credentials: 'same-origin',
-          cache: 'no-store',
+    const lockName = targetUid > 0 ? `pg_e2ee_u_${this.userId}:partner:${targetUid}` : `pg_e2ee_u_${this.userId}:core`;
+    await withCryptoLock(lockName, async () => {
+      const curPinned = targetUid > 0 ? await this.store.getPinnedDeviceListVersion(targetUid) : 0;
+      if (curPinned > 0 && nextListVersion !== undefined && nextListVersion > 0 && nextListVersion < curPinned) {
+        throw Object.assign(new Error('Device list rollback cannot be accepted'), {
+          code: 'LIST_ROLLBACK_FORBIDDEN',
         });
-        if (res.ok) {
-          const data = (await res.json()) as {
-            devices?: RemoteIdentityDevice[];
-            device_list?: ServerDeviceList | null;
-          };
-          const liveIds = (data.devices || []).map((d) => Number(d.device_id));
-          await this.store.setKnownDevices(targetUid, liveIds);
-          if (data.device_list && Number(data.device_list.list_version) > 0) {
-            await this.store.setPinnedDeviceListVersion(targetUid, Number(data.device_list.list_version));
+      }
+
+      let liveData: { devices?: RemoteIdentityDevice[]; device_list?: ServerDeviceList | null } | null = null;
+      if (targetUid > 0) {
+        try {
+          const res = await this.fetchImpl(`/api/e2ee/keys/identities?user_id=${targetUid}`, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (res.ok) {
+            liveData = (await res.json()) as {
+              devices?: RemoteIdentityDevice[];
+              device_list?: ServerDeviceList | null;
+            };
           }
+        } catch {}
+      }
+
+      const liveVer = liveData && liveData.device_list ? Number(liveData.device_list.list_version || 0) : 0;
+      if (curPinned > 0 && liveData && liveVer < curPinned) {
+        throw Object.assign(new Error('Device list rollback cannot be accepted'), {
+          code: 'LIST_ROLLBACK_FORBIDDEN',
+        });
+      }
+
+      const affectedUsers = new Set<number>();
+      for (const item of items) {
+        if (!item || !item.userId || !item.deviceId) continue;
+        affectedUsers.add(Number(item.userId));
+        await this.acceptKeyChange(
+          Number(item.userId),
+          Number(item.deviceId),
+          String(item.identityKey || ''),
+        );
+      }
+      if (targetUid > 0) {
+        const bestVer = Math.max(Number(nextListVersion || 0), liveVer);
+        if (bestVer > 0) {
+          await this.store.setPinnedDeviceListVersion(targetUid, bestVer);
         }
-      } catch {}
-    }
-    affectedUsers.forEach((uid) => {
-      this.postSync({ type: 'key_accepted', userId: uid });
+        if (liveData) {
+          const liveIds = (liveData.devices || []).map((d) => Number(d.device_id));
+          await this.store.setKnownDevices(targetUid, liveIds);
+        }
+      }
+      affectedUsers.forEach((uid) => {
+        this.postSync({ type: 'key_accepted', userId: uid });
+      });
     });
   }
 
-  async unregisterDevice(): Promise<void> {
+  async unregisterDevice(): Promise<boolean> {
     try {
       const deviceId = await this.store.getDeviceId();
-      if (deviceId && deviceId > 0) {
-        await this.fetchImpl('/api/e2ee/keys/unregister', {
-          method: 'POST',
+      if (!deviceId || deviceId <= 0) return false;
+      const signingRec = await this.store.getDeviceSigningKey();
+      const identityKp = await this.store.getIdentityKeyPair();
+      if (!signingRec || !signingRec.privJwk || !identityKp) return false;
+
+      const timestamp = Date.now();
+      const unregMsg = buildUnregisterDeviceMsg(this.userId, deviceId, timestamp);
+      const signature = await this.signEcdsaP256(unregMsg);
+
+      const payload: Record<string, unknown> = {
+        device_id: deviceId,
+        timestamp,
+        signature,
+      };
+
+      try {
+        const devRes = await this.fetchImpl('/api/e2ee/devices', {
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: deviceId }),
+          cache: 'no-store',
         });
-      }
-    } catch {}
+        if (devRes.ok) {
+          const devData = (await devRes.json()) as {
+            devices?: Array<{
+              device_id: number;
+              identity_key_pub: string;
+              signing_key_pub?: string;
+              approval_status: string;
+            }>;
+            device_list?: ServerDeviceList | null;
+          };
+          const me = (devData.devices || []).find((d) => Number(d.device_id) === Number(deviceId));
+          const remaining: SignedDeviceListEntry[] = (devData.devices || [])
+            .filter((d) => d.approval_status === 'approved' && Number(d.device_id) !== Number(deviceId))
+            .map((d) => ({
+              device_id: Number(d.device_id),
+              identity_key_pub: d.identity_key_pub,
+              signing_key_pub: d.signing_key_pub || '',
+            }))
+            .sort((a, b) => a.device_id - b.device_id);
+          if (me && me.approval_status === 'approved' && remaining.length > 0) {
+            const nextVer = Number(devData.device_list?.list_version || 0) + 1;
+            const listMsg = buildDeviceListCanonicalMsg(this.userId, nextVer, false, remaining);
+            const [ecdsaSig, signalSig] = await Promise.all([
+              this.signEcdsaP256(listMsg),
+              signSignalEd25519(identityKp.privKey, listMsg),
+            ]);
+            payload.device_list = {
+              list_version: nextVer,
+              devices: remaining,
+              ecdsa_signature: ecdsaSig,
+              signal_signature: signalSig,
+            };
+          }
+        }
+      } catch {}
+
+      const res = await this.fetchImpl('/api/e2ee/keys/unregister', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return Boolean(res && res.ok);
+    } catch {
+      return false;
+    }
   }
 
   async clearCachedMessages(msgIds: number[]): Promise<void> {

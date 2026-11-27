@@ -33,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v18';
+export const APP_STYLE_VERSION = '20261127-v19';
 
 export function postMediaUrl(imageKey: string, variant?: 'thumb' | 'full'): string {
   const base = `/media/${encodeURIComponent(imageKey)}`;
@@ -1880,6 +1880,7 @@ ${script || ''}</script>
 
 <script>
 (function() {
+  var pgScriptNonce = (document.currentScript && document.currentScript.nonce) ? document.currentScript.nonce : '';
   var origDocAdd = document.addEventListener.bind(document);
   var origWinAdd = window.addEventListener.bind(window);
   var origFetch = window.fetch.bind(window);
@@ -2026,6 +2027,7 @@ ${script || ''}</script>
 
     try {
       var s = document.createElement('script');
+      if (pgScriptNonce) s.nonce = pgScriptNonce;
       s.setAttribute('data-page-script', 'true');
       s.textContent = code;
       var root = document.getElementById('appPageRoot');

@@ -114,7 +114,8 @@ function extractSpaFragmentHtml(fullHtml: string): string | null {
   const rootStart = fullHtml.indexOf('<div id="appPageRoot">');
   const shellMarker = '\n<div class="modal-backdrop app-alert-backdrop';
   const rootEnd = rootStart !== -1 ? fullHtml.indexOf(shellMarker, rootStart) : -1;
-  const scriptStart = fullHtml.indexOf('<script type="text/plain" id="appPageScript"');
+  const scriptMatch = /<script\b[^>]*\bid="appPageScript"[^>]*>/.exec(fullHtml);
+  const scriptStart = scriptMatch ? scriptMatch.index : -1;
   const scriptEnd = scriptStart !== -1 ? fullHtml.indexOf('</script>', scriptStart) : -1;
   if (
     titleStart === -1 ||
@@ -980,11 +981,22 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
     return new Response('Not Found', { status: 404 });
 }
 
+function generateCspNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
 function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Response {
   if (response.status === 101 || Boolean((response as Response & { webSocket?: unknown }).webSocket)) {
     return response;
   }
   const headers = new Headers(response.headers);
+  const cspNonce = headers.get('X-Pg-Csp-Nonce') || '';
+  if (cspNonce) headers.delete('X-Pg-Csp-Nonce');
+
   headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
@@ -996,9 +1008,10 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
   } else {
     const wsScheme = url && url.protocol === 'http:' ? 'ws:' : 'wss:';
     const wsOrigin = url ? ` ${wsScheme}//${url.host}` : '';
+    const scriptDirective = cspNonce ? `script-src 'self' 'nonce-${cspNonce}'` : `script-src 'self'`;
     headers.set(
       'Content-Security-Policy',
-      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'${wsOrigin}; frame-src 'self' https://www.youtube-nocookie.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
+      `default-src 'self'; ${scriptDirective}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'${wsOrigin}; frame-src 'self' https://www.youtube-nocookie.com; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`
     );
   }
 
@@ -1010,9 +1023,12 @@ function withSecurityHeaders(response: Response, isMedia = false, url?: URL): Re
 }
 
 function html(content: string, setLangCookie?: string, isHttps = true, status = 200, extraCookie?: string): Response {
+  const nonce = generateCspNonce();
+  const noncedHtml = content.replace(/<script(?=>|\s)/gi, `<script nonce="${nonce}"`);
   const headers = new Headers({
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'X-Pg-Csp-Nonce': nonce,
   });
   if (setLangCookie) {
     headers.append('Set-Cookie', `lang=${setLangCookie}; Path=/; Max-Age=31536000; SameSite=Lax${isHttps ? '; Secure' : ''}`);
@@ -1020,7 +1036,7 @@ function html(content: string, setLangCookie?: string, isHttps = true, status = 
   if (extraCookie) {
     headers.append('Set-Cookie', extraCookie);
   }
-  return new Response(content, { status, headers });
+  return new Response(noncedHtml, { status, headers });
 }
 
 function redirect(path: string, request: Request, setLangCookie?: string): Response {

@@ -53,12 +53,13 @@
 - **Cryptographic Multi-Device Approval & Signed Device Lists**:
   - Atomic primary first-device registration enforced by partial unique index (`idx_e2ee_devices_one_primary`).
   - Adding a new device requires proof-of-possession via an ECDSA P-256 signature over a single-use server challenge (`nonce`, 5-minute TTL, atomic `used_at` replay protection) from an already-trusted device.
-  - Monotonically versioned device lists (`e2ee_device_lists`) are dual-signed (ECDSA P-256 verified on the edge worker + Signal Curve25519 XEdDSA verified directly on peer clients against TOFU-pinned keys) to prevent ghost-device injection and version rollback.
-  - Existing legacy devices are preserved as `trust_origin = 'legacy'` without silently wiping keys or falsely marking them code-verified.
+  - Monotonically versioned device lists (`e2ee_device_lists`) are dual-signed (ECDSA P-256 verified on the edge worker + Signal Curve25519 XEdDSA verified directly on peer clients against TOFU-pinned keys) and committed inside shared atomic database transactions (`DB.batch` / Neon `sql.transaction`) alongside approval, revocation, recovery, and unregister operations.
+  - Server-side `approval_status = 'approved'` enforcement on `/api/messages/send` and `/api/messages/edit` (`403 DEVICE_PENDING`) plus ECDSA P-256 proof-of-possession on `/api/e2ee/keys/unregister`.
+  - Existing legacy devices are preserved in-place (`trust_origin = 'legacy'`) without wiping keys or falsely marking them code-verified, while UI honestly distinguishes pre-device messages (`NOT_FOR_THIS_DEVICE`, `SENT_FROM_OTHER_DEVICE`), `KEY_CHANGED`, and `DECRYPT_ERROR`.
 - **Safe Session Recovery & PreKey Auto-Refill**: PreKeys replenish automatically on startup and after `PreKeyWhisperMessage` decryption. A single `Bad MAC` or duplicate delivery never destroys working Double Ratchet keys; X3DH rebuild triggers only after repeated distinct failures from an unchanged trusted identity key.
-- **Lost-Device Recovery**: Requires password re-authentication (`verifyPassword`), revokes all other devices, PreKeys, auth sessions, and WebSocket connections, notifies active sessions, and exposes the key change to contacts (`KEY_CHANGED`).
-- **Optional Safety Number & QR Verification**: Uses `FingerprintGenerator(5200)` for official 60-digit Signal Safety Numbers and `qrcode-generator` for SVG QR rendering (DOM `createElementNS`, no `innerHTML`) with optional `BarcodeDetector` camera scanning.
-- **Cross-Tab Mutual Exclusion**: Uses Web Locks API (`navigator.locks`) with a fallback lease lock for crypto operations; `BroadcastChannel` is used strictly for cross-tab cache and UI synchronization.
+- **Lost-Device Recovery**: Requires password re-authentication (`verifyPassword`), atomically revokes all other devices, PreKeys, auth sessions, and WebSocket connections, notifies active sessions, and exposes the key change to contacts (`KEY_CHANGED`, with strict monotonic anti-rollback protection).
+- **Optional Safety Number & QR Verification**: Uses `FingerprintGenerator(5200)` over the canonical sorted set of approved account identity keys (producing identical 60-digit Signal Safety Numbers and SVG QR codes via `qrcode-generator` across all approved devices of both accounts) with optional `BarcodeDetector` camera scanning.
+- **Cross-Tab Mutual Exclusion**: Uses Web Locks API (`navigator.locks`) with a unified per-partner lock for both encryption and decryption and a fail-closed fallback lease lock (`LOCK_TIMEOUT`); `BroadcastChannel` is used strictly for cross-tab cache and UI synchronization.
 - **Opt-In Link Previews**: Disabled by default for new users (`users.link_previews_enabled = 0`) with explicit Settings disclosure that enabled previews send URLs to the Photogram server. When disabled, neither outgoing URL lookups nor incoming preview image fetches are made (enforced with HTTP `403` on the server).
 - **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); typing indicators; YouTube embed modal with clickable timecodes.
 
@@ -83,8 +84,8 @@
 
 ### 6. Security Controls
 - **Passwords & Sessions**: PBKDF2-SHA256 salted password hashes with timing-safe verification; `HttpOnly`, `Secure`, `SameSite=Lax` session cookies; session revocation on password change and lost-device recovery.
-- **Request & Media Hardening**: Atomic rate limiting (`auth_rate_limits`), CSRF checks (`Origin` / `Sec-Fetch-Site`), strict allowlisted R2 `/media/*` access control with DM attachment membership verification, SSRF-hardened Link Preview proxy with raster magic-byte verification, and security headers (`HSTS`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `CSP`).
-- **Known Security Trade-offs**: Active CSP currently retains `script-src 'self' 'unsafe-inline'` for server-rendered page scripts; Key Transparency is not implemented (first-contact verification relies on TOFU + optional Safety Number/QR comparison); encrypted cloud chat backup is not yet implemented.
+- **Request & Media Hardening**: Atomic rate limiting (`auth_rate_limits`), CSRF checks (`Origin` / `Sec-Fetch-Site`), strict allowlisted R2 `/media/*` access control with DM attachment membership verification, SSRF-hardened Link Preview proxy with raster magic-byte verification, and security headers (`HSTS`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and strict per-request cryptographic nonce CSP with zero `'unsafe-inline'` in `script-src`).
+- **Known Security Trade-offs**: Key Transparency is not implemented (first-contact verification relies on TOFU + optional Safety Number/QR comparison); encrypted cloud chat backup is not yet implemented.
 
 ---
 
@@ -137,6 +138,8 @@ Photogram/
 │   ├── messages.ts / notifications.ts / posts.ts / profile.ts
 │   ├── push.ts / realtime.ts / recommendations.ts / security.ts
 │   ├── styles.ts / types.ts / assets.ts / iconJpgBase64.ts
+├── tests/
+│   └── e2ee.test.mjs                   # End-to-end E2EE, compatibility, transaction & CSP test suite
 ├── workers/
 │   └── realtime/
 │       ├── src/index.ts                # Durable Object UserHub (WebSocket Hibernation)
@@ -168,7 +171,12 @@ npm install
 ### 2. Configure Environment & Bindings
 Copy `wrangler.toml.example` to `wrangler.toml` and configure your Cloudflare R2 bucket, service binding to `photogram-realtime`, and secrets (`DATABASE_URL` for Neon PostgreSQL, VAPID keys for Web Push) in `.dev.vars` locally or in Cloudflare Pages project settings.
 
-### 3. Build & Run Locally
+### 3. Build, Test & Run Locally
+Build the client E2EE bundle + Pages worker and run the automated E2EE & security test suite:
+```bash
+npm run build:pages
+npm test
+```
 Start the realtime Durable Objects worker and the main Pages dev server in separate terminals:
 ```bash
 npm run dev:realtime

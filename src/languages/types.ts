@@ -433,5 +433,8 @@ export interface Translations {
     safetyKeyChangedWarning: string;
     safetyVerifyBtn: string;
     e2eeSessionRecoveredNote: string;
+    e2eeNotForThisDevice: string;
+    e2eeSentFromOtherDevice: string;
+    e2eeKeyChangedInline: string;
   };
 }

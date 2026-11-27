@@ -141,6 +141,28 @@ export function buildDeviceListCanonicalMsg(
   return `pg-e2ee-devlist-v1|${userId}|${listVersion}|${isRecoveryReset ? 1 : 0}|${body}`;
 }
 
+export function buildUnregisterDeviceMsg(
+  userId: number,
+  deviceId: number,
+  timestamp: number,
+): string {
+  return `pg-e2ee-unreg-v1|${userId}|${deviceId}|${timestamp}`;
+}
+
+function batchRowCount(item: unknown): number {
+  if (Array.isArray(item)) return item.length;
+  if (item && typeof item === 'object') {
+    const obj = item as { results?: unknown[]; meta?: { changes?: number } };
+    if (Array.isArray(obj.results)) return obj.results.length;
+    if (typeof obj.meta?.changes === 'number') return obj.meta.changes;
+  }
+  return 0;
+}
+
+async function execDbBatch(env: Env, stmts: unknown[]): Promise<unknown[]> {
+  return (env.DB as unknown as { batch(queries: unknown[]): Promise<unknown[]> }).batch(stmts);
+}
+
 export async function verifyEcdsaP256(
   spkiB64: string,
   message: string,
@@ -1206,47 +1228,129 @@ export async function handleApproveE2eeDevice(request: Request, env: Env): Promi
     return jsonError(t.common.networkError, 403, 'INVALID_LIST_SIGNATURE');
   }
 
-  const consumeRes = await env.DB.prepare(
+  const sortedJson = JSON.stringify([...expectedDevices].sort((a, b) => a.device_id - b.device_id));
+  const listStmt =
+    currentVersion === 0
+      ? env.DB.prepare(
+          `INSERT INTO e2ee_device_lists (
+             user_id, list_version, signer_device_id, device_list_json,
+             ecdsa_signature, signal_signature, is_recovery_reset, updated_at
+           )
+           SELECT ?, ?, ?, ?, ?, ?, 0, datetime('now')
+           WHERE EXISTS (
+             SELECT 1 FROM e2ee_device_challenges
+             WHERE challenge_id = ? AND user_id = ? AND approver_device_id = ? AND target_device_id = ? AND used_at IS NULL
+           )
+           AND EXISTS (
+             SELECT 1 FROM e2ee_devices
+             WHERE user_id = ? AND device_id = ? AND approval_status = 'pending' AND identity_key_pub = ?
+           )
+           RETURNING list_version`,
+        ).bind(
+          user.id,
+          expectedNextVersion,
+          approverDeviceId,
+          sortedJson,
+          listEcdsaSig,
+          listSignalSig,
+          challengeId,
+          user.id,
+          approverDeviceId,
+          targetDeviceId,
+          user.id,
+          targetDeviceId,
+          ch.target_identity_key_pub,
+        )
+      : env.DB.prepare(
+          `UPDATE e2ee_device_lists
+           SET list_version = ?,
+               signer_device_id = ?,
+               device_list_json = ?,
+               ecdsa_signature = ?,
+               signal_signature = ?,
+               is_recovery_reset = 0,
+               updated_at = datetime('now')
+           WHERE user_id = ? AND list_version = ?
+             AND EXISTS (
+               SELECT 1 FROM e2ee_device_challenges
+               WHERE challenge_id = ? AND user_id = ? AND approver_device_id = ? AND target_device_id = ? AND used_at IS NULL
+             )
+             AND EXISTS (
+               SELECT 1 FROM e2ee_devices
+               WHERE user_id = ? AND device_id = ? AND approval_status = 'pending' AND identity_key_pub = ?
+             )
+           RETURNING list_version`,
+        ).bind(
+          expectedNextVersion,
+          approverDeviceId,
+          sortedJson,
+          listEcdsaSig,
+          listSignalSig,
+          user.id,
+          currentVersion,
+          challengeId,
+          user.id,
+          approverDeviceId,
+          targetDeviceId,
+          user.id,
+          targetDeviceId,
+          ch.target_identity_key_pub,
+        );
+
+  const consumeStmt = env.DB.prepare(
     `UPDATE e2ee_device_challenges
      SET used_at = datetime('now')
-     WHERE challenge_id = ? AND user_id = ? AND approver_device_id = ? AND target_device_id = ? AND used_at IS NULL`,
-  )
-    .bind(challengeId, user.id, approverDeviceId, targetDeviceId)
-    .run();
+     WHERE challenge_id = ? AND user_id = ? AND approver_device_id = ? AND target_device_id = ? AND used_at IS NULL
+       AND EXISTS (
+         SELECT 1 FROM e2ee_device_lists
+         WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?
+       )
+     RETURNING challenge_id`,
+  ).bind(
+    challengeId,
+    user.id,
+    approverDeviceId,
+    targetDeviceId,
+    user.id,
+    expectedNextVersion,
+    listEcdsaSig,
+  );
 
-  if (Number(consumeRes?.meta?.changes || 0) !== 1) {
-    return jsonError(t.common.networkError, 409, 'CHALLENGE_ALREADY_USED');
-  }
-
-  const promoteRes = await env.DB.prepare(
+  const promoteStmt = env.DB.prepare(
     `UPDATE e2ee_devices
      SET approval_status = 'approved',
          trust_origin = 'device_approved',
          approved_by_device_id = ?,
          approved_at = datetime('now'),
          updated_at = datetime('now')
-     WHERE user_id = ? AND device_id = ? AND approval_status = 'pending' AND identity_key_pub = ?`,
-  )
-    .bind(approverDeviceId, user.id, targetDeviceId, ch.target_identity_key_pub)
-    .run();
+     WHERE user_id = ? AND device_id = ? AND approval_status = 'pending' AND identity_key_pub = ?
+       AND EXISTS (
+         SELECT 1 FROM e2ee_device_lists
+         WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?
+       )
+     RETURNING device_id`,
+  ).bind(
+    approverDeviceId,
+    user.id,
+    targetDeviceId,
+    ch.target_identity_key_pub,
+    user.id,
+    expectedNextVersion,
+    listEcdsaSig,
+  );
 
-  if (Number(promoteRes?.meta?.changes || 0) !== 1) {
-    return jsonError(t.common.networkError, 409, 'TARGET_CHANGED');
+  let batchRes: unknown[];
+  try {
+    batchRes = await execDbBatch(env, [listStmt, consumeStmt, promoteStmt]);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+    }
+    throw err;
   }
 
-  const listSaved = await upsertDeviceList(
-    env,
-    user.id,
-    currentVersion,
-    expectedNextVersion,
-    approverDeviceId,
-    expectedDevices,
-    listEcdsaSig,
-    listSignalSig,
-    false,
-  );
-  if (!listSaved) {
-    return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+  if (batchRowCount(batchRes[0]) !== 1 || batchRowCount(batchRes[1]) !== 1 || batchRowCount(batchRes[2]) !== 1) {
+    return jsonError(t.common.networkError, 409, 'APPROVAL_CONFLICT');
   }
 
   try {
@@ -1479,30 +1583,95 @@ export async function handleRevokeE2eeDevice(request: Request, env: Env): Promis
     return jsonError(t.common.networkError, 403, 'INVALID_LIST_SIGNATURE');
   }
 
-  await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?')
-    .bind(user.id, targetDeviceId)
-    .run();
-  await env.DB.prepare('DELETE FROM e2ee_devices WHERE user_id = ? AND device_id = ?')
-    .bind(user.id, targetDeviceId)
-    .run();
+  const sortedRemJson = JSON.stringify([...remainingDevices].sort((a, b) => a.device_id - b.device_id));
+  const revListStmt =
+    currentVersion === 0
+      ? env.DB.prepare(
+          `INSERT INTO e2ee_device_lists (
+             user_id, list_version, signer_device_id, device_list_json,
+             ecdsa_signature, signal_signature, is_recovery_reset, updated_at
+           )
+           SELECT ?, ?, ?, ?, ?, ?, 0, datetime('now')
+           WHERE EXISTS (
+             SELECT 1 FROM e2ee_devices
+             WHERE user_id = ? AND device_id = ? AND approval_status = 'approved'
+           )
+           RETURNING list_version`,
+        ).bind(
+          user.id,
+          listVersion,
+          approverDeviceId,
+          sortedRemJson,
+          ecdsaSig,
+          signalSig,
+          user.id,
+          targetDeviceId,
+        )
+      : env.DB.prepare(
+          `UPDATE e2ee_device_lists
+           SET list_version = ?,
+               signer_device_id = ?,
+               device_list_json = ?,
+               ecdsa_signature = ?,
+               signal_signature = ?,
+               is_recovery_reset = 0,
+               updated_at = datetime('now')
+           WHERE user_id = ? AND list_version = ?
+             AND EXISTS (
+               SELECT 1 FROM e2ee_devices
+               WHERE user_id = ? AND device_id = ? AND approval_status = 'approved'
+             )
+           RETURNING list_version`,
+        ).bind(
+          listVersion,
+          approverDeviceId,
+          sortedRemJson,
+          ecdsaSig,
+          signalSig,
+          user.id,
+          currentVersion,
+          user.id,
+          targetDeviceId,
+        );
+
+  const revokeStmts = [
+    revListStmt,
+    env.DB.prepare(
+      `DELETE FROM e2ee_prekeys
+       WHERE user_id = ? AND device_id = ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(user.id, targetDeviceId, user.id, listVersion, ecdsaSig),
+    env.DB.prepare(
+      `DELETE FROM e2ee_devices
+       WHERE user_id = ? AND device_id = ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(user.id, targetDeviceId, user.id, listVersion, ecdsaSig),
+  ];
 
   if (Number(target.is_primary) === 1) {
-    await env.DB.prepare('UPDATE e2ee_devices SET is_primary = 1 WHERE user_id = ? AND device_id = ?')
-      .bind(user.id, approverDeviceId)
-      .run();
+    revokeStmts.push(
+      env.DB.prepare(
+        `UPDATE e2ee_devices
+         SET is_primary = 1
+         WHERE user_id = ? AND device_id = ?
+           AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+      ).bind(user.id, approverDeviceId, user.id, listVersion, ecdsaSig),
+    );
   }
 
-  await upsertDeviceList(
-    env,
-    user.id,
-    currentVersion,
-    listVersion,
-    approverDeviceId,
-    remainingDevices,
-    ecdsaSig,
-    signalSig,
-    false,
-  );
+  let revBatchRes: unknown[];
+  try {
+    revBatchRes = await execDbBatch(env, revokeStmts);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+    }
+    throw err;
+  }
+
+  if (batchRowCount(revBatchRes[0]) !== 1) {
+    return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+  }
 
   try {
     await emitUserEvent(env, user.id, {
@@ -1623,42 +1792,88 @@ export async function handleRecoverE2eeDevice(request: Request, env: Env): Promi
     );
   } catch {}
 
-  await env.DB.prepare('DELETE FROM e2ee_device_challenges WHERE user_id = ?').bind(user.id).run();
-  await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id != ?')
-    .bind(user.id, deviceId)
-    .run();
-  await env.DB.prepare('DELETE FROM e2ee_devices WHERE user_id = ? AND device_id != ?')
-    .bind(user.id, deviceId)
-    .run();
-  await env.DB.prepare(
-    `UPDATE e2ee_devices
-     SET approval_status = 'approved',
-         trust_origin = 'recovery_reset',
-         is_primary = 1,
-         approved_by_device_id = ?,
-         approved_at = datetime('now'),
-         updated_at = datetime('now')
-     WHERE user_id = ? AND device_id = ?`,
-  )
-    .bind(deviceId, user.id, deviceId)
-    .run();
+  const sortedRecJson = JSON.stringify([...expectedDevices].sort((a, b) => a.device_id - b.device_id));
+  const recListStmt =
+    currentVersion === 0
+      ? env.DB.prepare(
+          `INSERT INTO e2ee_device_lists (
+             user_id, list_version, signer_device_id, device_list_json,
+             ecdsa_signature, signal_signature, is_recovery_reset, updated_at
+           )
+           SELECT ?, ?, ?, ?, ?, ?, 1, datetime('now')
+           WHERE EXISTS (
+             SELECT 1 FROM e2ee_devices WHERE user_id = ? AND device_id = ?
+           )
+           RETURNING list_version`,
+        ).bind(user.id, listVersion, deviceId, sortedRecJson, ecdsaSig, signalSig, user.id, deviceId)
+      : env.DB.prepare(
+          `UPDATE e2ee_device_lists
+           SET list_version = ?,
+               signer_device_id = ?,
+               device_list_json = ?,
+               ecdsa_signature = ?,
+               signal_signature = ?,
+               is_recovery_reset = 1,
+               updated_at = datetime('now')
+           WHERE user_id = ? AND list_version = ?
+             AND EXISTS (
+               SELECT 1 FROM e2ee_devices WHERE user_id = ? AND device_id = ?
+             )
+           RETURNING list_version`,
+        ).bind(listVersion, deviceId, sortedRecJson, ecdsaSig, signalSig, user.id, currentVersion, user.id, deviceId);
 
-  await upsertDeviceList(
-    env,
-    user.id,
-    currentVersion,
-    listVersion,
-    deviceId,
-    expectedDevices,
-    ecdsaSig,
-    signalSig,
-    true,
-  );
+  const recStmts = [
+    recListStmt,
+    env.DB.prepare(
+      `DELETE FROM e2ee_device_challenges
+       WHERE user_id = ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(user.id, user.id, listVersion, ecdsaSig),
+    env.DB.prepare(
+      `DELETE FROM e2ee_prekeys
+       WHERE user_id = ? AND device_id != ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(user.id, deviceId, user.id, listVersion, ecdsaSig),
+    env.DB.prepare(
+      `DELETE FROM e2ee_devices
+       WHERE user_id = ? AND device_id != ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(user.id, deviceId, user.id, listVersion, ecdsaSig),
+    env.DB.prepare(
+      `UPDATE e2ee_devices
+       SET approval_status = 'approved',
+           trust_origin = 'recovery_reset',
+           is_primary = 1,
+           approved_by_device_id = ?,
+           approved_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE user_id = ? AND device_id = ?
+         AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+    ).bind(deviceId, user.id, deviceId, user.id, listVersion, ecdsaSig),
+  ];
 
   if (currentSessionHash) {
-    await env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?')
-      .bind(user.id, currentSessionHash)
-      .run();
+    recStmts.push(
+      env.DB.prepare(
+        `DELETE FROM sessions
+         WHERE user_id = ? AND token_hash != ?
+           AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+      ).bind(user.id, currentSessionHash, user.id, listVersion, ecdsaSig),
+    );
+  }
+
+  let recBatchRes: unknown[];
+  try {
+    recBatchRes = await execDbBatch(env, recStmts);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+    }
+    throw err;
+  }
+
+  if (batchRowCount(recBatchRes[0]) !== 1) {
+    return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
   }
 
   try {
@@ -1688,22 +1903,178 @@ export async function handleUnregisterE2eeDevice(request: Request, env: Env): Pr
   const allowed = await consumeRateLimitAtomic(env, `e2ee:unreg:${user.id}`, 20, 3600);
   if (!allowed) return jsonError(t.messages.errRateLimit, 429);
 
-  const parsed = await readJsonWithLimit<{ device_id?: unknown }>(request, 2048);
+  const parsed = await readJsonWithLimit<{
+    device_id?: unknown;
+    timestamp?: unknown;
+    signature?: unknown;
+    device_list?: {
+      list_version?: unknown;
+      devices?: unknown;
+      ecdsa_signature?: unknown;
+      signal_signature?: unknown;
+    };
+  }>(request, 16384);
   if (!parsed.ok) {
     return jsonError(t.common.networkError, parsed.status);
   }
 
   const deviceId = parsePositiveId(parsed.data?.device_id);
+  const ts = Number(parsed.data?.timestamp);
+  const sig = typeof parsed.data?.signature === 'string' ? parsed.data.signature.trim() : '';
   if (!deviceId) {
     return jsonError(t.common.networkError, 400);
   }
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > CHALLENGE_TTL_MS || !isValidSignature(sig)) {
+    return jsonError(t.common.networkError, 403, 'PROOF_REQUIRED');
+  }
 
-  await env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?')
-    .bind(user.id, deviceId)
-    .run();
-  await env.DB.prepare('DELETE FROM e2ee_devices WHERE user_id = ? AND device_id = ?')
-    .bind(user.id, deviceId)
-    .run();
+  const [target, approvedRows, listRow] = await Promise.all([
+    env.DB.prepare(
+      `SELECT device_id, signing_key_pub, approval_status, is_primary
+       FROM e2ee_devices
+       WHERE user_id = ? AND device_id = ?`,
+    )
+      .bind(user.id, deviceId)
+      .first<DeviceRow>(),
+    env.DB.prepare(
+      `SELECT device_id, identity_key_pub, signing_key_pub
+       FROM e2ee_devices
+       WHERE user_id = ? AND approval_status = 'approved'
+       ORDER BY device_id ASC`,
+    )
+      .bind(user.id)
+      .all<DeviceRow>(),
+    env.DB.prepare('SELECT list_version FROM e2ee_device_lists WHERE user_id = ?')
+      .bind(user.id)
+      .first<{ list_version: number }>(),
+  ]);
+
+  if (!target) {
+    return jsonError(t.common.networkError, 404, 'DEVICE_NOT_FOUND');
+  }
+  if (!isValidSpkiEcdsaPub(target.signing_key_pub || '')) {
+    return jsonError(t.common.networkError, 403, 'SIGNING_KEY_REQUIRED');
+  }
+
+  const unregMsg = buildUnregisterDeviceMsg(user.id, deviceId, Math.floor(ts));
+  const validSig = await verifyEcdsaP256(target.signing_key_pub, unregMsg, sig);
+  if (!validSig) {
+    return jsonError(t.common.networkError, 403, 'INVALID_SIGNATURE');
+  }
+
+  const remainingDevices: SignedDeviceListEntry[] = (approvedRows.results || [])
+    .filter((r) => Number(r.device_id) !== deviceId)
+    .map((r) => ({
+      device_id: Number(r.device_id),
+      identity_key_pub: r.identity_key_pub,
+      signing_key_pub: r.signing_key_pub || '',
+    }));
+
+  if (target.approval_status === 'approved' && remainingDevices.length > 0) {
+    const currentVersion = Number(listRow?.list_version || 0);
+    const listVersion = Number(parsed.data?.device_list?.list_version);
+    const listEcdsaSig =
+      typeof parsed.data?.device_list?.ecdsa_signature === 'string'
+        ? parsed.data.device_list.ecdsa_signature.trim()
+        : '';
+    const listSignalSig =
+      typeof parsed.data?.device_list?.signal_signature === 'string'
+        ? parsed.data.device_list.signal_signature.trim()
+        : '';
+    const incomingDevices = normalizeDeviceListEntries(parsed.data?.device_list?.devices);
+
+    if (
+      !incomingDevices ||
+      listVersion !== currentVersion + 1 ||
+      !isValidSignature(listEcdsaSig) ||
+      !isValidSignature(listSignalSig) ||
+      !deviceListsEqual(incomingDevices, remainingDevices)
+    ) {
+      return jsonError(t.common.networkError, 400, 'INVALID_DEVICE_LIST');
+    }
+
+    const listMsg = buildDeviceListCanonicalMsg(user.id, listVersion, false, remainingDevices);
+    const validListSig = await verifyEcdsaP256(target.signing_key_pub, listMsg, listEcdsaSig);
+    if (!validListSig) {
+      return jsonError(t.common.networkError, 403, 'INVALID_LIST_SIGNATURE');
+    }
+
+    const sortedJson = JSON.stringify([...remainingDevices].sort((a, b) => a.device_id - b.device_id));
+    const listStmt =
+      currentVersion === 0
+        ? env.DB.prepare(
+            `INSERT INTO e2ee_device_lists (
+               user_id, list_version, signer_device_id, device_list_json,
+               ecdsa_signature, signal_signature, is_recovery_reset, updated_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, 0, datetime('now')
+             WHERE EXISTS (
+               SELECT 1 FROM e2ee_devices WHERE user_id = ? AND device_id = ? AND approval_status = 'approved'
+             )
+             RETURNING list_version`,
+          ).bind(user.id, listVersion, deviceId, sortedJson, listEcdsaSig, listSignalSig, user.id, deviceId)
+        : env.DB.prepare(
+            `UPDATE e2ee_device_lists
+             SET list_version = ?,
+                 signer_device_id = ?,
+                 device_list_json = ?,
+                 ecdsa_signature = ?,
+                 signal_signature = ?,
+                 is_recovery_reset = 0,
+                 updated_at = datetime('now')
+             WHERE user_id = ? AND list_version = ?
+               AND EXISTS (
+                 SELECT 1 FROM e2ee_devices WHERE user_id = ? AND device_id = ? AND approval_status = 'approved'
+               )
+             RETURNING list_version`,
+          ).bind(listVersion, deviceId, sortedJson, listEcdsaSig, listSignalSig, user.id, currentVersion, user.id, deviceId);
+
+    const unregStmts = [
+      listStmt,
+      env.DB.prepare(
+        `DELETE FROM e2ee_prekeys
+         WHERE user_id = ? AND device_id = ?
+           AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+      ).bind(user.id, deviceId, user.id, listVersion, listEcdsaSig),
+      env.DB.prepare(
+        `DELETE FROM e2ee_devices
+         WHERE user_id = ? AND device_id = ?
+           AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+      ).bind(user.id, deviceId, user.id, listVersion, listEcdsaSig),
+    ];
+
+    if (Number(target.is_primary) === 1) {
+      unregStmts.push(
+        env.DB.prepare(
+          `UPDATE e2ee_devices
+           SET is_primary = 1
+           WHERE user_id = ? AND device_id = ?
+             AND EXISTS (SELECT 1 FROM e2ee_device_lists WHERE user_id = ? AND list_version = ? AND ecdsa_signature = ?)`,
+        ).bind(user.id, remainingDevices[0].device_id, user.id, listVersion, listEcdsaSig),
+      );
+    }
+
+    let unregBatchRes: unknown[];
+    try {
+      unregBatchRes = await execDbBatch(env, unregStmts);
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+      }
+      throw err;
+    }
+
+    if (batchRowCount(unregBatchRes[0]) !== 1) {
+      return jsonError(t.common.networkError, 409, 'LIST_VERSION_CONFLICT');
+    }
+
+    return jsonResponse({ success: true, list_version: listVersion }, 200);
+  }
+
+  await execDbBatch(env, [
+    env.DB.prepare('DELETE FROM e2ee_prekeys WHERE user_id = ? AND device_id = ?').bind(user.id, deviceId),
+    env.DB.prepare('DELETE FROM e2ee_devices WHERE user_id = ? AND device_id = ?').bind(user.id, deviceId),
+  ]);
 
   return jsonResponse({ success: true }, 200);
 }
