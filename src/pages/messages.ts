@@ -708,12 +708,62 @@ export function messagesPage(
   var dmShellEl = document.querySelector('.dm-shell');
   var scrollEl = document.getElementById('dmMessagesScroll');
   var listEl = document.getElementById('dmMessagesList');
-  var isPinnedToBottom = true;
+  var pendingScrollRestore = null;
+  var restoreAnchorUntil = 0;
+  try {
+    var rawDmRet = sessionStorage.getItem('pg_dm_post_return');
+    if (rawDmRet) {
+      var parsedDmRet = JSON.parse(rawDmRet);
+      if (
+        parsedDmRet &&
+        typeof parsedDmRet === 'object' &&
+        typeof parsedDmRet.returnPath === 'string' &&
+        parsedDmRet.returnPath.toLowerCase() === window.location.pathname.toLowerCase() &&
+        (Date.now() - Number(parsedDmRet.ts || 0)) < 1800000
+      ) {
+        pendingScrollRestore = parsedDmRet;
+        sessionStorage.removeItem('pg_dm_post_return');
+      }
+    }
+  } catch (e) {}
+  var isPinnedToBottom = pendingScrollRestore ? Boolean(pendingScrollRestore.wasPinnedToBottom) : true;
   var kbOpeningUntil = 0;
   var isAdjustingViewport = false;
   var lastScrollClientH = scrollEl ? scrollEl.clientHeight : 0;
   var kbTimers = [];
   var dmResizeObserver = null;
+
+  function clearPendingScrollRestore() {
+    restoreAnchorUntil = 0;
+    pendingScrollRestore = null;
+  }
+
+  function applyRestoredScrollNow(ret) {
+    if (!scrollEl || !ret) return false;
+    isPinnedToBottom = false;
+    isAdjustingViewport = true;
+    var applied = false;
+    var aid = Number(ret.anchorMsgId || 0);
+    if (aid > 0 && listEl) {
+      var row = listEl.querySelector('.dm-msg-row[data-msg-id="' + aid + '"]');
+      if (row) {
+        var sRect = scrollEl.getBoundingClientRect();
+        var rRect = row.getBoundingClientRect();
+        var desiredOff = typeof ret.anchorOffsetTop === 'number' ? ret.anchorOffsetTop : 80;
+        var nextTop = scrollEl.scrollTop + (rRect.top - sRect.top) - desiredOff;
+        scrollEl.scrollTop = Math.max(0, Math.round(nextTop));
+        applied = true;
+      }
+    }
+    if (!applied && typeof ret.scrollTop === 'number') {
+      scrollEl.scrollTop = Math.max(0, Math.round(ret.scrollTop));
+      applied = true;
+    }
+    requestAnimationFrame(function() {
+      isAdjustingViewport = false;
+    });
+    return applied;
+  }
 
   function clearKbTimers() {
     for (var ti = 0; ti < kbTimers.length; ti++) {
@@ -770,13 +820,16 @@ export function messagesPage(
   function onViewportChange() {
     syncDmViewport(false);
   }
-  syncDmViewport(true);
+  syncDmViewport(!pendingScrollRestore || Boolean(pendingScrollRestore.wasPinnedToBottom));
   window.addEventListener('resize', onViewportChange);
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportChange);
     window.visualViewport.addEventListener('scroll', onViewportChange);
   }
   if (scrollEl) {
+    scrollEl.addEventListener('wheel', clearPendingScrollRestore, { passive: true });
+    scrollEl.addEventListener('touchstart', clearPendingScrollRestore, { passive: true });
+    scrollEl.addEventListener('pointerdown', clearPendingScrollRestore, { passive: true });
     scrollEl.addEventListener('scroll', function() {
       if (isAdjustingViewport || Date.now() < kbOpeningUntil) return;
       isPinnedToBottom = (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < 80;
@@ -785,7 +838,9 @@ export function messagesPage(
       dmResizeObserver = new ResizeObserver(function() {
         if (!scrollEl) return;
         var nextH = scrollEl.clientHeight;
-        if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
+        if (pendingScrollRestore && !pendingScrollRestore.wasPinnedToBottom && Date.now() < restoreAnchorUntil) {
+          applyRestoredScrollNow(pendingScrollRestore);
+        } else if (isPinnedToBottom || Date.now() < kbOpeningUntil) {
           pinScrollBottomNow();
         } else if (lastScrollClientH > 0 && nextH < lastScrollClientH) {
           isAdjustingViewport = true;
@@ -2046,7 +2101,35 @@ export function messagesPage(
 
     var card = document.createElement('a');
     card.className = 'dm-shared-post';
-    card.href = '/u/' + encodeURIComponent(author) + '?post=' + encodeURIComponent(String(sp.postId));
+    card.href = '/u/' + encodeURIComponent(author) + '?post=' + encodeURIComponent(String(sp.postId)) + '&from=chat';
+    card.addEventListener('click', function() {
+      try {
+        var retPath = (window.location.pathname && /^\\/messages\\/[a-z0-9_.-]+$/i.test(window.location.pathname) && window.location.pathname.indexOf('..') === -1)
+          ? window.location.pathname
+          : (state.activePartnerUsername ? ('/messages/' + encodeURIComponent(state.activePartnerUsername)) : '');
+        if (!retPath) return;
+        var rowEl = card.closest ? card.closest('.dm-msg-row') : null;
+        var anchorMsgId = rowEl ? (parseInt(rowEl.getAttribute('data-msg-id') || '0', 10) || 0) : 0;
+        var anchorOffsetTop = 80;
+        if (rowEl && scrollEl && rowEl.getBoundingClientRect && scrollEl.getBoundingClientRect) {
+          anchorOffsetTop = Math.round(rowEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top);
+        }
+        var curScrollTop = scrollEl ? Math.round(scrollEl.scrollTop) : 0;
+        var curDistBottom = scrollEl ? Math.max(0, Math.round(scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight)) : 0;
+        sessionStorage.setItem('pg_dm_post_return', JSON.stringify({
+          returnPath: retPath,
+          convId: Number(state.activeConversationId || 0),
+          partnerUsername: String(state.activePartnerUsername || ''),
+          anchorMsgId: anchorMsgId,
+          anchorOffsetTop: anchorOffsetTop,
+          scrollTop: curScrollTop,
+          distFromBottom: curDistBottom,
+          wasPinnedToBottom: Boolean(curDistBottom < 80),
+          postId: String(sp.postId),
+          ts: Date.now()
+        }));
+      } catch (e) {}
+    });
 
     var head = document.createElement('div');
     head.className = 'dm-shared-post-head';
@@ -2707,7 +2790,29 @@ export function messagesPage(
         }
       }
       await hydrateSidebarEncryptedPreviews();
-      if (scrollEl) scrollToBottom();
+      if (pendingScrollRestore && !pendingScrollRestore.wasPinnedToBottom) {
+        var retObj = pendingScrollRestore;
+        var targetAid = Number(retObj.anchorMsgId || 0);
+        if (targetAid > 0 && listEl && typeof loadOlderMessagesBatch === 'function') {
+          for (var pgStep = 0; pgStep < 10; pgStep++) {
+            if (listEl.querySelector('.dm-msg-row[data-msg-id="' + targetAid + '"]')) break;
+            if (!state.oldestMsgId || Number(state.oldestMsgId) <= targetAid) break;
+            var loadedMore = await loadOlderMessagesBatch(true);
+            if (!loadedMore) break;
+          }
+        }
+        if (pendingScrollRestore === retObj) {
+          restoreAnchorUntil = Date.now() + 1800;
+          applyRestoredScrollNow(retObj);
+          requestAnimationFrame(function() {
+            if (pendingScrollRestore === retObj && Date.now() < restoreAnchorUntil) {
+              applyRestoredScrollNow(retObj);
+            }
+          });
+        }
+      } else if (scrollEl) {
+        scrollToBottom();
+      }
     } catch (e) {}
   }
 
@@ -2966,9 +3071,11 @@ export function messagesPage(
 
   syncRenderedMsgClocks();
   hydratePlainTextMentions();
-  if (scrollEl) {
+  if (scrollEl && (!pendingScrollRestore || pendingScrollRestore.wasPinnedToBottom)) {
     scrollToBottom();
-    setTimeout(scrollToBottom, 80);
+    setTimeout(function() {
+      if (!pendingScrollRestore || pendingScrollRestore.wasPinnedToBottom) scrollToBottom();
+    }, 80);
   }
   hydrateInitialMessages();
 
@@ -4174,63 +4281,78 @@ export function messagesPage(
   };
   syncSendState();
 
-  if (loadOlderBtn && listEl && scrollEl) {
-    loadOlderBtn.addEventListener('click', async function() {
-      if (!state.activeConversationId || !state.oldestMsgId || loadOlderBtn.disabled) return;
-      isPinnedToBottom = false;
-      kbOpeningUntil = 0;
-      loadOlderBtn.disabled = true;
-      var prevHeight = scrollEl.scrollHeight;
-      try {
-        var res = await fetch(
-          '/api/messages/list?conversation_id=' + state.activeConversationId + '&before_id=' + state.oldestMsgId,
-          { credentials: 'same-origin', cache: 'no-store' }
-        );
-        var data = await res.json();
-        if (res.ok && data && Array.isArray(data.messages)) {
-          var c = await ensureE2eeReady();
-          var frag = document.createDocumentFragment();
-          for (var i = 0; i < data.messages.length; i++) {
-            var m = data.messages[i];
-            if (listEl.querySelector('.dm-msg-row[data-msg-id="' + m.id + '"]')) continue;
-            var dec = null;
-            var decReason = '';
-            if (m.is_encrypted && c) {
-              var rDec = await c.decryptMessage(m);
-              if (rDec.ok && rDec.payload) {
-                dec = rDec.payload;
-              } else {
-                decReason = (rDec && rDec.reason) || '';
-                if (decReason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
-                  showKeyChangedBanner({
-                    userId: rDec.userId,
-                    deviceId: rDec.deviceId,
-                    identityKey: rDec.identityKey || '',
-                    retryAction: 'decrypt'
-                  });
-                }
+  var isLoadingOlderBatch = false;
+  async function loadOlderMessagesBatch(preserveRawScroll) {
+    if (!state.activeConversationId || !state.oldestMsgId || isLoadingOlderBatch || !listEl || !scrollEl) return false;
+    isLoadingOlderBatch = true;
+    isPinnedToBottom = false;
+    kbOpeningUntil = 0;
+    if (loadOlderBtn) loadOlderBtn.disabled = true;
+    var prevHeight = scrollEl.scrollHeight;
+    try {
+      var res = await fetch(
+        '/api/messages/list?conversation_id=' + state.activeConversationId + '&before_id=' + state.oldestMsgId,
+        { credentials: 'same-origin', cache: 'no-store' }
+      );
+      var data = await res.json();
+      if (res.ok && data && Array.isArray(data.messages)) {
+        var c = await ensureE2eeReady();
+        var frag = document.createDocumentFragment();
+        var addedCount = 0;
+        for (var i = 0; i < data.messages.length; i++) {
+          var m = data.messages[i];
+          if (listEl.querySelector('.dm-msg-row[data-msg-id="' + m.id + '"]')) continue;
+          var dec = null;
+          var decReason = '';
+          if (m.is_encrypted && c) {
+            var rDec = await c.decryptMessage(m);
+            if (rDec.ok && rDec.payload) {
+              dec = rDec.payload;
+            } else {
+              decReason = (rDec && rDec.reason) || '';
+              if (decReason === 'KEY_CHANGED' && rDec.userId && rDec.deviceId) {
+                showKeyChangedBanner({
+                  userId: rDec.userId,
+                  deviceId: rDec.deviceId,
+                  identityKey: rDec.identityKey || '',
+                  retryAction: 'decrypt'
+                });
               }
             }
-            frag.appendChild(buildMessageRowEl(m, dec, '', decReason));
           }
-          listEl.insertBefore(frag, listEl.firstChild);
-          if (data.messages.length > 0) {
-            state.oldestMsgId = Number(data.messages[0].id);
-          }
-          syncDateSeparators();
-          updateSeenUI();
+          frag.appendChild(buildMessageRowEl(m, dec, '', decReason));
+          addedCount++;
+        }
+        listEl.insertBefore(frag, listEl.firstChild);
+        if (data.messages.length > 0) {
+          state.oldestMsgId = Number(data.messages[0].id);
+        }
+        syncDateSeparators();
+        updateSeenUI();
+        if (!preserveRawScroll) {
           scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight;
-          if (!data.has_more) {
-            loadOlderBtn.remove();
-          } else {
-            loadOlderBtn.disabled = false;
-          }
-        } else {
+        }
+        if (!data.has_more) {
+          if (loadOlderBtn) loadOlderBtn.style.display = 'none';
+        } else if (loadOlderBtn) {
           loadOlderBtn.disabled = false;
         }
-      } catch (err) {
-        loadOlderBtn.disabled = false;
+        return Boolean(addedCount > 0 && data.has_more !== undefined);
+      } else {
+        if (loadOlderBtn) loadOlderBtn.disabled = false;
+        return false;
       }
+    } catch (err) {
+      if (loadOlderBtn) loadOlderBtn.disabled = false;
+      return false;
+    } finally {
+      isLoadingOlderBatch = false;
+    }
+  }
+
+  if (loadOlderBtn && listEl && scrollEl) {
+    loadOlderBtn.addEventListener('click', function() {
+      loadOlderMessagesBatch(false);
     });
   }
 

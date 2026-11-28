@@ -988,7 +988,7 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
         if (window.initTelemetryObserver) window.initTelemetryObserver();
         grid.querySelectorAll('.post-related-item').forEach(function(item) {
           item.onclick = function() {
-            openPost(this);
+            openPost(this, { skipOverlayPush: Boolean(chatReturnTarget) });
             var scrollBody = viewModal.querySelector('.post-view-scroll-body');
             if (scrollBody) scrollBody.scrollTop = 0;
           };
@@ -1079,7 +1079,9 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     })();
   }
 
-  function openPost(btn) {
+  var chatReturnTarget = '';
+
+  function openPost(btn, opts) {
     if (!btn || !viewModal) return;
     var scrollBody = viewModal.querySelector('.post-view-scroll-body');
     if (scrollBody) scrollBody.scrollTop = 0;
@@ -1166,7 +1168,8 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
 
     viewModal.classList.add('visible');
     syncBodyOverflow();
-    if (window.__pgPushOverlay) {
+    var skipOverlayPush = Boolean(opts && opts.skipOverlayPush);
+    if (!skipOverlayPush && window.__pgPushOverlay) {
       window.__pgPushOverlay('profile-post', function(fromPop) {
         closePostView(fromPop);
       });
@@ -1176,6 +1179,31 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
   function closePostView(fromPop) {
     if (window.endModalDwell) window.endModalDwell();
     cancelReplyMode();
+    if (!fromPop && chatReturnTarget) {
+      var targetPath = chatReturnTarget;
+      chatReturnTarget = '';
+      activePostId = null;
+      var pageRoot = document.getElementById('appPageRoot');
+      if (pageRoot) {
+        pageRoot.style.opacity = '0';
+        setTimeout(function() {
+          var curRoot = document.getElementById('appPageRoot');
+          if (curRoot && curRoot.style.opacity === '0') curRoot.style.opacity = '1';
+        }, 1800);
+      }
+      if (window.__pgPrevSpaUrl && window.__pgPrevSpaUrl.toLowerCase() === targetPath.toLowerCase() && window.history.length > 1) {
+        try {
+          history.back();
+          return;
+        } catch (be) {}
+      }
+      if (window.spaNavigate) {
+        window.spaNavigate(targetPath);
+      } else {
+        window.location.href = targetPath;
+      }
+      return;
+    }
     if (viewModal) {
       if (fromPop) {
         viewModal.classList.add('pg-no-transition');
@@ -1201,14 +1229,51 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     });
   });
 
+  var viewPostAuthorLinkEl = document.getElementById('viewPostAuthorLink');
+  if (viewPostAuthorLinkEl) {
+    viewPostAuthorLinkEl.addEventListener('click', function(e) {
+      chatReturnTarget = '';
+      try { sessionStorage.removeItem('pg_dm_post_return'); } catch (se) {}
+      try {
+        var linkUrl = new URL(this.href, window.location.href);
+        if (linkUrl.pathname === window.location.pathname && viewModal && viewModal.classList.contains('visible')) {
+          e.preventDefault();
+          closePostView(false);
+        }
+      } catch (ue) {}
+    });
+  }
+
   try {
-    var deepPostId = new URLSearchParams(window.location.search).get('post');
+    var spParams = new URLSearchParams(window.location.search);
+    var deepPostId = spParams.get('post');
+    var fromParam = spParams.get('from');
     if (deepPostId && /^[0-9]+$/.test(deepPostId)) {
+      if (fromParam === 'chat') {
+        try {
+          var rawRet = sessionStorage.getItem('pg_dm_post_return');
+          if (rawRet) {
+            var parsedRet = JSON.parse(rawRet);
+            if (
+              parsedRet &&
+              typeof parsedRet.returnPath === 'string' &&
+              parsedRet.returnPath.indexOf('..') === -1 &&
+              /^\\/messages\\/[a-z0-9_.-]+$/i.test(parsedRet.returnPath) &&
+              String(parsedRet.postId || '') === String(deepPostId) &&
+              (Date.now() - Number(parsedRet.ts || 0)) < 1800000
+            ) {
+              chatReturnTarget = parsedRet.returnPath;
+            }
+          }
+        } catch (re) {}
+      }
       var targetPostBtn = document.querySelector('#profileGrid .post-item-btn[data-post-id="' + deepPostId + '"]')
         || document.querySelector('.post-item-btn[data-post-id="' + deepPostId + '"]');
       if (targetPostBtn) {
         try { history.replaceState({ spa: true }, '', window.location.pathname); } catch (he) {}
-        openPost(targetPostBtn);
+        openPost(targetPostBtn, { skipOverlayPush: Boolean(chatReturnTarget) });
+      } else {
+        chatReturnTarget = '';
       }
     }
   } catch (e) {}

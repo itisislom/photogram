@@ -70,7 +70,7 @@
   - Transfers available encrypted message cache (never active Signal sessions, PreKeys, or Identity KeyPair) between approved devices using ephemeral ECDH P-256 + `HKDF-SHA-256` + `AES-256-GCM` authenticated with both devices' ECDSA P-256 keys, `transferId`, QR payload (`PGX1:...`), and 6-digit verification code.
   - Verifies device membership against signed `e2ee_device_lists`, enforces single-use completion, and removes expired R2 transfer blobs (`cleanupExpiredTransfers`).
 - **Opt-In Link Previews**: Disabled by default for new users (`users.link_previews_enabled = 0`) with explicit Settings disclosure that enabled previews send URLs to the Photogram server. When disabled, neither outgoing URL lookups nor incoming preview image fetches are made (enforced with HTTP `403` on the server).
-- **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); typing indicators; YouTube embed modal with clickable timecodes.
+- **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); typing indicators; YouTube embed modal with clickable timecodes; shared posts that return directly to the originating chat and exact scroll position (including auto-loading older pages) on close or Back.
 
 ### 2. Real-Time Messaging via Durable Objects WebSocket Hibernation
 - Dedicated worker (`workers/realtime`) hosting per-user `UserHub` Durable Objects using the Cloudflare WebSocket Hibernation API.
