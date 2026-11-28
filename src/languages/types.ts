@@ -411,6 +411,12 @@ export interface Translations {
     deviceRevokeSuccess: string;
     devicePendingBanner: string;
     devicePendingCodePrefix: string;
+    devicePromptTitle: string;
+    devicePromptDesc: string;
+    devicePromptRejectBtn: string;
+    devicePromptLaterBtn: string;
+    deviceCheckStatusBtn: string;
+    deviceStillPendingToast: string;
     deviceLostOldBtn: string;
     deviceRecoverTitle: string;
     deviceRecoverDesc: string;

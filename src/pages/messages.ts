@@ -1725,7 +1725,7 @@ export function messagesPage(
   function showPendingDeviceBanner(code) {
     if (!state.secI18n) return;
     var msg = state.secI18n.devicePendingBanner + (code ? (' (' + state.secI18n.devicePendingCodePrefix + ': ' + code + ')') : '');
-    showBanner(msg, true, state.secI18n.deviceLostOldBtn, '', 'device_pending');
+    showBanner(msg, true, state.secI18n.deviceCheckStatusBtn, state.secI18n.deviceLostOldBtn, 'device_pending');
   }
 
   async function syncSafetyPillStatus() {
@@ -2976,6 +2976,8 @@ export function messagesPage(
     e2eeBannerSecondaryBtn.addEventListener('click', function() {
       if (bannerMode === 'key_changed') {
         openSafetyModal();
+      } else if (bannerMode === 'device_pending') {
+        openDmRecoverModal();
       }
     });
   }
@@ -2983,7 +2985,26 @@ export function messagesPage(
   if (e2eeBannerBtn) {
     e2eeBannerBtn.addEventListener('click', async function() {
       if (bannerMode === 'device_pending') {
-        openDmRecoverModal();
+        if (e2eeBannerBtn.disabled) return;
+        e2eeBannerBtn.disabled = true;
+        try {
+          var cChk = e2eeClient || await ensureE2eeReady();
+          var stChk = cChk && typeof cChk.refreshDeviceStatus === 'function' ? await cChk.refreshDeviceStatus() : null;
+          if (stChk && stChk.approvalStatus === 'approved') {
+            hideBanner();
+            syncSafetyPillStatus();
+            if (window.showAppToast && state.secI18n) {
+              window.showAppToast(state.secI18n.deviceApproveSuccess);
+            }
+            if (state.activeConversationId > 0) pollActiveChat();
+          } else if (window.showAppToast && state.secI18n) {
+            window.showAppToast(state.secI18n.deviceStillPendingToast);
+          }
+        } catch (err) {
+          if (window.showAppToast) window.showAppToast(state.networkError);
+        } finally {
+          e2eeBannerBtn.disabled = false;
+        }
         return;
       }
       if (!pendingKeyChange || e2eeBannerBtn.disabled) return;
@@ -5898,9 +5919,11 @@ export function messagesPage(
           var stAppr = await e2eeClient.refreshDeviceStatus();
           if (stAppr && stAppr.approvalStatus === 'approved' && bannerMode === 'device_pending') {
             hideBanner();
+            syncSafetyPillStatus();
             if (window.showAppToast && state.secI18n) {
               window.showAppToast(state.secI18n.deviceApproveSuccess);
             }
+            if (state.activeConversationId > 0) pollActiveChat();
           }
         } catch (e) {}
       }
@@ -6351,6 +6374,13 @@ export function messagesPage(
     cancelEditMode();
     clearPendingFile();
     hideBanner();
+    if (e2eeClient && typeof e2eeClient.getDeviceStatus === 'function') {
+      e2eeClient.getDeviceStatus().then(function(stOpen) {
+        if (stOpen && stOpen.approvalStatus === 'pending' && Number(state.activeConversationId) === targetConvId) {
+          showPendingDeviceBanner(stOpen.verificationCode || '');
+        }
+      }).catch(function() {});
+    }
     if (inputEl) inputEl.value = '';
     syncSendState();
 

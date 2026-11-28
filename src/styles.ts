@@ -8314,6 +8314,29 @@ body.dm-lock-scroll {
   margin-top: 4px;
 }
 
+.app-device-approve-backdrop {
+  z-index: 19500;
+}
+
+.app-device-approve-content {
+  max-width: 420px;
+  max-height: min(85dvh, 620px);
+}
+
+.app-device-approve-content .pg-device-actions button {
+  flex: 1;
+  min-height: 44px;
+}
+
+.app-device-approve-footer {
+  margin-top: 6px;
+}
+
+.app-device-approve-footer button {
+  width: 100%;
+  min-height: 44px;
+}
+
 .pg-recover-wrap {
   margin-top: 10px;
   padding-top: 12px;

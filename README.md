@@ -54,7 +54,7 @@
 - **Strict TOFU & Account Isolation**: `isTrustedIdentity` enforces Trust On First Use without silent key overwrites; per-account IndexedDB databases (`pg_signal_e2ee_u_<userId>`) isolate keys across saved accounts.
 - **Cryptographic Multi-Device Approval & Signed Device Lists**:
   - Atomic primary first-device registration enforced by partial unique index (`idx_e2ee_devices_one_primary`).
-  - Adding a new device requires proof-of-possession via an ECDSA P-256 signature over a single-use server challenge (`nonce`, 5-minute TTL, atomic `used_at` replay protection) from an already-trusted device.
+  - Adding a new device requires proof-of-possession via an ECDSA P-256 signature over a single-use server challenge (`nonce`, 5-minute TTL, atomic `used_at` replay protection) from an already-trusted device, surfaced automatically via a global real-time 1-click approval modal (`#appDeviceApproveModal`) on any open page of an approved device while keeping emergency lost-device recovery secondary.
   - Monotonically versioned device lists (`e2ee_device_lists`) are dual-signed (ECDSA P-256 verified on the edge worker + Signal Curve25519 XEdDSA verified directly on peer clients against TOFU-pinned keys) and committed inside shared atomic database transactions (`DB.batch` / Neon `sql.transaction`) alongside approval, revocation, recovery, and unregister operations.
   - Server-side `approval_status = 'approved'` enforcement on `/api/messages/send` and `/api/messages/edit` (`403 DEVICE_PENDING`) plus ECDSA P-256 proof-of-possession on `/api/e2ee/keys/unregister`.
   - Existing legacy devices are preserved in-place (`trust_origin = 'legacy'`) without wiping keys or falsely marking them code-verified, while UI honestly distinguishes pre-device messages (`NOT_FOR_THIS_DEVICE`, `SENT_FROM_OTHER_DEVICE`), `KEY_CHANGED`, and `DECRYPT_ERROR`.
@@ -135,7 +135,7 @@ Photogram/
 │   │   ├── ru.ts / en.ts / uz.ts / kz.ts
 │   │   └── index.ts                    # Locale detection & date/number formatting
 │   ├── pages/
-│   │   ├── layout.ts                   # App shell, SPA router, realtime WS client, telemetry
+│   │   ├── layout.ts                   # App shell, SPA router, realtime WS client, device approval prompt, telemetry
 │   │   ├── feed.ts / explore.ts / profile.ts
 │   │   ├── messages.ts                 # E2EE messenger UI, voice recorder, Safety Number/QR
 │   │   ├── settings.ts                 # Theme, language, notifications, Link Previews, Devices & Backup

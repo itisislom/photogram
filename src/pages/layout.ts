@@ -33,7 +33,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261127-v20';
+export const APP_STYLE_VERSION = '20261128-v21';
 
 let activeCspNonce = '';
 
@@ -153,6 +153,20 @@ ${body}
       ${DOWNLOAD_ICON}
       <span>${esc(t.post.downloadPhoto)}</span>
     </button>
+  </div>
+</div>
+
+<div class="modal-backdrop app-device-approve-backdrop notranslate" id="appDeviceApproveModal" translate="no" aria-hidden="true">
+  <div class="modal-content app-device-approve-content" role="dialog" aria-modal="true" aria-labelledby="appDeviceApproveTitle">
+    <div class="modal-header">
+      <h3 class="modal-title" id="appDeviceApproveTitle">${esc(t.security.devicePromptTitle)}</h3>
+      <button class="modal-close" id="closeAppDeviceApproveBtn" type="button" aria-label="${esc(t.common.close)}">${CLOSE_MODAL_ICON}</button>
+    </div>
+    <p class="pg-recover-desc">${esc(t.security.devicePromptDesc)}</p>
+    <div class="pg-devices-modal-body" id="appDeviceApproveList"></div>
+    <div class="app-device-approve-footer">
+      <button type="button" class="btn btn-secondary btn-sm" id="laterAppDeviceApproveBtn">${esc(t.security.devicePromptLaterBtn)}</button>
+    </div>
   </div>
 </div>
 
@@ -860,6 +874,24 @@ window.showAppConfirm = function(opts) {
           }
           return;
         }
+        if (ev.type === 'e2ee.device_pending') {
+          if (window.checkPendingE2eeDevices) {
+            window.checkPendingE2eeDevices({ force: false, triggeredDeviceId: Number(ev.device_id || 0) });
+          }
+          return;
+        }
+        if (ev.type === 'e2ee.device_approved' || ev.type === 'e2ee.device_revoked') {
+          if (window.handleE2eeDeviceResolved) {
+            window.handleE2eeDeviceResolved(Number(ev.device_id || 0), ev.type);
+          }
+          return;
+        }
+        if (ev.type === 'e2ee.devices_reset') {
+          if (window.closePendingE2eeDeviceModal) {
+            window.closePendingE2eeDeviceModal(false);
+          }
+          return;
+        }
         if (ev.type === 'session.revoked') {
           stopped = true;
           stopHeartbeat();
@@ -914,6 +946,7 @@ window.showAppConfirm = function(opts) {
           if (hadConnected) {
             if (window.refreshUnreadMessagesBadge) window.refreshUnreadMessagesBadge();
             if (window.refreshNotificationsBadge) window.refreshNotificationsBadge();
+            if (window.checkPendingE2eeDevices) window.checkPendingE2eeDevices({ force: false });
             dispatch({ type: '__reconnected' });
           } else {
             hadConnected = true;
@@ -957,9 +990,14 @@ window.showAppConfirm = function(opts) {
       }
 
       document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible' && !stopped && !connected && isLoggedInDom()) {
-          attempt = 0;
-          connect();
+        if (document.visibilityState === 'visible' && isLoggedInDom()) {
+          if (!stopped && !connected) {
+            attempt = 0;
+            connect();
+          }
+          if (window.__pgE2eeUserId && window.checkPendingE2eeDevices) {
+            window.checkPendingE2eeDevices({ force: false });
+          }
         }
       });
 
@@ -1136,7 +1174,12 @@ window.showAppConfirm = function(opts) {
   window.wipeLocalAccountData = async function(userId) {
     try {
       sessionStorage.removeItem('pg_last_notif_id');
+      if (userId) sessionStorage.removeItem('pg_dismissed_pending_devs_' + Number(userId));
     } catch (e) {}
+    window.__pgE2eeUserId = 0;
+    if (window.closePendingE2eeDeviceModal) {
+      window.closePendingE2eeDeviceModal(false);
+    }
     var uid = Number(userId || 0);
     if (!uid || uid <= 0) return;
     try {
@@ -1178,6 +1221,237 @@ window.showAppConfirm = function(opts) {
     return window.__pgE2eeLoadPromise;
   };
 
+  var devPromptI18n = ${safeJsonForScript({
+    codeLabel: t.security.deviceCodeLabel,
+    pendingBadge: t.security.devicePendingBadge,
+    approveBtn: t.security.deviceApproveBtn,
+    approvingBtn: t.security.deviceApprovingBtn,
+    approveSuccess: t.security.deviceApproveSuccess,
+    rejectBtn: t.security.devicePromptRejectBtn,
+    revokeSuccess: t.security.deviceRevokeSuccess,
+    networkError: t.common.networkError
+  })};
+
+  var devApproveModal = document.getElementById('appDeviceApproveModal');
+  var devApproveList = document.getElementById('appDeviceApproveList');
+  var closeDevApproveBtn = document.getElementById('closeAppDeviceApproveBtn');
+  var laterDevApproveBtn = document.getElementById('laterAppDeviceApproveBtn');
+  var checkingPendingDevs = false;
+  var lastPendingDevCheckAt = 0;
+  var shownPendingDevIds = [];
+
+  function getDismissedPendingMap(uid) {
+    if (!uid) return {};
+    try {
+      var raw = sessionStorage.getItem('pg_dismissed_pending_devs_' + uid);
+      var parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function markDismissedPendingIds(uid, ids) {
+    if (!uid || !ids || !ids.length) return;
+    try {
+      var map = getDismissedPendingMap(uid);
+      for (var i = 0; i < ids.length; i++) {
+        map[String(ids[i])] = 1;
+      }
+      sessionStorage.setItem('pg_dismissed_pending_devs_' + uid, JSON.stringify(map));
+    } catch (e) {}
+  }
+
+  window.closePendingE2eeDeviceModal = function(rememberDismissed) {
+    if (rememberDismissed && window.__pgE2eeUserId && shownPendingDevIds.length > 0) {
+      markDismissedPendingIds(window.__pgE2eeUserId, shownPendingDevIds);
+    }
+    shownPendingDevIds = [];
+    if (devApproveModal) {
+      devApproveModal.classList.remove('visible');
+      devApproveModal.setAttribute('aria-hidden', 'true');
+    }
+  };
+
+  window.handleE2eeDeviceResolved = function(deviceId, evType) {
+    var did = Number(deviceId || 0);
+    if (did > 0 && devApproveList) {
+      var card = devApproveList.querySelector('.pg-device-card[data-device-id="' + did + '"]');
+      if (card && card.parentNode) card.parentNode.removeChild(card);
+      shownPendingDevIds = shownPendingDevIds.filter(function(x) { return Number(x) !== did; });
+      if (devApproveList.children.length === 0 && devApproveModal && devApproveModal.classList.contains('visible')) {
+        window.closePendingE2eeDeviceModal(false);
+      }
+    }
+    if (evType === 'e2ee.device_approved' && window.PhotogramE2EE && window.__pgE2eeUserId) {
+      try {
+        window.PhotogramE2EE.getClient(Number(window.__pgE2eeUserId)).refreshDeviceStatus().catch(function() {});
+      } catch (e) {}
+    }
+  };
+
+  if (closeDevApproveBtn) {
+    closeDevApproveBtn.addEventListener('click', function() {
+      window.closePendingE2eeDeviceModal(true);
+    });
+  }
+  if (laterDevApproveBtn) {
+    laterDevApproveBtn.addEventListener('click', function() {
+      window.closePendingE2eeDeviceModal(true);
+    });
+  }
+  if (devApproveModal) {
+    devApproveModal.addEventListener('click', function(e) {
+      if (e.target === devApproveModal) window.closePendingE2eeDeviceModal(true);
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && devApproveModal.classList.contains('visible')) {
+        window.closePendingE2eeDeviceModal(true);
+      }
+    });
+  }
+
+  window.checkPendingE2eeDevices = async function(opts) {
+    if (!devApproveModal || !devApproveList) return;
+    if (!document.getElementById('navMessagesBadge')) return;
+    opts = opts || {};
+    var settingsDevModal = document.getElementById('devicesModal');
+    if (settingsDevModal && settingsDevModal.classList.contains('visible')) return;
+    var triggeredId = Number(opts.triggeredDeviceId || 0);
+    var nowMs = Date.now();
+    if (!opts.force && !triggeredId && (nowMs - lastPendingDevCheckAt) < 20000) return;
+    if (checkingPendingDevs) return;
+    checkingPendingDevs = true;
+    lastPendingDevCheckAt = nowMs;
+    try {
+      var uid = Number(window.__pgE2eeUserId || 0);
+      if (!uid) {
+        var cntRes = await fetch('/api/e2ee/keys/count', { credentials: 'same-origin', cache: 'no-store' });
+        if (!cntRes.ok) return;
+        var cntData = await cntRes.json();
+        uid = Number(cntData && cntData.user_id || 0);
+        if (!uid) return;
+        window.__pgE2eeUserId = uid;
+      }
+      var mod = await window.loadPhotogramE2ee();
+      var c = mod.getClient(uid);
+      await c.ensureInitialized();
+      var st = await c.refreshDeviceStatus();
+      if (!st || st.approvalStatus !== 'approved' || !(Number(st.pendingCount || 0) > 0)) {
+        if (devApproveModal.classList.contains('visible')) {
+          window.closePendingE2eeDeviceModal(false);
+        }
+        return;
+      }
+      var listRes = await c.listOwnDevices();
+      var allDevs = Array.isArray(listRes && listRes.devices) ? listRes.devices : [];
+      var pending = allDevs.filter(function(d) {
+        return d && !d.is_current && d.approval_status === 'pending';
+      });
+      if (pending.length === 0) {
+        if (devApproveModal.classList.contains('visible')) {
+          window.closePendingE2eeDeviceModal(false);
+        }
+        return;
+      }
+      var dismissed = getDismissedPendingMap(uid);
+      if (!opts.force) {
+        var hasUnseen = pending.some(function(d) { return !dismissed[String(d.device_id)]; });
+        if (!hasUnseen) return;
+      }
+      var toRender = opts.force ? pending : pending.filter(function(d) { return !dismissed[String(d.device_id)]; });
+      if (toRender.length === 0) return;
+
+      while (devApproveList.firstChild) devApproveList.removeChild(devApproveList.firstChild);
+      shownPendingDevIds = [];
+
+      for (var i = 0; i < toRender.length; i++) {
+        (function(dev) {
+          shownPendingDevIds.push(Number(dev.device_id));
+          var card = document.createElement('div');
+          card.className = 'pg-device-card';
+          card.setAttribute('data-device-id', String(dev.device_id));
+
+          var top = document.createElement('div');
+          top.className = 'pg-device-top';
+          var nameEl = document.createElement('div');
+          nameEl.className = 'pg-device-name';
+          nameEl.textContent = dev.device_label || ('Device #' + dev.device_id);
+          top.appendChild(nameEl);
+
+          var badge = document.createElement('span');
+          badge.className = 'pg-device-badge is-pending';
+          badge.textContent = devPromptI18n.pendingBadge;
+          top.appendChild(badge);
+          card.appendChild(top);
+
+          var codeEl = document.createElement('div');
+          codeEl.className = 'pg-device-code';
+          codeEl.textContent = devPromptI18n.codeLabel + ': ' + (dev.verification_code || '');
+          card.appendChild(codeEl);
+
+          var actions = document.createElement('div');
+          actions.className = 'pg-device-actions';
+
+          var apprBtn = document.createElement('button');
+          apprBtn.type = 'button';
+          apprBtn.className = 'btn btn-primary btn-sm';
+          apprBtn.textContent = devPromptI18n.approveBtn;
+
+          var rejBtn = document.createElement('button');
+          rejBtn.type = 'button';
+          rejBtn.className = 'btn btn-danger btn-sm';
+          rejBtn.textContent = devPromptI18n.rejectBtn;
+
+          apprBtn.addEventListener('click', async function() {
+            apprBtn.disabled = true;
+            rejBtn.disabled = true;
+            apprBtn.textContent = devPromptI18n.approvingBtn;
+            try {
+              await c.approvePendingDevice(Number(dev.device_id));
+              if (card.parentNode) card.parentNode.removeChild(card);
+              shownPendingDevIds = shownPendingDevIds.filter(function(x) { return Number(x) !== Number(dev.device_id); });
+              if (window.showAppToast) window.showAppToast(devPromptI18n.approveSuccess);
+              if (devApproveList.children.length === 0) window.closePendingE2eeDeviceModal(false);
+            } catch (err) {
+              if (window.showAppToast) window.showAppToast((err && err.message) || devPromptI18n.networkError);
+              apprBtn.disabled = false;
+              rejBtn.disabled = false;
+              apprBtn.textContent = devPromptI18n.approveBtn;
+            }
+          });
+
+          rejBtn.addEventListener('click', async function() {
+            apprBtn.disabled = true;
+            rejBtn.disabled = true;
+            try {
+              await c.revokeDevice(Number(dev.device_id));
+              if (card.parentNode) card.parentNode.removeChild(card);
+              shownPendingDevIds = shownPendingDevIds.filter(function(x) { return Number(x) !== Number(dev.device_id); });
+              if (window.showAppToast) window.showAppToast(devPromptI18n.revokeSuccess);
+              if (devApproveList.children.length === 0) window.closePendingE2eeDeviceModal(false);
+            } catch (err) {
+              if (window.showAppToast) window.showAppToast((err && err.message) || devPromptI18n.networkError);
+              apprBtn.disabled = false;
+              rejBtn.disabled = false;
+            }
+          });
+
+          actions.appendChild(apprBtn);
+          actions.appendChild(rejBtn);
+          card.appendChild(actions);
+          devApproveList.appendChild(card);
+        })(toRender[i]);
+      }
+
+      devApproveModal.classList.add('visible');
+      devApproveModal.setAttribute('aria-hidden', 'false');
+    } catch (e) {
+    } finally {
+      checkingPendingDevs = false;
+    }
+  };
+
   if (!window.__pgE2eeBgInit) {
     window.__pgE2eeBgInit = true;
     setTimeout(function() {
@@ -1186,8 +1460,14 @@ window.showAppConfirm = function(opts) {
         .then(function(r) { return r.ok ? r.json() : null; })
         .then(function(d) {
           if (!d || !d.user_id) return;
+          var uid = Number(d.user_id);
+          window.__pgE2eeUserId = uid;
           return window.loadPhotogramE2ee().then(function(mod) {
-            return mod.getClient(Number(d.user_id)).ensureInitialized();
+            return mod.getClient(uid).ensureInitialized().then(function() {
+              if (window.checkPendingE2eeDevices) {
+                window.checkPendingE2eeDevices({ force: false });
+              }
+            });
           });
         })
         .catch(function() {});
