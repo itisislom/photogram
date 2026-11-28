@@ -341,6 +341,7 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
   var replyingTo = null;
   var activeCommentCtx = null;
   var commentHoldTimer = null;
+  var commentHoldFired = false;
   var commentHoldStartX = 0;
   var commentHoldStartY = 0;
   var likeBurstTimer = null;
@@ -602,7 +603,7 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     }
   }
 
-  function openCommentCtxMenu(itemEl, clientX, clientY) {
+  function openCommentCtxMenu(itemEl, clientX, clientY, fromTouch) {
     closeCommentCtxMenu();
     if (!itemEl) return;
     var canPin = itemEl.getAttribute('data-can-pin') === '1';
@@ -611,18 +612,42 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     var cid = parseInt(itemEl.getAttribute('data-comment-id') || '0', 10);
     if (!cid) return;
     var isPinned = itemEl.getAttribute('data-is-pinned') === '1';
+    var now = Date.now();
+    var ctxState = {
+      backdrop: null,
+      menu: null,
+      openedAt: now,
+      ignoreClickUntil: fromTouch ? (now + 1400) : 0,
+      ignoreContextUntil: fromTouch ? (now + 1400) : 0
+    };
 
     var backdrop = document.createElement('div');
     backdrop.className = 'comment-ctx-backdrop';
-    backdrop.addEventListener('click', closeCommentCtxMenu);
+    backdrop.addEventListener('click', function(ev) {
+      if (Date.now() < ctxState.ignoreClickUntil) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      closeCommentCtxMenu();
+    });
+    backdrop.addEventListener('touchstart', function(ev) {
+      if (Date.now() - ctxState.openedAt < 140) return;
+      if (ev.cancelable) ev.preventDefault();
+      closeCommentCtxMenu();
+    }, { passive: false });
     backdrop.addEventListener('contextmenu', function(ev) {
       ev.preventDefault();
+      if (Date.now() < ctxState.ignoreContextUntil) return;
       closeCommentCtxMenu();
     });
 
     var menu = document.createElement('div');
     menu.className = 'comment-ctx-menu';
     menu.setAttribute('role', 'menu');
+    menu.addEventListener('contextmenu', function(ev) {
+      ev.preventDefault();
+    });
 
     if (canPin) {
       var btn = document.createElement('button');
@@ -656,10 +681,12 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     var mw = menu.offsetWidth || 180;
     var mh = menu.offsetHeight || 56;
     var left = Math.max(12, Math.min(window.innerWidth - mw - 12, (clientX || window.innerWidth / 2) - mw / 2));
-    var top = Math.max(12, Math.min(window.innerHeight - mh - 12, (clientY || window.innerHeight / 2) - mh - 8));
+    var top = Math.max(12, Math.min(window.innerHeight - mh - 12, (clientY || window.innerHeight / 2) - mh - 18));
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
-    activeCommentCtx = { backdrop: backdrop, menu: menu };
+    ctxState.backdrop = backdrop;
+    ctxState.menu = menu;
+    activeCommentCtx = ctxState;
   }
 
   function cancelReplyMode() {
@@ -1285,6 +1312,24 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
     });
   }
 
+  if (viewLikesCount) {
+    viewLikesCount.setAttribute('role', 'button');
+    viewLikesCount.setAttribute('tabindex', '0');
+    var openViewPostLikes = function(e) {
+      e.stopPropagation();
+      var pid = parseInt(activePostId || '0', 10);
+      if (!pid || !window.openLikeList) return;
+      window.openLikeList({ postId: pid, initialCount: parseInt(viewLikesCount.textContent || '0', 10) || 0 });
+    };
+    viewLikesCount.addEventListener('click', openViewPostLikes);
+    viewLikesCount.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openViewPostLikes(e);
+      }
+    });
+  }
+
   var viewShareBtnInit = document.getElementById('viewPostShareBtn');
   if (viewShareBtnInit) {
     viewShareBtnInit.addEventListener('click', function(e) {
@@ -1469,6 +1514,16 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
 
   if (viewCommentsList) {
     viewCommentsList.addEventListener('click', async function(e) {
+      var likeCntHit = e.target && e.target.closest ? e.target.closest('.comment-like-count') : null;
+      if (likeCntHit && (likeCntHit.textContent || '').trim() && window.openLikeList) {
+        var parentLikeBtn = likeCntHit.closest('.comment-like-btn');
+        var cntCommentId = parentLikeBtn ? parseInt(parentLikeBtn.getAttribute('data-like-comment-id') || '0', 10) : 0;
+        if (cntCommentId > 0) {
+          e.stopPropagation();
+          window.openLikeList({ commentId: cntCommentId, initialCount: parseInt(likeCntHit.textContent || '0', 10) || 0 });
+          return;
+        }
+      }
       var likeBtn = e.target && e.target.closest ? e.target.closest('.comment-like-btn') : null;
       if (likeBtn) {
         var likeCommentId = parseInt(likeBtn.getAttribute('data-like-comment-id') || '0', 10);
@@ -1549,7 +1604,8 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
       var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"], .comment-item[data-can-delete="1"]') : null;
       if (!item) return;
       e.preventDefault();
-      openCommentCtxMenu(item, e.clientX, e.clientY);
+      if (activeCommentCtx && Date.now() < activeCommentCtx.ignoreContextUntil) return;
+      openCommentCtxMenu(item, e.clientX, e.clientY, false);
     });
 
     viewCommentsList.addEventListener('touchstart', function(e) {
@@ -1558,15 +1614,17 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
       var item = e.target && e.target.closest ? e.target.closest('.comment-item[data-can-pin="1"], .comment-item[data-can-delete="1"]') : null;
       if (!item) return;
       var touch = e.touches[0];
+      commentHoldFired = false;
       commentHoldStartX = touch.clientX;
       commentHoldStartY = touch.clientY;
       if (commentHoldTimer) clearTimeout(commentHoldTimer);
       commentHoldTimer = setTimeout(function() {
         commentHoldTimer = null;
+        commentHoldFired = true;
         if (navigator.vibrate) {
           try { navigator.vibrate(15); } catch (ve) {}
         }
-        openCommentCtxMenu(item, commentHoldStartX, commentHoldStartY);
+        openCommentCtxMenu(item, commentHoldStartX, commentHoldStartY, true);
       }, 420);
     }, { passive: true });
 
@@ -1580,13 +1638,21 @@ ${data.current_user_id ? renderShareSheetScript(data.current_user_id, t) : ''}
       }
     }, { passive: true });
 
-    var clearProfileHold = function() {
+    var clearProfileHold = function(e) {
       if (commentHoldTimer) {
         clearTimeout(commentHoldTimer);
         commentHoldTimer = null;
       }
+      if (commentHoldFired) {
+        commentHoldFired = false;
+        if (e && e.cancelable) e.preventDefault();
+        if (activeCommentCtx) {
+          var until = Date.now() + 500;
+          if (activeCommentCtx.ignoreClickUntil < until) activeCommentCtx.ignoreClickUntil = until;
+        }
+      }
     };
-    viewCommentsList.addEventListener('touchend', clearProfileHold, { passive: true });
+    viewCommentsList.addEventListener('touchend', clearProfileHold, { passive: false });
     viewCommentsList.addEventListener('touchcancel', clearProfileHold, { passive: true });
   }
 

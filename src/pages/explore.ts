@@ -770,6 +770,14 @@ ${renderShareSheetScript(currentUser.id, t)}
       if (likeBtn) {
         likeBtn.onclick = function(e) {
           e.stopPropagation();
+          var cntHit = e.target && e.target.closest ? e.target.closest('.pics-action-count') : null;
+          if (cntHit && window.openLikeList) {
+            var pidNum = parseInt(slide.dataset.postId || '0', 10);
+            if (pidNum > 0) {
+              window.openLikeList({ postId: pidNum, initialCount: parseInt(cntHit.textContent || '0', 10) || 0 });
+              return;
+            }
+          }
           if (window.markPostEngaged) window.markPostEngaged(slide.dataset.postId);
           toggleSlideLike(slide, false);
         };

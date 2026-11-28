@@ -33,8 +33,8 @@
   [ Cloudflare Pages Worker ]  ──── service binding ────▶  [ Realtime Worker (Durable Objects) ]
    (src/index.ts -> _worker.js)                             (workers/realtime/src/index.ts)
      ├── Auth (PBKDF2-SHA256, HttpOnly sessions, multi-account)    └── UserHub (WebSocket Hibernation)
-     ├── Posts, Comments (replies/pins/likes), Likes, Follows            ├── Live messages & edits
-     ├── Recommendations & Telemetry batching                            ├── Typing & read receipts
+     ├── Posts, Comments (replies/pins/likes), Likes, Follows            ├── Live messages, edits & presence (online/offline)
+     ├── Recommendations & Telemetry batching                            ├── Activity indicators (typing, voice, photo) & read receipts
      ├── E2EE Key Directory, Signed Device Lists & Challenges            ├── Reactions & voice listened
      ├── Encrypted Backup & Device Transfer API (src/backup.ts)          └── Device approval / reset events
      ├── Opt-in Link Previews (SSRF-hardened proxy)
@@ -70,11 +70,11 @@
   - Transfers available encrypted message cache (never active Signal sessions, PreKeys, or Identity KeyPair) between approved devices using ephemeral ECDH P-256 + `HKDF-SHA-256` + `AES-256-GCM` authenticated with both devices' ECDSA P-256 keys, `transferId`, QR payload (`PGX1:...`), and 6-digit verification code.
   - Verifies device membership against signed `e2ee_device_lists`, enforces single-use completion, and removes expired R2 transfer blobs (`cleanupExpiredTransfers`).
 - **Opt-In Link Previews**: Disabled by default for new users (`users.link_previews_enabled = 0`) with explicit Settings disclosure that enabled previews send URLs to the Photogram server. When disabled, neither outgoing URL lookups nor incoming preview image fetches are made (enforced with HTTP `403` on the server).
-- **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); typing indicators; YouTube embed modal with clickable timecodes; shared posts that return directly to the originating chat and exact scroll position (including auto-loading older pages) on close or Back.
+- **Rich Chat UX**: Voice messages with tap-to-record, waveform rendering, and listened indicators; emoji reactions; replies; photo editing/replacement; read receipts (single/double checkmarks); real-time activity indicators (`typing`, `recording voice`, `choosing a photo`) and live `Online` / `Offline` partner presence; YouTube embed modal with clickable timecodes; shared posts that return directly to the originating chat and exact scroll position (including auto-loading older pages) on close or Back.
 
 ### 2. Real-Time Messaging via Durable Objects WebSocket Hibernation
 - Dedicated worker (`workers/realtime`) hosting per-user `UserHub` Durable Objects using the Cloudflare WebSocket Hibernation API.
-- CSWSH protection (`Origin` + `Sec-Fetch-Site`), per-user/per-IP connection rate limits, instant delivery of messages, edits, deletions, reactions, typing, read/listened receipts, and E2EE device events, with automatic fallback polling if WebSockets disconnect.
+- CSWSH protection (`Origin` + `Sec-Fetch-Site`), per-user/per-IP connection rate limits, instant delivery of messages, edits, deletions, reactions, live online/offline presence (`presence.update` scoped to authorized conversation partners), chat activity indicators (`text`, `voice`, `photo`), read/listened receipts, and E2EE device events, with automatic fallback polling if WebSockets disconnect.
 
 ### 3. Personalized Recommendation Engine
 - Dual-factor affinity graph (`user_affinity` + `user_tag_affinity`) with multilingual Latin/Cyrillic tokenization (`src/recommendations.ts`).
@@ -83,7 +83,7 @@
 ### 4. Social Feed, Profiles, Comments & Media
 - Mobile-first Instagram-grade UI in Light and Dark themes.
 - Double-tap heart reaction on posts, mobile two-finger pinch-to-zoom with snap-back animation, and fullscreen vertical Pics Mode.
-- Threaded comments with replies, author likes, pinning, and unified context-menu actions (long-press on mobile / right-click on desktop).
+- Threaded comments with replies, author likes, pinning, unified context-menu actions (long-press on mobile / right-click on desktop), and responsive like lists (`src/pages/likelist.ts` — centered desktop modal and mobile bottom sheet with tap/swipe-down grabber across Feed, Profile, Explore Pics Mode, and Comments).
 - Client-side image compression/cropping to WebP with full + thumbnail variants stored in R2.
 - Multi-account switcher (`/accountlist`), Activity center (`/activity`), and Instagram-style Web Push notifications (VAPID, `src/push.ts`, adaptive monochrome camera badge `/push-badge.svg`, actor avatars, post thumbnails, deep links to exact chats/posts/profiles, and zero duplicate app logos).
 
@@ -141,7 +141,7 @@ Photogram/
 │   │   ├── messages.ts                 # E2EE messenger UI, voice recorder, Safety Number/QR
 │   │   ├── settings.ts                 # Theme, language, notifications, Link Previews, Devices & Backup
 │   │   ├── activity.ts / accountlist.ts / notifications.ts
-│   │   ├── commentsModal.ts / share.ts / publishpost.ts / editprofile.ts
+│   │   ├── commentsModal.ts / likelist.ts / share.ts / publishpost.ts / editprofile.ts
 │   │   ├── sublist.ts / subslist.ts / nav.ts / login.ts / register.ts / useraccept.ts / error.ts
 │   ├── activity.ts / auth.ts / backup.ts / blockedUsernames.ts / e2ee.ts
 │   ├── index.ts                        # Main Cloudflare Pages Worker router

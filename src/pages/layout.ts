@@ -1,4 +1,5 @@
 import { Translations, ru, renderLangScript } from '../languages';
+import { renderLikeListHtml, renderLikeListScript } from './likelist';
 
 export function esc(str: any): string {
   if (str === null || str === undefined) return '';
@@ -33,7 +34,7 @@ export const TRASH_POST_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const CLOSE_MODAL_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-export const APP_STYLE_VERSION = '20261128-v23';
+export const APP_STYLE_VERSION = '20261128-v27';
 
 let activeCspNonce = '';
 
@@ -169,6 +170,8 @@ ${body}
     </div>
   </div>
 </div>
+
+${renderLikeListHtml(t)}
 
 <div class="app-bottom-toast notranslate" id="appBottomToast" role="status" aria-live="polite" translate="no"></div>
 
@@ -678,6 +681,8 @@ window.showAppConfirm = function(opts) {
     }, 2600);
   };
 
+${renderLikeListScript(t)}
+
   window.updateUnreadMessagesBadge = function(count) {
     var n = Number(count) || 0;
     document.querySelectorAll('#navMessagesBadge').forEach(function(el) {
@@ -1031,13 +1036,15 @@ window.showAppConfirm = function(opts) {
         isFallback: function() {
           return !connected && failCount >= 3;
         },
-        sendTyping: function(convId, isTyping) {
+        sendTyping: function(convId, isTyping, action) {
           if (!connected || !ws || ws.readyState !== 1) return false;
           var cid = Number(convId);
           if (!cid || cid <= 0) return false;
+          var act = (action === 'voice' || action === 'photo') ? action : 'text';
           try {
             ws.send(JSON.stringify({
               type: isTyping ? 'typing.start' : 'typing.stop',
+              action: act,
               conversation_id: cid
             }));
             return true;
@@ -2267,6 +2274,7 @@ ${trustedScriptOpen()}
       'viewPostModal',
       'picsModal',
       'appCommentsSheet',
+      'appLikeListSheet',
       'appShareSheet',
       'dmPhotoLightbox',
       'dmVideoPlayerModal',
@@ -2281,7 +2289,7 @@ ${trustedScriptOpen()}
       if (!el) continue;
       el.classList.add('pg-no-transition');
       el.classList.remove('visible');
-      if (ids[i] === 'appCommentsSheet') {
+      if (ids[i] === 'appCommentsSheet' || ids[i] === 'appLikeListSheet') {
         el.style.display = 'none';
       }
       if (ids[i] === 'dmVideoPlayerModal') {
@@ -2292,6 +2300,8 @@ ${trustedScriptOpen()}
       el.classList.remove('pg-no-transition');
     }
     document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+    document.documentElement.style.overscrollBehavior = '';
   }
 
   function makeSignalOpts(opts, signal) {

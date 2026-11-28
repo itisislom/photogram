@@ -158,6 +158,22 @@ export async function revokeRealtimeConversation(
   } catch {}
 }
 
+export async function getUserOnlineStatus(
+  env: Env,
+  userId: number,
+): Promise<boolean> {
+  const stub = getUserHubStub(env, userId);
+  if (!stub) return false;
+  try {
+    const res = await stub.fetch('https://hub/presence', { method: 'GET' });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { online?: unknown };
+    return Boolean(data?.online);
+  } catch {
+    return false;
+  }
+}
+
 export async function revokeUserRealtimeSessions(
   env: Env,
   userId: number,

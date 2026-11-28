@@ -312,6 +312,10 @@ export const kz: Translations = {
     today: 'Бүгін',
     yesterday: 'Кеше',
     typing: 'жазып жатыр...',
+    recordingVoice: 'дауыстық жазып жатыр...',
+    choosingPhoto: 'фото таңдап жатыр...',
+    online: 'Желіде',
+    offline: 'Желіде емес',
     playVideo: 'Бейнені ашу',
     openOnYoutube: 'YouTube-та ашу',
     unsend: 'Жіберуді болдырмау',
@@ -445,6 +449,12 @@ export const kz: Translations = {
     loadMore: 'Тағы көрсету',
     unlikedToast: 'Лайктар алынып тасталды',
     deletedCommentsToast: 'Пікірлер жойылды',
+  },
+
+  likeList: {
+    title: 'Ұнатулар',
+    empty: 'Әзірге ұнатулар жоқ',
+    loadMore: 'Тағы көрсету',
   },
 
   share: {

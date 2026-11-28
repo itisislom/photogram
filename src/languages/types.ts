@@ -286,6 +286,10 @@ export interface Translations {
     e2eeDecryptFailed: string;
     e2eeInitializing: string;
     typing: string;
+    recordingVoice: string;
+    choosingPhoto: string;
+    online: string;
+    offline: string;
     playVideo: string;
     openOnYoutube: string;
   };
@@ -383,6 +387,12 @@ export interface Translations {
     loadMore: string;
     unlikedToast: string;
     deletedCommentsToast: string;
+  };
+
+  likeList: {
+    title: string;
+    empty: string;
+    loadMore: string;
   };
 
   share: {

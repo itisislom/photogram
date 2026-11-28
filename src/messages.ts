@@ -11,6 +11,7 @@ import {
   authorizeRealtimeConversation,
   authorizeRealtimeConversations,
   emitUserEvent,
+  getUserOnlineStatus,
   revokeRealtimeConversation,
 } from './realtime';
 import {
@@ -534,6 +535,7 @@ export async function getChatPageData(
   messages: DirectMessage[];
   hasMore: boolean;
   lastReadOwnId: number;
+  partnerOnline?: boolean;
   notFound?: boolean;
 }> {
   let activeConversationId: number | null = null;
@@ -541,6 +543,7 @@ export async function getChatPageData(
   let messages: DirectMessage[] = [];
   let hasMore = false;
   let lastReadOwnId = 0;
+  let partnerOnline = false;
 
   const convsPromise = getUserConversations(env, currentUser.id);
 
@@ -631,7 +634,11 @@ export async function getChatPageData(
     }
   }
 
-  const conversations = await convsPromise;
+  const [conversations, resolvedOnline] = await Promise.all([
+    convsPromise,
+    activePartner ? getUserOnlineStatus(env, activePartner.id) : Promise.resolve(false),
+  ]);
+  partnerOnline = resolvedOnline;
   if (activeConversationId) {
     for (const c of conversations) {
       if (c.id === activeConversationId) c.unread_count = 0;
@@ -649,6 +656,7 @@ export async function getChatPageData(
     messages,
     hasMore,
     lastReadOwnId,
+    partnerOnline,
   };
 }
 
@@ -744,13 +752,15 @@ export async function handleGetMessages(
     return jsonResponse({ success: true, messages, has_more: hasMore }, 200);
   }
 
-  const [loaded, lastReadOwnId] = await Promise.all([
+  const partnerIdForPresence = conv.user1_id === Number(user.id) ? conv.user2_id : conv.user1_id;
+  const [loaded, lastReadOwnId, partnerOnline] = await Promise.all([
     getConversationMessages(env, convId, user.id, undefined, PAGE_SIZE, conv.cleared_before_id, viewerSlot),
     getLastReadOwnMessageId(env, convId, user.id, conv.cleared_before_id, viewerSlot),
+    getUserOnlineStatus(env, partnerIdForPresence),
   ]);
 
   if (wantMarkRead) {
-    const partnerId = conv.user1_id === Number(user.id) ? conv.user2_id : conv.user1_id;
+    const partnerId = partnerIdForPresence;
     const partnerSlot: 1 | 2 = viewerSlot === 1 ? 2 : 1;
     const partnerCleared =
       partnerSlot === 1 ? conv.user1_cleared_before_id : conv.user2_cleared_before_id;
@@ -783,6 +793,7 @@ export async function handleGetMessages(
       messages: loaded.messages,
       has_more: loaded.hasMore,
       last_read_own_id: lastReadOwnId,
+      partner_online: partnerOnline,
     },
     200,
   );
@@ -952,13 +963,15 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
     }
   }
 
-  const [lastReadOwnId, unreadTotal, reactionsMap, editedMessages, deletedMessageIds, listenedMessageIds] = await Promise.all([
+  const partnerIdForPoll = conv.user1_id === Number(user.id) ? conv.user2_id : conv.user1_id;
+  const [lastReadOwnId, unreadTotal, reactionsMap, editedMessages, deletedMessageIds, listenedMessageIds, partnerOnline] = await Promise.all([
     getLastReadOwnMessageId(env, convId, user.id, conv.cleared_before_id, viewerSlot),
     getTotalUnreadCount(env, user.id),
     getConversationReactionsMap(env, convId, user.id, conv.cleared_before_id, minMsgId, viewerSlot),
     getEditedMessagesInWindow(env, convId, user.id, conv.cleared_before_id, minMsgId, viewerSlot),
     getDeletedMessageIdsInWindow(env, convId, viewerSlot, conv.cleared_before_id, minMsgId),
     getListenedMessageIdsInWindow(env, convId, conv.cleared_before_id, minMsgId, viewerSlot),
+    getUserOnlineStatus(env, partnerIdForPoll),
   ]);
   const messagesWithReactions = newMessages.map((m) => ({
     ...m,
@@ -975,6 +988,7 @@ export async function handlePollMessages(request: Request, env: Env, url: URL): 
       reactions_map: reactionsMap,
       last_read_own_id: lastReadOwnId,
       unread_total: unreadTotal,
+      partner_online: partnerOnline,
     },
     200,
   );

@@ -312,6 +312,10 @@ export const uz: Translations = {
     today: 'Bugun',
     yesterday: 'Kecha',
     typing: 'yozmoqda...',
+    recordingVoice: 'ovozli xabar yozmoqda...',
+    choosingPhoto: 'surat tanlamoqda...',
+    online: 'Onlayn',
+    offline: 'Oflayn',
     playVideo: 'Videoni ochish',
     openOnYoutube: 'YouTube-da ochish',
     unsend: 'Yuborishni bekor qilish',
@@ -445,6 +449,12 @@ export const uz: Translations = {
     loadMore: 'Yana yuklash',
     unlikedToast: 'Layklar olib tashlandi',
     deletedCommentsToast: 'Izohlar o‘chirildi',
+  },
+
+  likeList: {
+    title: 'Layklar',
+    empty: 'Hali layklar yo‘q',
+    loadMore: 'Yana ko‘rsatish',
   },
 
   share: {

@@ -124,6 +124,7 @@ export interface MessagesPageData {
   messages: DirectMessage[];
   hasMore: boolean;
   lastReadOwnId: number;
+  partnerOnline?: boolean;
 }
 
 export function messagesPage(
@@ -133,7 +134,7 @@ export function messagesPage(
   theme?: string,
   timeZone: string = 'UTC',
 ): string {
-  const { conversations, activeConversationId, activePartner, messages, hasMore, lastReadOwnId } = data;
+  const { conversations, activeConversationId, activePartner, messages, hasMore, lastReadOwnId, partnerOnline } = data;
   const hasActive = Boolean(activePartner);
 
   const convListHtml = conversations.length > 0
@@ -289,7 +290,7 @@ export function messagesPage(
         <div class="dm-avatar dm-avatar-sm" id="dmThreadAvatar">${pAvatar}</div>
         <div class="dm-thread-partner-info">
           <div class="dm-thread-username" id="dmThreadUsername">${escapeHtml(activePartner.username)}${activePartner.is_verified ? renderVerifiedBadge(13.5) : ''}</div>
-          <div class="dm-thread-display" id="dmThreadSubtitle" data-default-text="${escapeHtml(activePartner.display_name || activePartner.username)}">${escapeHtml(activePartner.display_name || activePartner.username)}</div>
+          <div class="dm-thread-display${partnerOnline ? ' is-online' : ''}" id="dmThreadSubtitle" data-default-text="${escapeHtml(activePartner.display_name || activePartner.username)}">${escapeHtml(partnerOnline ? t.messages.online : t.messages.offline)}</div>
         </div>
       </a>
     </header>
@@ -612,6 +613,7 @@ export function messagesPage(
     activeConversationId: activeConversationId || 0,
     activePartnerId: activePartner ? activePartner.id : 0,
     activePartnerUsername: activePartner ? activePartner.username : '',
+    partnerOnline: Boolean(partnerOnline),
     lastMsgId,
     oldestMsgId,
     lastReadOwnId,
@@ -656,6 +658,10 @@ export function messagesPage(
     todayLabel: t.messages.today,
     yesterdayLabel: t.messages.yesterday,
     typingLabel: t.messages.typing,
+    recordingVoiceLabel: t.messages.recordingVoice,
+    choosingPhotoLabel: t.messages.choosingPhoto,
+    onlineLabel: t.messages.online,
+    offlineLabel: t.messages.offline,
     checkSingleIcon: CHECK_SINGLE_ICON,
     checkDoubleIcon: CHECK_DOUBLE_ICON,
     unsend: t.messages.unsend,
@@ -3163,57 +3169,185 @@ export function messagesPage(
   }
 
   var partnerTypingTimer = null;
+  var partnerAction = '';
+  var partnerOnline = Boolean(state.partnerOnline);
   var myTypingActive = false;
+  var myActivityKind = '';
   var myTypingLastSentAt = 0;
   var myTypingStopTimer = null;
+  var myActivityKeepaliveTimer = null;
+  var myActivityCapTimer = null;
+  var photoPickerOpen = false;
+  var photoPickerFocusTimer = null;
+
+  function renderPartnerSubtitle() {
+    if (!threadSubtitleEl) return;
+    if (partnerAction === 'voice') {
+      threadSubtitleEl.textContent = state.recordingVoiceLabel || state.typingLabel || '';
+      threadSubtitleEl.classList.add('is-typing');
+      threadSubtitleEl.classList.remove('is-online');
+      return;
+    }
+    if (partnerAction === 'photo') {
+      threadSubtitleEl.textContent = state.choosingPhotoLabel || state.typingLabel || '';
+      threadSubtitleEl.classList.add('is-typing');
+      threadSubtitleEl.classList.remove('is-online');
+      return;
+    }
+    if (partnerAction === 'text') {
+      threadSubtitleEl.textContent = state.typingLabel || '';
+      threadSubtitleEl.classList.add('is-typing');
+      threadSubtitleEl.classList.remove('is-online');
+      return;
+    }
+    threadSubtitleEl.classList.remove('is-typing');
+    if (partnerOnline) {
+      threadSubtitleEl.textContent = state.onlineLabel || '';
+      threadSubtitleEl.classList.add('is-online');
+    } else {
+      threadSubtitleEl.textContent = state.offlineLabel || '';
+      threadSubtitleEl.classList.remove('is-online');
+    }
+  }
+
+  function setPartnerOnline(isOnline) {
+    partnerOnline = Boolean(isOnline);
+    state.partnerOnline = partnerOnline;
+    if (!partnerOnline && partnerAction) {
+      partnerAction = '';
+      if (partnerTypingTimer) {
+        clearTimeout(partnerTypingTimer);
+        partnerTypingTimer = null;
+      }
+    }
+    renderPartnerSubtitle();
+  }
 
   function clearPartnerTyping() {
     if (partnerTypingTimer) {
       clearTimeout(partnerTypingTimer);
       partnerTypingTimer = null;
     }
-    if (threadSubtitleEl) {
-      threadSubtitleEl.textContent = threadSubtitleEl.getAttribute('data-default-text') || '';
-      threadSubtitleEl.classList.remove('is-typing');
-    }
+    partnerAction = '';
+    renderPartnerSubtitle();
   }
 
-  function showPartnerTyping() {
+  function showPartnerTyping(action) {
     if (!threadSubtitleEl) return;
-    threadSubtitleEl.textContent = state.typingLabel || '';
-    threadSubtitleEl.classList.add('is-typing');
+    var act = (action === 'voice' || action === 'photo') ? action : 'text';
+    partnerOnline = true;
+    state.partnerOnline = true;
+    partnerAction = act;
+    renderPartnerSubtitle();
     if (partnerTypingTimer) clearTimeout(partnerTypingTimer);
     partnerTypingTimer = setTimeout(clearPartnerTyping, 4500);
   }
 
-  function sendStopTypingNow() {
+  function clearActivityTimers() {
     if (myTypingStopTimer) {
       clearTimeout(myTypingStopTimer);
       myTypingStopTimer = null;
     }
-    if (!myTypingActive) return;
+    if (myActivityKeepaliveTimer) {
+      clearInterval(myActivityKeepaliveTimer);
+      myActivityKeepaliveTimer = null;
+    }
+    if (myActivityCapTimer) {
+      clearTimeout(myActivityCapTimer);
+      myActivityCapTimer = null;
+    }
+  }
+
+  function sendStopTypingNow() {
+    clearActivityTimers();
+    if (!myTypingActive) {
+      myActivityKind = '';
+      return;
+    }
+    var prevKind = myActivityKind || 'text';
     myTypingActive = false;
+    myActivityKind = '';
     if (state.activeConversationId > 0 && window.PhotogramRealtime) {
-      window.PhotogramRealtime.sendTyping(state.activeConversationId, false);
+      window.PhotogramRealtime.sendTyping(state.activeConversationId, false, prevKind);
+    }
+  }
+
+  function startChatActivity(action, withKeepalive, maxDurationMs) {
+    if (!state.activeConversationId || !window.PhotogramRealtime) return;
+    var act = (action === 'voice' || action === 'photo') ? action : 'text';
+    var now = Date.now();
+    var kindChanged = myActivityKind !== act;
+    if (kindChanged) {
+      clearActivityTimers();
+    }
+    if (!myTypingActive || kindChanged || now - myTypingLastSentAt >= 2000) {
+      if (window.PhotogramRealtime.sendTyping(state.activeConversationId, true, act)) {
+        myTypingActive = true;
+        myActivityKind = act;
+        myTypingLastSentAt = now;
+      }
+    }
+    if (withKeepalive) {
+      if (!myActivityKeepaliveTimer) {
+        myActivityKeepaliveTimer = setInterval(function() {
+          if (!state.activeConversationId || !window.PhotogramRealtime || myActivityKind !== act) {
+            clearActivityTimers();
+            return;
+          }
+          if (window.PhotogramRealtime.sendTyping(state.activeConversationId, true, act)) {
+            myTypingActive = true;
+            myTypingLastSentAt = Date.now();
+          }
+        }, 2200);
+      }
+      if (maxDurationMs && maxDurationMs > 0 && !myActivityCapTimer) {
+        myActivityCapTimer = setTimeout(function() {
+          if (myActivityKind === act) {
+            photoPickerOpen = false;
+            sendStopTypingNow();
+          }
+        }, maxDurationMs);
+      }
     }
   }
 
   function notifyTypingInput() {
     if (!state.activeConversationId || editingMsg || !window.PhotogramRealtime) return;
+    if (voiceRecording || photoPickerOpen) return;
     var hasText = Boolean(inputEl && inputEl.value.trim().length > 0);
     if (!hasText) {
-      sendStopTypingNow();
+      if (myActivityKind === 'text' || !myActivityKind) sendStopTypingNow();
       return;
     }
-    var now = Date.now();
-    if (!myTypingActive || now - myTypingLastSentAt >= 2000) {
-      if (window.PhotogramRealtime.sendTyping(state.activeConversationId, true)) {
-        myTypingActive = true;
-        myTypingLastSentAt = now;
-      }
-    }
+    startChatActivity('text', false, 0);
     if (myTypingStopTimer) clearTimeout(myTypingStopTimer);
     myTypingStopTimer = setTimeout(sendStopTypingNow, 3500);
+  }
+
+  function onPhotoPickerWindowFocus() {
+    if (!photoPickerOpen) return;
+    if (photoPickerFocusTimer) clearTimeout(photoPickerFocusTimer);
+    photoPickerFocusTimer = setTimeout(function() {
+      photoPickerFocusTimer = null;
+      if (photoPickerOpen) {
+        photoPickerOpen = false;
+        if (myActivityKind === 'photo' && !isSending) {
+          sendStopTypingNow();
+        }
+      }
+    }, 450);
+  }
+  window.addEventListener('focus', onPhotoPickerWindowFocus);
+
+  function openPhotoPickerWithIndicator() {
+    if (!fileInput) return;
+    photoPickerOpen = true;
+    if (photoPickerFocusTimer) {
+      clearTimeout(photoPickerFocusTimer);
+      photoPickerFocusTimer = null;
+    }
+    startChatActivity('photo', true, 30000);
+    fileInput.click();
   }
 
   if (inputEl) {
@@ -3251,21 +3385,39 @@ export function messagesPage(
   if (editReplaceBtn && fileInput) {
     editReplaceBtn.addEventListener('click', function() {
       if (!editingMsg || !editingMsg.hasPhoto) return;
-      fileInput.click();
+      openPhotoPickerWithIndicator();
     });
   }
   if (editBarThumb && fileInput) {
     editBarThumb.addEventListener('click', function() {
       if (!editingMsg || !editingMsg.hasPhoto) return;
-      fileInput.click();
+      openPhotoPickerWithIndicator();
     });
   }
 
   if (attachBtn && fileInput) {
     attachBtn.addEventListener('click', function() {
-      fileInput.click();
+      openPhotoPickerWithIndicator();
+    });
+    fileInput.addEventListener('cancel', function() {
+      photoPickerOpen = false;
+      if (photoPickerFocusTimer) {
+        clearTimeout(photoPickerFocusTimer);
+        photoPickerFocusTimer = null;
+      }
+      if (myActivityKind === 'photo' && !isSending) {
+        sendStopTypingNow();
+      }
     });
     fileInput.addEventListener('change', function() {
+      photoPickerOpen = false;
+      if (photoPickerFocusTimer) {
+        clearTimeout(photoPickerFocusTimer);
+        photoPickerFocusTimer = null;
+      }
+      if (myActivityKind === 'photo' && !isSending) {
+        sendStopTypingNow();
+      }
       var f = this.files && this.files[0];
       if (!f) return;
       var allowedMime = ['image/jpeg', 'image/png', 'image/webp'];
@@ -3483,7 +3635,12 @@ export function messagesPage(
 
       if (!text && !pendingFile) return;
 
-      sendStopTypingNow();
+      var sendingPhoto = Boolean(pendingFile);
+      if (sendingPhoto) {
+        startChatActivity('photo', true, 30000);
+      } else {
+        sendStopTypingNow();
+      }
       isSending = true;
       syncSendState();
       try {
@@ -3603,6 +3760,7 @@ export function messagesPage(
       } catch (err) {
         if (window.showAppToast) window.showAppToast(state.networkError);
       } finally {
+        if (myActivityKind === 'photo') sendStopTypingNow();
         isSending = false;
         syncSendState();
       }
@@ -3808,6 +3966,7 @@ export function messagesPage(
 
   function resetVoiceUi() {
     voiceRecording = false;
+    if (myActivityKind === 'voice') sendStopTypingNow();
     voiceStarting = false;
     voicePointerHeld = false;
     voiceLocked = false;
@@ -4185,6 +4344,8 @@ export function messagesPage(
       resetVoiceUi();
       return;
     }
+
+    startChatActivity('voice', true, VOICE_MAX_MS + 5000);
 
     voiceTimerId = setInterval(function() {
       if (!voiceRecording) return;
@@ -5611,6 +5772,9 @@ export function messagesPage(
       if (!r.ok) return;
       var d = await r.json();
       if (d && d.success) {
+        if (typeof d.partner_online === 'boolean') {
+          setPartnerOnline(d.partner_online);
+        }
         var nearBottom = !scrollEl || (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 140);
         if (Array.isArray(d.messages) && d.messages.length > 0) {
           var c = await ensureE2eeReady();
@@ -6066,9 +6230,16 @@ export function messagesPage(
       return;
     }
 
+    if (ev.type === 'presence.update') {
+      if (Number(ev.user_id) === Number(state.activePartnerId) && Number(state.activePartnerId) > 0) {
+        setPartnerOnline(Boolean(ev.online));
+      }
+      return;
+    }
+
     if (ev.type === 'typing.start') {
       if (Number(ev.conversation_id) === Number(state.activeConversationId) && Number(ev.user_id) !== Number(state.currentUserId)) {
-        showPartnerTyping();
+        showPartnerTyping(ev.action || 'text');
       }
       return;
     }
@@ -6281,7 +6452,11 @@ export function messagesPage(
       }
 
       if (isForActive) {
-        if (!isMine) clearPartnerTyping();
+        if (!isMine) {
+          partnerOnline = true;
+          state.partnerOnline = true;
+          clearPartnerTyping();
+        }
         var nearBottom = !scrollEl || (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 140);
         appendMessageIfNew(m, nearBottom, dec, '', decReason);
         if (!isMine && document.visibilityState === 'visible') {
@@ -6429,8 +6604,10 @@ export function messagesPage(
     if (dmThreadSubtitleEl) {
       var defText = partner.displayName || partner.username || '';
       dmThreadSubtitleEl.setAttribute('data-default-text', defText);
-      dmThreadSubtitleEl.textContent = defText;
-      dmThreadSubtitleEl.classList.remove('is-typing');
+      partnerAction = '';
+      partnerOnline = Boolean(partner.online);
+      state.partnerOnline = partnerOnline;
+      renderPartnerSubtitle();
     }
   }
 
@@ -6442,6 +6619,11 @@ export function messagesPage(
     }
     if (voiceRecording || voiceStarting) abortVoiceRecording();
     if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
+    photoPickerOpen = false;
+    if (photoPickerFocusTimer) {
+      clearTimeout(photoPickerFocusTimer);
+      photoPickerFocusTimer = null;
+    }
     clearPartnerTyping();
     sendStopTypingNow();
     cancelReplyMode();
@@ -6490,6 +6672,11 @@ export function messagesPage(
 
     if (voiceRecording || voiceStarting) abortVoiceRecording();
     if (typeof stopActiveVoicePlayback === 'function') stopActiveVoicePlayback();
+    photoPickerOpen = false;
+    if (photoPickerFocusTimer) {
+      clearTimeout(photoPickerFocusTimer);
+      photoPickerFocusTimer = null;
+    }
     clearPartnerTyping();
     sendStopTypingNow();
     cancelReplyMode();
@@ -6659,6 +6846,9 @@ export function messagesPage(
       state.lastMsgId = maxId;
       state.oldestMsgId = minId;
       state.lastReadOwnId = Number(data.last_read_own_id || 0);
+      if (typeof data.partner_online === 'boolean') {
+        setPartnerOnline(data.partner_online);
+      }
       if (loadOlderBtn) loadOlderBtn.style.display = data.has_more ? '' : 'none';
       updateSeenUI();
       if (scrollEl) {
@@ -6747,6 +6937,12 @@ export function messagesPage(
       try { dmSwitchAbort.abort(); } catch (e) {}
       dmSwitchAbort = null;
     }
+    photoPickerOpen = false;
+    if (photoPickerFocusTimer) {
+      clearTimeout(photoPickerFocusTimer);
+      photoPickerFocusTimer = null;
+    }
+    window.removeEventListener('focus', onPhotoPickerWindowFocus);
     clearPartnerTyping();
     sendStopTypingNow();
     if (unsubRealtime) {

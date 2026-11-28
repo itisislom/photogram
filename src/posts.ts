@@ -7,6 +7,7 @@ import {
   checkContentLength,
   consumeBurstWithLockoutAtomic,
   consumeRateLimitAtomic,
+  getClientIp,
   hasAdminPermission,
   parsePositiveId,
   readJsonWithLimit,
@@ -886,4 +887,154 @@ export async function handleToggleCommentPin(request: Request, env: Env): Promis
     is_pinned: true,
     pinned_comment_id: commentId,
   }, 200);
+}
+
+const LIKE_LIST_PAGE_SIZE = 50;
+const LIKE_LIST_MAX_OFFSET = 500;
+
+interface LikeListRow {
+  id: number;
+  username: string;
+  display_name: string;
+  avatar_key: string;
+  is_verified: number | boolean;
+  is_following: number | boolean;
+}
+
+export async function handleGetPostLikes(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  const currentUser = await getUserFromRequest(env, request);
+  const rateKey = currentUser ? `likes:list:u:${currentUser.id}` : `likes:list:ip:${getClientIp(request)}`;
+  const allowed = await consumeRateLimitAtomic(env, rateKey, 60, 60);
+  if (!allowed) {
+    return jsonError('Too many requests', 429);
+  }
+
+  const postId = parsePositiveId(url.searchParams.get('post_id'));
+  if (!postId) {
+    return jsonError('Post not found', 400);
+  }
+
+  const rawOffset = parseInt(url.searchParams.get('offset') || '0', 10);
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.min(LIKE_LIST_MAX_OFFSET, rawOffset) : 0;
+  const viewerId = currentUser ? Number(currentUser.id) : 0;
+
+  const post = await env.DB.prepare('SELECT id FROM posts WHERE id = ?')
+    .bind(postId)
+    .first<{ id: number }>();
+  if (!post) {
+    return jsonError('Post not found', 404);
+  }
+
+  const [countRow, rowsRes] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS cnt FROM likes WHERE post_id = ?')
+      .bind(postId)
+      .first<{ cnt: number }>(),
+    env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
+              EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id) AS is_following
+       FROM likes l
+       JOIN users u ON u.id = l.user_id
+       WHERE l.post_id = ?
+       ORDER BY l.created_at DESC, u.id DESC
+       LIMIT ? OFFSET ?`,
+    )
+      .bind(viewerId, postId, LIKE_LIST_PAGE_SIZE + 1, offset)
+      .all<LikeListRow>(),
+  ]);
+
+  const rawRows = rowsRes.results || [];
+  const hasMore = rawRows.length > LIKE_LIST_PAGE_SIZE && offset + LIKE_LIST_PAGE_SIZE < LIKE_LIST_MAX_OFFSET;
+  const users = rawRows.slice(0, LIKE_LIST_PAGE_SIZE).map((r) => ({
+    id: Number(r.id),
+    username: r.username,
+    display_name: r.display_name || r.username,
+    avatar_key: r.avatar_key || '',
+    is_verified: Boolean(Number(r.is_verified)),
+    is_following: Boolean(r.is_following),
+  }));
+
+  return jsonResponse(
+    {
+      success: true,
+      post_id: postId,
+      total_count: Number(countRow?.cnt || 0),
+      current_user_id: viewerId,
+      has_more: hasMore,
+      users,
+    },
+    200,
+  );
+}
+
+export async function handleGetCommentLikes(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  const currentUser = await getUserFromRequest(env, request);
+  const rateKey = currentUser ? `likes:list:u:${currentUser.id}` : `likes:list:ip:${getClientIp(request)}`;
+  const allowed = await consumeRateLimitAtomic(env, rateKey, 60, 60);
+  if (!allowed) {
+    return jsonError('Too many requests', 429);
+  }
+
+  const commentId = parsePositiveId(url.searchParams.get('comment_id'));
+  if (!commentId) {
+    return jsonError('Comment not found', 400);
+  }
+
+  const rawOffset = parseInt(url.searchParams.get('offset') || '0', 10);
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.min(LIKE_LIST_MAX_OFFSET, rawOffset) : 0;
+  const viewerId = currentUser ? Number(currentUser.id) : 0;
+
+  const comment = await env.DB.prepare('SELECT id FROM comments WHERE id = ?')
+    .bind(commentId)
+    .first<{ id: number }>();
+  if (!comment) {
+    return jsonError('Comment not found', 404);
+  }
+
+  const [countRow, rowsRes] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS cnt FROM comment_likes WHERE comment_id = ?')
+      .bind(commentId)
+      .first<{ cnt: number }>(),
+    env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.is_verified,
+              EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id) AS is_following
+       FROM comment_likes cl
+       JOIN users u ON u.id = cl.user_id
+       WHERE cl.comment_id = ?
+       ORDER BY cl.created_at DESC, u.id DESC
+       LIMIT ? OFFSET ?`,
+    )
+      .bind(viewerId, commentId, LIKE_LIST_PAGE_SIZE + 1, offset)
+      .all<LikeListRow>(),
+  ]);
+
+  const rawRows = rowsRes.results || [];
+  const hasMore = rawRows.length > LIKE_LIST_PAGE_SIZE && offset + LIKE_LIST_PAGE_SIZE < LIKE_LIST_MAX_OFFSET;
+  const users = rawRows.slice(0, LIKE_LIST_PAGE_SIZE).map((r) => ({
+    id: Number(r.id),
+    username: r.username,
+    display_name: r.display_name || r.username,
+    avatar_key: r.avatar_key || '',
+    is_verified: Boolean(Number(r.is_verified)),
+    is_following: Boolean(r.is_following),
+  }));
+
+  return jsonResponse(
+    {
+      success: true,
+      comment_id: commentId,
+      total_count: Number(countRow?.cnt || 0),
+      current_user_id: viewerId,
+      has_more: hasMore,
+      users,
+    },
+    200,
+  );
 }

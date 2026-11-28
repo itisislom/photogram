@@ -312,6 +312,10 @@ export const en: Translations = {
     today: 'Today',
     yesterday: 'Yesterday',
     typing: 'typing...',
+    recordingVoice: 'recording voice...',
+    choosingPhoto: 'choosing a photo...',
+    online: 'Online',
+    offline: 'Offline',
     playVideo: 'Play video',
     openOnYoutube: 'Open on YouTube',
     unsend: 'Unsend',
@@ -445,6 +449,12 @@ export const en: Translations = {
     loadMore: 'Load more',
     unlikedToast: 'Likes removed',
     deletedCommentsToast: 'Comments deleted',
+  },
+
+  likeList: {
+    title: 'Likes',
+    empty: 'No likes yet',
+    loadMore: 'Show more',
   },
 
   share: {

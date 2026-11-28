@@ -2,7 +2,7 @@ import { Env, User } from './types';
 import { getStyles } from './styles';
 import { handleLogin, handleRegister, handleLogout, handleChangePassword, handleSwitchAccount, handleRemoveAccount, getUserFromRequest, getSavedAccountsForPage } from './auth';
 import { getProfileData, handleUpdateProfile, handleUploadAvatar, getExploreData, handleSearchUsers, handleResolveMentions, handleToggleFollow, getFollowersList, getFollowingList } from './profile';
-import { handleCreatePost, handleDeletePost, handleToggleLike, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike, handleToggleCommentPin } from './posts';
+import { handleCreatePost, handleDeletePost, handleToggleLike, handleGetPostLikes, handleGetCommentLikes, getFeedPosts, handleGetComments, handleCreateComment, handleDeleteComment, handleToggleCommentLike, handleToggleCommentPin } from './posts';
 import { loginPage } from './pages/login';
 import { registerPage } from './pages/register';
 import { profilePage, userNotFoundPage } from './pages/profile';
@@ -821,6 +821,14 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
 
     if (pathname === '/api/posts/comment/like' && method === 'POST') {
       return handleToggleCommentLike(request, env);
+    }
+
+    if (pathname === '/api/posts/likes' && method === 'GET') {
+      return handleGetPostLikes(request, env, url);
+    }
+
+    if (pathname === '/api/posts/comment/likes' && method === 'GET') {
+      return handleGetCommentLikes(request, env, url);
     }
 
     if (pathname === '/api/posts/comment/pin' && method === 'POST') {

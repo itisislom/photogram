@@ -2686,11 +2686,19 @@ body {
   -webkit-touch-callout: none;
 }
 
+.comment-item[data-can-pin="1"],
+.comment-item[data-can-delete="1"] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .comment-ctx-backdrop {
   position: fixed;
   inset: 0;
   z-index: 25000;
   background: transparent;
+  touch-action: none;
 }
 
 .comment-ctx-menu {
@@ -3260,6 +3268,296 @@ body {
   .comments-sheet-backdrop.visible .comments-sheet-panel {
     transform: scale(1) translate3d(0, 0, 0);
     opacity: 1;
+  }
+}
+
+.feed-card-likes-count,
+.post-likes-count {
+  cursor: pointer;
+  display: inline-block;
+  width: fit-content;
+}
+
+.feed-card-likes-count:hover,
+.post-likes-count:hover {
+  opacity: 0.78;
+}
+
+.pics-like-btn .pics-action-count,
+.comment-like-count {
+  cursor: pointer;
+}
+
+.likelist-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-overlay);
+  z-index: 16000;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  overscroll-behavior: contain;
+  touch-action: none;
+  transition: opacity 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.likelist-sheet-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.likelist-sheet-panel {
+  width: 100%;
+  max-width: 500px;
+  height: 70dvh;
+  max-height: 75dvh;
+  background: var(--bg-elevated);
+  border-radius: 20px 20px 0 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  transform: translate3d(0, 100%, 0);
+  opacity: 1;
+  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+
+.likelist-sheet-backdrop.visible .likelist-sheet-panel {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+}
+
+.likelist-sheet-header {
+  position: relative;
+  min-height: 54px;
+  padding: 16px 48px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.likelist-sheet-header:active {
+  cursor: grabbing;
+}
+
+.likelist-sheet-grabber-hit {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 88px;
+  height: 28px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.likelist-sheet-grabber {
+  width: 38px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 999px;
+  display: block;
+}
+
+.likelist-sheet-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.likelist-sheet-close-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 50%;
+  padding: 0;
+}
+
+.likelist-sheet-close-btn:hover {
+  background: var(--input-bg);
+  color: var(--text-primary);
+}
+
+.likelist-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 8px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.likelist-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 4px;
+  min-height: 52px;
+}
+
+.likelist-user-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+  text-decoration: none;
+  color: inherit;
+}
+
+.likelist-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.likelist-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.likelist-user-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.likelist-username {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.likelist-display-name {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.likelist-follow-btn {
+  min-height: 36px;
+  min-width: 96px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent-color);
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.likelist-follow-btn.following {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.likelist-follow-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.likelist-state-msg {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.likelist-load-more-btn {
+  margin-top: 8px;
+  width: 100%;
+  min-height: 44px;
+}
+
+@media (min-width: 601px) {
+  .likelist-sheet-backdrop {
+    align-items: center;
+  }
+
+  .likelist-sheet-panel {
+    max-width: 440px;
+    border-radius: 20px;
+    height: 520px;
+    max-height: 85dvh;
+    transform: scale(0.95) translate3d(0, 14px, 0);
+    opacity: 0;
+    transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.22s ease;
+  }
+
+  .likelist-sheet-backdrop.visible .likelist-sheet-panel {
+    transform: scale(1) translate3d(0, 0, 0);
+    opacity: 1;
+  }
+
+  .likelist-sheet-header {
+    min-height: 48px;
+    padding: 0 48px;
+    cursor: default;
+  }
+
+  .likelist-sheet-header:active {
+    cursor: default;
+  }
+
+  .likelist-sheet-grabber-hit {
+    display: none;
   }
 }
 
@@ -5436,6 +5734,11 @@ body.dm-lock-scroll {
 
 .dm-thread-display.is-typing {
   color: var(--accent, #29B6F6);
+  font-weight: 500;
+}
+
+.dm-thread-display.is-online {
+  color: #22C55E;
   font-weight: 500;
 }
 

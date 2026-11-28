@@ -317,6 +317,10 @@ export const ru: Translations = {
     today: 'Сегодня',
     yesterday: 'Вчера',
     typing: 'печатает...',
+    recordingVoice: 'записывает голосовое...',
+    choosingPhoto: 'выбирает фото...',
+    online: 'В сети',
+    offline: 'Не в сети',
     playVideo: 'Смотреть видео',
     openOnYoutube: 'Открыть на YouTube',
     unsend: 'Отменить отправку',
@@ -460,6 +464,12 @@ export const ru: Translations = {
     loadMore: 'Показать ещё',
     unlikedToast: 'Лайки убраны',
     deletedCommentsToast: 'Комментарии удалены',
+  },
+
+  likeList: {
+    title: 'Отметки «Нравится»',
+    empty: 'Пока нет отметок «Нравится»',
+    loadMore: 'Показать ещё',
   },
 
   share: {

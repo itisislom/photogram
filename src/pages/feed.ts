@@ -527,6 +527,26 @@ ${renderShareSheetScript(currentUser.id, t)}
       });
     });
 
+    scope.querySelectorAll('.feed-card-likes-count').forEach(function(el) {
+      if (el.dataset.likeListBound) return;
+      el.dataset.likeListBound = '1';
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      var openLikes = function(e) {
+        e.stopPropagation();
+        var pid = parseInt(el.dataset.postId || '0', 10);
+        if (!pid || !window.openLikeList) return;
+        window.openLikeList({ postId: pid, initialCount: parseInt(el.textContent || '0', 10) || 0 });
+      };
+      el.addEventListener('click', openLikes);
+      el.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openLikes(e);
+        }
+      });
+    });
+
     scope.querySelectorAll('.feed-share-btn').forEach(function(btn) {
       if (btn.dataset.feedBound) return;
       btn.dataset.feedBound = '1';

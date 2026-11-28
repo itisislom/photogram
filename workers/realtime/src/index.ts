@@ -15,9 +15,11 @@ interface SqlStorageLike {
 const MAX_SOCKETS_PER_USER = 12;
 const MAX_INCOMING_FRAME_BYTES = 1024;
 const MAX_ALLOWED_CONVS = 200;
+const PRESENCE_BROADCAST_LIMIT = 80;
 const TYPING_START_COOLDOWN_MS = 1500;
 const TYPING_STOP_COOLDOWN_MS = 400;
 const SESSION_KEY_RE = /^[a-f0-9]{16,64}$/;
+const ALLOWED_TYPING_ACTIONS = new Set(['text', 'voice', 'photo']);
 
 function parsePositiveInt(val: unknown): number {
   const n = Number(val);
@@ -110,6 +112,66 @@ export class UserHub {
     return 0;
   }
 
+  private getAllowedPartnerIds(): number[] {
+    this.ensureSchema();
+    const ids = new Set<number>();
+    const sql = this.getSql();
+    if (sql) {
+      const rows = sql
+        .exec('SELECT DISTINCT partner_user_id FROM allowed_convs ORDER BY updated_at DESC LIMIT ?', PRESENCE_BROADCAST_LIMIT)
+        .toArray();
+      for (const row of rows) {
+        const pid = parsePositiveInt(row.partner_user_id);
+        if (pid > 0) ids.add(pid);
+      }
+    }
+    for (const pid of this.convFallback.values()) {
+      if (pid > 0 && ids.size < PRESENCE_BROADCAST_LIMIT) {
+        ids.add(pid);
+      }
+    }
+    return Array.from(ids);
+  }
+
+  private async broadcastPresence(userId: number, online: boolean): Promise<void> {
+    if (!this.env.REALTIME_HUB || !userId) return;
+    const partnerIds = this.getAllowedPartnerIds();
+    if (partnerIds.length === 0) return;
+    const now = Date.now();
+    await Promise.all(
+      partnerIds.map(async (partnerId) => {
+        if (!partnerId || partnerId === userId) return;
+        try {
+          const stub = this.env.REALTIME_HUB.get(this.env.REALTIME_HUB.idFromName(`u:${partnerId}`));
+          await stub.fetch('https://hub/emit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              event: {
+                id: crypto.randomUUID(),
+                type: 'presence.update',
+                user_id: userId,
+                online,
+                ts: now,
+              },
+            }),
+          });
+        } catch {}
+      }),
+    );
+  }
+
+  private schedulePresence(userId: number, online: boolean): void {
+    const task = this.broadcastPresence(userId, online);
+    try {
+      if (typeof this.ctx.waitUntil === 'function') {
+        this.ctx.waitUntil(task);
+        return;
+      }
+    } catch {}
+    task.catch(() => {});
+  }
+
   private getAttachment(ws: WebSocket): SocketAttachment | null {
     try {
       const raw = ws.deserializeAttachment() as Partial<SocketAttachment> | null;
@@ -156,6 +218,7 @@ export class UserHub {
         return jsonRes({ error: 'Unauthorized' }, 401);
       }
 
+      const wasOffline = this.ctx.getWebSockets().length === 0;
       this.enforceSocketLimit();
 
       const pair = new WebSocketPair();
@@ -167,6 +230,10 @@ export class UserHub {
         sessionKey,
         connectedAt: Date.now(),
       } satisfies SocketAttachment);
+
+      if (wasOffline) {
+        this.schedulePresence(userId, true);
+      }
 
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -333,9 +400,9 @@ export class UserHub {
       return;
     }
 
-    let parsed: { type?: unknown; conversation_id?: unknown };
+    let parsed: { type?: unknown; conversation_id?: unknown; action?: unknown };
     try {
-      parsed = JSON.parse(message) as { type?: unknown; conversation_id?: unknown };
+      parsed = JSON.parse(message) as { type?: unknown; conversation_id?: unknown; action?: unknown };
     } catch {
       return;
     }
@@ -343,6 +410,9 @@ export class UserHub {
 
     const evType = parsed.type;
     if (evType !== 'typing.start' && evType !== 'typing.stop') return;
+
+    const rawAction = typeof parsed.action === 'string' ? parsed.action.trim().toLowerCase() : 'text';
+    const action = ALLOWED_TYPING_ACTIONS.has(rawAction) ? rawAction : 'text';
 
     const convId = parsePositiveInt(parsed.conversation_id);
     if (!convId) return;
@@ -354,7 +424,7 @@ export class UserHub {
     if (!partnerUserId || partnerUserId === att.userId) return;
 
     const now = Date.now();
-    const rateKey = `${convId}:${evType}`;
+    const rateKey = evType === 'typing.start' ? `${convId}:${evType}:${action}` : `${convId}:${evType}`;
     const lastSent = this.typingRate.get(rateKey) || 0;
     const minInterval = evType === 'typing.start' ? TYPING_START_COOLDOWN_MS : TYPING_STOP_COOLDOWN_MS;
     if (now - lastSent < minInterval) return;
@@ -377,6 +447,7 @@ export class UserHub {
           event: {
             id: crypto.randomUUID(),
             type: evType,
+            action,
             conversation_id: convId,
             user_id: att.userId,
             ts: now,
@@ -387,15 +458,29 @@ export class UserHub {
   }
 
   webSocketClose(ws: WebSocket, code: number, reason: string): void {
+    const att = this.getAttachment(ws);
     try {
       ws.close(code, reason);
     } catch {}
+    if (att && att.userId) {
+      const remaining = this.ctx.getWebSockets().filter((s) => s !== ws).length;
+      if (remaining === 0) {
+        this.schedulePresence(att.userId, false);
+      }
+    }
   }
 
   webSocketError(ws: WebSocket): void {
+    const att = this.getAttachment(ws);
     try {
       ws.close(1011, 'Error');
     } catch {}
+    if (att && att.userId) {
+      const remaining = this.ctx.getWebSockets().filter((s) => s !== ws).length;
+      if (remaining === 0) {
+        this.schedulePresence(att.userId, false);
+      }
+    }
   }
 }
 
