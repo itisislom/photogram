@@ -1,7 +1,12 @@
 import { Env, ConversationItem, DirectMessage, MessageReaction, User } from './types';
 import { getSessionHashFromRequest, getUserFromRequest } from './auth';
 import { detectLanguage, getTranslations } from './languages';
-import { sendPushToUser } from './push';
+import {
+  formatPushActorTitle,
+  safePushAvatarUrl,
+  safePushPostThumbUrl,
+  sendPushToUser,
+} from './push';
 import {
   authorizeRealtimeConversation,
   authorizeRealtimeConversations,
@@ -1242,13 +1247,43 @@ export async function handleSendMessage(request: Request, env: Env, ctx?: Execut
 
       const dmPushAllowed = await acquireCooldownAtomic(env, `push:dm:${recipientUserId}:${user.id}`, 5);
       if (dmPushAllowed) {
-        await sendPushToUser(env, recipientUserId, (rt) => ({
-          kind: 'dm',
-          title: 'Photogram',
-          body: `@${user.username}: ${rt.messages.encryptedPushBody}`,
-          url: `/messages/${encodeURIComponent(user.username)}`,
-          tag: `dm-${resolvedConvId}`,
-        }));
+        const [convUnreadRow, sharedPostRow] = await Promise.all([
+          env.DB.prepare(
+            'SELECT COUNT(*) AS cnt FROM messages WHERE conversation_id = ? AND sender_id = ? AND read_at IS NULL AND deleted_at IS NULL',
+          )
+            .bind(resolvedConvId, user.id)
+            .first<{ cnt: number }>(),
+          sharedPostId > 0
+            ? env.DB.prepare('SELECT image_key FROM posts WHERE id = ?')
+                .bind(sharedPostId)
+                .first<{ image_key?: string | null }>()
+            : Promise.resolve(null),
+        ]);
+        const convUnread = Number(convUnreadRow?.cnt || 1);
+        const senderTitle = formatPushActorTitle(user.display_name, user.username);
+        const senderIcon = safePushAvatarUrl(user.avatar_key);
+        const sharedPostThumb = safePushPostThumbUrl(sharedPostRow?.image_key);
+        const nowTs = Date.now();
+        await sendPushToUser(env, recipientUserId, (rt) => {
+          const bodyText =
+            sharedPostId > 0
+              ? rt.notifications.pushDmSharedPost
+              : convUnread > 1
+                ? rt.notifications.pushDmMany(convUnread)
+                : imageKey
+                  ? rt.notifications.pushDmAttachment
+                  : rt.notifications.pushDmSingle;
+          return {
+            kind: 'dm',
+            title: senderTitle,
+            body: bodyText,
+            url: `/messages/${encodeURIComponent(user.username)}`,
+            tag: `dm-${resolvedConvId}`,
+            icon: senderIcon,
+            image: sharedPostThumb,
+            ts: nowTs,
+          };
+        });
       }
     });
   }
@@ -1772,13 +1807,18 @@ export async function handleToggleReaction(request: Request, env: Env, ctx?: Exe
         300,
       );
       if (reactPushAllowed) {
-        await sendPushToUser(env, partnerId, {
+        const reactTitle = formatPushActorTitle(user.display_name, user.username);
+        const reactIcon = safePushAvatarUrl(user.avatar_key);
+        const nowTs = Date.now();
+        await sendPushToUser(env, partnerId, (rt) => ({
           kind: 'dm_reaction',
-          title: 'Photogram',
-          body: `@${user.username} ${emoji}`,
+          title: reactTitle,
+          body: rt.notifications.pushDmReaction(emoji),
           url: `/messages/${encodeURIComponent(user.username)}`,
           tag: `dm-react-${msg.conversation_id}`,
-        });
+          icon: reactIcon,
+          ts: nowTs,
+        }));
       }
     }
   });

@@ -367,6 +367,32 @@ export const ru: Translations = {
     repliedYourComment: 'ответил(-а) на ваш комментарий:',
     startedFollowingYou: 'подписался(-ась) на вас',
     mentionedYou: 'упомянул(-а) вас:',
+    pushDmSingle: 'Отправил(-а) вам сообщение',
+    pushDmMany: (n) => {
+      const m10 = n % 10;
+      const m100 = n % 100;
+      const w =
+        m10 === 1 && m100 !== 11
+          ? 'сообщение'
+          : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)
+            ? 'сообщения'
+            : 'сообщений';
+      return `Отправил(-а) вам ${n} ${w}`;
+    },
+    pushDmAttachment: 'Отправил(-а) вложение',
+    pushDmSharedPost: 'Поделился(-лась) публикацией',
+    pushDmReaction: (emoji) => `Отреагировал(-а) ${emoji} на ваше сообщение`,
+    pushLikedPost: 'Понравилась ваша публикация',
+    pushLikedPostWithCaption: (caption) => `Понравилась ваша публикация: «${caption}»`,
+    pushCommentedPost: 'Прокомментировал(-а) вашу публикацию',
+    pushCommentedPostWithText: (text) => `Прокомментировал(-а): «${text}»`,
+    pushLikedComment: 'Понравился ваш комментарий',
+    pushLikedCommentWithText: (text) => `Понравился ваш комментарий: «${text}»`,
+    pushRepliedComment: 'Ответил(-а) на ваш комментарий',
+    pushRepliedCommentWithText: (text) => `Ответил(-а) на ваш комментарий: «${text}»`,
+    pushMentioned: 'Упомянул(-а) вас',
+    pushMentionedWithText: (text) => `Упомянул(-а) вас: «${text}»`,
+    pushFollowed: 'Подписался(-ась) на ваши обновления',
     settingTitle: 'Уведомления',
     settingDesc: 'Лайки, комментарии и новые подписчики',
     enabledToast: 'Уведомления включены',

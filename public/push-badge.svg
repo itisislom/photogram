@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96">
+  <style>
+    .pg-cam { fill: #111111; }
+    @media (prefers-color-scheme: dark) {
+      .pg-cam { fill: #FFFFFF; }
+    }
+  </style>
+  <path class="pg-cam" d="M9.4 4L7.6 6H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-3.6L14.6 4H9.4zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/>
+  <circle class="pg-cam" cx="12" cy="12" r="3"/>
+</svg>

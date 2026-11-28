@@ -1,9 +1,10 @@
-const CACHE_NAME = 'photogram-v10';
+const CACHE_NAME = 'photogram-v11';
 const OFFLINE_URL = '/offline';
 
 const PRECACHE_ASSETS = [
   '/icon.svg',
   '/icon.jpg',
+  '/push-badge.svg',
   '/manifest.webmanifest'
 ];
 
@@ -16,6 +17,20 @@ function refreshOfflineCache() {
       });
     })
     .catch(function() {});
+}
+
+function isSafePushMediaPath(raw, kind) {
+  if (typeof raw !== 'string' || !raw || raw.length > 512) return false;
+  if (!raw.startsWith('/media/') || raw.startsWith('//')) return false;
+  if (raw.indexOf('..') !== -1 || raw.indexOf('\\') !== -1 || /[\x00-\x1f\x7f]/.test(raw)) return false;
+  var lower = raw.toLowerCase();
+  if (kind === 'avatar') {
+    return lower.startsWith('/media/avatars/') || lower.startsWith('/media/avatars%2f');
+  }
+  if (kind === 'post') {
+    return lower.startsWith('/media/posts/') || lower.startsWith('/media/posts%2f');
+  }
+  return false;
 }
 
 self.addEventListener('install', function(event) {
@@ -105,7 +120,7 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg') {
+  if (url.pathname === '/icon.svg' || url.pathname === '/icon.jpg' || url.pathname === '/push-badge.svg') {
     event.respondWith(
       caches.match(req).then(function(cached) {
         return cached || fetch(req).then(function(res) {
@@ -132,25 +147,31 @@ self.addEventListener('push', function(event) {
       data = { title: 'Photogram', body: event.data ? event.data.text() : '' };
     }
     var windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    var isAppFocused = windowClients.some(function(c) {
-      return Boolean(c.focused);
+    var isAppVisible = windowClients.some(function(c) {
+      return Boolean(c.focused && c.visibilityState === 'visible');
     });
-    if (isAppFocused) {
+    if (isAppVisible) {
       return;
     }
     if (!data.title && !data.body) {
       return;
     }
-    await self.registration.showNotification(data.title || 'Photogram', {
+    var notifOptions = {
       body: data.body || '',
-      icon: '/icon.jpg',
-      badge: '/icon.svg',
+      badge: '/push-badge.svg',
       tag: data.tag || 'photogram-notif',
       renotify: true,
-      timestamp: Date.now(),
+      timestamp: (typeof data.ts === 'number' && data.ts > 0) ? data.ts : Date.now(),
       vibrate: [120, 60, 120],
       data: { url: data.url || '/' }
-    });
+    };
+    if (isSafePushMediaPath(data.icon, 'avatar')) {
+      notifOptions.icon = data.icon;
+    }
+    if (isSafePushMediaPath(data.image, 'post')) {
+      notifOptions.image = data.image;
+    }
+    await self.registration.showNotification(data.title || 'Photogram', notifOptions);
   })());
 });
 

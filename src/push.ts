@@ -197,6 +197,37 @@ export interface PushPayload {
   body: string;
   url: string;
   tag: string;
+  icon?: string;
+  image?: string;
+  ts?: number;
+}
+
+export function formatPushActorTitle(displayName: string | null | undefined, username: string): string {
+  const uname = String(username || '').trim();
+  const dname = String(displayName || '').trim();
+  if (dname && uname && dname.toLowerCase() !== uname.toLowerCase()) {
+    return `${dname} (@${uname})`.slice(0, 80);
+  }
+  return uname ? `@${uname}` : 'Photogram';
+}
+
+export function safePushAvatarUrl(avatarKey: string | null | undefined): string | undefined {
+  const k = String(avatarKey || '').trim();
+  if (!k || !k.startsWith('avatars/') || k.includes('..') || k.includes('\\') || /[\x00-\x1f\x7f]/.test(k)) {
+    return undefined;
+  }
+  return `/media/${encodeURIComponent(k)}`;
+}
+
+export function safePushPostThumbUrl(imageKey: string | null | undefined): string | undefined {
+  const k = String(imageKey || '').trim();
+  if (!k || !k.startsWith('posts/') || k.includes('..') || k.includes('\\') || /[\x00-\x1f\x7f]/.test(k)) {
+    return undefined;
+  }
+  const base = `/media/${encodeURIComponent(k)}`;
+  return k.endsWith('.webp') && !k.endsWith('_thumb.webp') && !k.endsWith('_full.webp')
+    ? `${base}?v=thumb`
+    : base;
 }
 
 export type PushPayloadSource = PushPayload | ((t: Translations) => PushPayload);

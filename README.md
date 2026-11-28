@@ -85,7 +85,7 @@
 - Double-tap heart reaction on posts, mobile two-finger pinch-to-zoom with snap-back animation, and fullscreen vertical Pics Mode.
 - Threaded comments with replies, author likes, pinning, and unified context-menu actions (long-press on mobile / right-click on desktop).
 - Client-side image compression/cropping to WebP with full + thumbnail variants stored in R2.
-- Multi-account switcher (`/accountlist`), Activity center (`/activity`), and Web Push notifications (VAPID, `src/push.ts`).
+- Multi-account switcher (`/accountlist`), Activity center (`/activity`), and Instagram-style Web Push notifications (VAPID, `src/push.ts`, adaptive monochrome camera badge `/push-badge.svg`, actor avatars, post thumbnails, deep links to exact chats/posts/profiles, and zero duplicate app logos).
 
 ### 5. Progressive Web App (PWA) & 4-Language i18n
 - Installable PWA (`public/manifest.webmanifest`, `public/sw.js`) with offline fallback (`/offline`) and versioned cache invalidation.
@@ -119,6 +119,7 @@ Photogram/
 ├── public/
 │   ├── _headers                        # Static security & cache headers
 │   ├── manifest.webmanifest            # PWA application manifest
+│   ├── push-badge.svg                  # Adaptive monochrome camera badge for OS push status bar
 │   └── sw.js                           # Service Worker & Web Push handler
 ├── src/
 │   ├── client/
@@ -150,7 +151,8 @@ Photogram/
 │   ├── styles.ts / types.ts / assets.ts / iconJpgBase64.ts
 ├── tests/
 │   ├── e2ee.test.mjs                   # End-to-end E2EE, compatibility, transaction & CSP test suite
-│   └── backup.test.mjs                 # Encrypted backup, conflict merge, Device Transfer & SQL parity suite
+│   ├── backup.test.mjs                 # Encrypted backup, conflict merge, Device Transfer & SQL parity suite
+│   └── push.test.mjs                   # Web Push RFC 8291 encryption, adaptive badge SVG & Service Worker suite
 ├── workers/
 │   └── realtime/
 │       ├── src/index.ts                # Durable Object UserHub (WebSocket Hibernation)

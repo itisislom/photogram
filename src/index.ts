@@ -84,7 +84,7 @@ import { feedPage } from './pages/feed';
 import { explorePage } from './pages/explore';
 import { userAcceptPage } from './pages/useraccept';
 import { errorPage } from './pages/error';
-import { ICON_SVG, getIconJpgBytes, getManifestJson, SW_JS } from './assets';
+import { ICON_SVG, PUSH_BADGE_SVG, getIconJpgBytes, getManifestJson, SW_JS } from './assets';
 import { detectLanguage, getTranslations, normalizeLang } from './languages';
 import {
   getPersonalizedFeed,
@@ -269,6 +269,15 @@ async function handleRequest(request: Request, env: Env, url: URL, ctx?: Executi
 
     if (pathname === '/icon.svg' || pathname === '/favicon.ico') {
       return new Response(ICON_SVG, {
+        headers: {
+          'Content-Type': 'image/svg+xml; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    }
+
+    if (pathname === '/push-badge.svg') {
+      return new Response(PUSH_BADGE_SVG, {
         headers: {
           'Content-Type': 'image/svg+xml; charset=utf-8',
           'Cache-Control': 'public, max-age=86400',

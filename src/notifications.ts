@@ -1,7 +1,12 @@
 import { Env, NotificationItem } from './types';
 import { getUserFromRequest } from './auth';
 import { detectLanguage, getTranslations } from './languages';
-import { sendPushToUser } from './push';
+import {
+  formatPushActorTitle,
+  safePushAvatarUrl,
+  safePushPostThumbUrl,
+  sendPushToUser,
+} from './push';
 import { emitUserEvent } from './realtime';
 import { acquireCooldownAtomic, consumeRateLimitAtomic, readJsonWithLimit } from './security';
 
@@ -146,13 +151,23 @@ export async function createNotification(
       notifId = Number(latestIns?.id || 0);
     }
 
-    const [actor, cntRow] = await Promise.all([
-      env.DB.prepare('SELECT username FROM users WHERE id = ?')
+    const [actor, cntRow, postInfo] = await Promise.all([
+      env.DB.prepare('SELECT username, display_name, avatar_key FROM users WHERE id = ?')
         .bind(opts.actorId)
-        .first<{ username: string }>(),
+        .first<{ username: string; display_name?: string | null; avatar_key?: string | null }>(),
       env.DB.prepare('SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0')
         .bind(opts.userId)
         .first<{ cnt: number }>(),
+      opts.postId
+        ? env.DB.prepare(
+            `SELECT p.image_key, p.caption, u.username AS author_username
+             FROM posts p
+             JOIN users u ON u.id = p.user_id
+             WHERE p.id = ?`,
+          )
+            .bind(opts.postId)
+            .first<{ image_key?: string | null; caption?: string | null; author_username?: string | null }>()
+        : Promise.resolve(null),
     ]);
     const unreadCount = Number(cntRow?.cnt || 0);
 
@@ -185,23 +200,51 @@ export async function createNotification(
     });
 
     if (actor?.username && notifyAllowed) {
-      const actorName = actor.username;
-      const withPreview = (label: string): string =>
-        preview ? `${label} ${preview}` : label.replace(/[:\s]+$/, '');
+      const actorTitle = formatPushActorTitle(actor.display_name, actor.username);
+      const actorIcon = safePushAvatarUrl(actor.avatar_key);
+      const postThumb = safePushPostThumbUrl(postInfo?.image_key);
+      const captionSnippet = postInfo?.caption ? String(postInfo.caption).trim().slice(0, 60) : '';
+      const targetUrl =
+        opts.type === 'follow'
+          ? `/u/${encodeURIComponent(actor.username)}`
+          : opts.postId && postInfo?.author_username
+            ? `/u/${encodeURIComponent(postInfo.author_username)}?post=${opts.postId}`
+            : '/notifications';
+      const nowTs = Date.now();
       await sendPushToUser(env, opts.userId, (rt) => {
         let bodyText = '';
-        if (opts.type === 'like') bodyText = `@${actorName} ${rt.notifications.likedYourPost}`;
-        else if (opts.type === 'comment_like') bodyText = `@${actorName} ${withPreview(rt.notifications.likedYourComment)}`;
-        else if (opts.type === 'comment_reply') bodyText = `@${actorName} ${withPreview(rt.notifications.repliedYourComment)}`;
-        else if (opts.type === 'follow') bodyText = `@${actorName} ${rt.notifications.startedFollowingYou}`;
-        else if (opts.type === 'mention') bodyText = `@${actorName} ${withPreview(rt.notifications.mentionedYou)}`;
-        else bodyText = `@${actorName} ${withPreview(rt.notifications.commentedYourPost)}`;
+        if (opts.type === 'like') {
+          bodyText = captionSnippet
+            ? rt.notifications.pushLikedPostWithCaption(captionSnippet)
+            : rt.notifications.pushLikedPost;
+        } else if (opts.type === 'comment_like') {
+          bodyText = preview
+            ? rt.notifications.pushLikedCommentWithText(preview)
+            : rt.notifications.pushLikedComment;
+        } else if (opts.type === 'comment_reply') {
+          bodyText = preview
+            ? rt.notifications.pushRepliedCommentWithText(preview)
+            : rt.notifications.pushRepliedComment;
+        } else if (opts.type === 'follow') {
+          bodyText = rt.notifications.pushFollowed;
+        } else if (opts.type === 'mention') {
+          bodyText = preview
+            ? rt.notifications.pushMentionedWithText(preview)
+            : rt.notifications.pushMentioned;
+        } else {
+          bodyText = preview
+            ? rt.notifications.pushCommentedPostWithText(preview)
+            : rt.notifications.pushCommentedPost;
+        }
         return {
           kind: opts.type,
-          title: 'Photogram',
-          body: bodyText.slice(0, 140),
-          url: '/notifications',
+          title: actorTitle,
+          body: bodyText.slice(0, 160),
+          url: targetUrl,
           tag: `notif-${opts.type}-${opts.commentId || opts.postId || opts.actorId}`,
+          icon: actorIcon,
+          image: opts.type === 'follow' ? undefined : postThumb,
+          ts: nowTs,
         };
       });
     }
